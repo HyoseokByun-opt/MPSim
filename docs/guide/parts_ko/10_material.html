@@ -1,0 +1,155 @@
+<div class="sec">
+<h2>4. 재료 라이브러리 (Material)</h2>
+
+<p class="lead">이 탭은 <b>재료 라이브러리</b>입니다. 기지든 필러든 기공이든, 어떤 재료의 물성이든
+여기서 고치고, 새 재료를 추가합니다. 어느 영역에 어떤 재료를 쓸지는 <b>Structure 탭</b>에서
+고릅니다(5장).</p>
+
+<figure>
+  <img src="figures/ui_panel_material.png" class="half">
+  <figcaption>Material 탭. 위는 라이브러리 목록, 가운데는 선택한 재료의 물성, 아래는 이 케이스가 쓰는 재료입니다.</figcaption>
+</figure>
+
+<h3>4.1 기지와 상(phase)</h3>
+
+<p>이 프로그램은 구조를 <b>기지 하나 + 상 여러 개</b>로 봅니다.</p>
+<ul>
+  <li><b>Matrix</b> — 바탕이 되는 연속적인 재료. 에폭시, 실리콘, 알루미나 같은 것입니다.</li>
+  <li><b>Phase</b> — 그 안에 들어 있는 필러나 기공. 개수 제한 없이 추가할 수 있으며,
+      모양·크기·함량과 함께 정합니다.</li>
+</ul>
+<p>둘 다 <b>Structure 탭에서 같은 방식으로</b> 라이브러리의 재료를 골라 씁니다. 목록의
+기지 행을 누르면 기지 편집기가 열리고, 상 행을 누르면 상 편집기가 열립니다 — 탭이
+바뀌지 않습니다. 물성을 고치려면 편집기의 <span class="ui">Edit this material</span>을 누르거나
+이 탭으로 옵니다.</p>
+
+<p>기공도 "상"의 하나로 다룹니다. 공기나 진공을 재료로 고르면 되며, 프로그램은
+탄성계수가 0 이하인 재료를 <b>void(빈 공간)</b>로 인식하여 유동·확산 해석에서
+기공으로 취급합니다.</p>
+
+<h3>4.2 라이브러리 목록</h3>
+
+<p>반도체 소재에서 자주 쓰는 52종이 미리 들어 있습니다. 고분자(에폭시, PI, PTFE, 실리콘…),
+무기물(SiO₂, Al₂O₃, AlN, BN, SiC…), 금속(Cu, Ag, Al, 솔더…), 탄소계(CNT, 그래파이트,
+카본블랙), 자성체(Ni, 카보닐 철, 페라이트), 그리고 공기·진공입니다. 전체 목록은
+부록 A에 있습니다.</p>
+
+<ul>
+  <li><b>검색</b> — 이름, 그룹, 설명의 일부로 찾습니다(예: "nitride", "ferrite").</li>
+  <li>각 줄에는 k, E, α, ε<sub>r</sub>이 함께 보여 필러와 기지의 대비를 바로 비교할 수 있습니다.</li>
+  <li><span class="chip">edited</span> — 기본값을 고친 내장 재료, <span class="chip">user</span> — 사용자가 추가한 재료,
+      <span class="ui">in case</span> — 지금 케이스가 쓰는 재료입니다.</li>
+</ul>
+
+<p>각 재료는 해석에 필요한 물성을 모두 갖고 있습니다.</p>
+
+<table>
+  <tr><th>물성</th><th>기호 / 단위</th><th>쓰이는 해석</th></tr>
+  <tr><td class="q">열전도도</td><td>k (W/m·K)</td><td>열전도도, 흡음(간접), 복사(간접)</td></tr>
+  <tr><td class="q">밀도</td><td>ρ (g/cm³)</td><td>열확산율, 무게분율 환산</td></tr>
+  <tr><td class="q">비열</td><td>c<sub>p</sub> (J/kg·K)</td><td>열확산율</td></tr>
+  <tr><td class="q">전기전도도</td><td>σ (S/m)</td><td>전기전도도, EMI</td></tr>
+  <tr><td class="q">비유전율 / 손실</td><td>ε<sub>r</sub>, tanδ</td><td>유전율·손실, EMI</td></tr>
+  <tr><td class="q">비투자율</td><td>μ<sub>r</sub></td><td>투자율, EMI</td></tr>
+  <tr><td class="q">영률 / 푸아송비</td><td>E (GPa), ν</td><td>탄성, 열응력</td></tr>
+  <tr><td class="q">열팽창계수</td><td>α (ppm/K)</td><td>CTE, 열응력</td></tr>
+</table>
+
+<h3>4.3 물성 고치기, 재료 추가하기</h3>
+
+<p>목록에서 재료를 누르면 아래에 이름, 설명(출처), 물성 열 가지가 열립니다.
+값을 고치면 <b>즉시 라이브러리에 반영</b>되고, <b>지금 케이스에서 그 재료를 쓰는 모든 영역</b>
+(기지, 상, 코팅 껍질)에 같은 값이 적용됩니다. 적용된 곳은 편집기 아래에 이름으로 표시됩니다.</p>
+
+<table>
+  <tr><th>동작</th><th>버튼</th><th>설명</th></tr>
+  <tr><td class="q">새 재료</td><td><span class="ui">New material</span></td>
+      <td>선택한 재료의 값을 출발점으로 새 재료를 만듭니다. 이름부터 바꾸십시오. 그룹을 정할 수 있습니다.</td></tr>
+  <tr><td class="q">복제</td><td><span class="ui">Duplicate</span></td>
+      <td>같은 값의 사본 — 예: "Al₂O₃ (supplier A)"처럼 변형을 따로 두고 싶을 때.</td></tr>
+  <tr><td class="q">기본값으로</td><td><span class="ui">Restore library values</span></td>
+      <td>고친 내장 재료를 원래 값으로 되돌리고, 케이스에도 다시 적용합니다.</td></tr>
+  <tr><td class="q">삭제</td><td><span class="ui">Delete</span></td>
+      <td>사용자가 추가한 재료만 지웁니다. 쓰고 있는 영역은 값을 그대로 유지합니다.</td></tr>
+  <tr><td class="q">내보내기 / 가져오기</td><td><span class="ui">Export</span> / <span class="ui">Import</span></td>
+      <td>고친 재료와 추가한 재료를 JSON 파일로 저장하고, 다른 PC·다른 브라우저에서 읽어 들입니다.</td></tr>
+</table>
+
+<h4>입력할 수 있는 물성과 허용 범위</h4>
+
+<p>물성은 <b>열 가지이며 전부 필수</b>입니다. 하나라도 비어 있거나 범위를 벗어나면
+해석이 시작되지 않고, <b>잘못된 항목이 한꺼번에 모두</b> 표시됩니다 — 하나씩
+고쳐 가며 다시 누를 필요가 없도록 되어 있습니다.</p>
+
+<table>
+  <tr><th>물성</th><th>기호 (단위)</th><th>허용 범위</th><th>하한·상한이 그런 이유</th></tr>
+  <tr><td class="q">열전도도</td><td>k (W/m·K)</td><td>0 – 100,000</td><td></td></tr>
+  <tr><td class="q">전기전도도</td><td>σ (S/m)</td><td>0 – 10<sup>9</sup></td><td>절연체는 0이 아니라 아주 작은 값(예 10<sup>-14</sup>)을 넣습니다.</td></tr>
+  <tr><td class="q">비유전율</td><td>ε<sub>r</sub> (-)</td><td><b>1</b> – 100,000</td><td>진공이 1이므로 그보다 작을 수 없습니다.</td></tr>
+  <tr><td class="q">손실 탄젠트</td><td>tanδ (-)</td><td>0 – 10</td><td></td></tr>
+  <tr><td class="q">비투자율</td><td>μ<sub>r</sub> (-)</td><td><b>1</b> – 1,000,000</td><td>같은 이유로 1 미만은 받지 않습니다(반자성은 다루지 않습니다).</td></tr>
+  <tr><td class="q">영률</td><td>E (GPa)</td><td>0 – 5,000</td><td><b>0은 특별한 뜻을 갖습니다 — 아래를 보십시오.</b></td></tr>
+  <tr><td class="q">푸아송비</td><td>ν (-)</td><td>0 – <b>0.4999</b></td><td>0.5는 완전 비압축성이라 탄성 해가 발산합니다.</td></tr>
+  <tr><td class="q">열팽창계수</td><td>α (ppm/K)</td><td><b>-100</b> – 1,000</td><td>유일하게 음수를 받습니다(ZrW<sub>2</sub>O<sub>8</sub> 같은 음의 팽창 재료).</td></tr>
+  <tr><td class="q">밀도</td><td>ρ (g/cm³)</td><td>0 – 30</td><td></td></tr>
+  <tr><td class="q">비열</td><td>c<sub>p</sub> (J/kg·K)</td><td>0 – 10,000</td><td></td></tr>
+</table>
+
+<div class="warn">
+<b>영률 0은 "기공"을 뜻합니다.</b> 이 프로그램은 어떤 영역이 빈 공간인지를
+<b>오직 E로 판별합니다</b> — E가 0 이하면 그 영역은 고체가 아니라 <b>기공</b>으로 취급됩니다.
+라이브러리의 <span class="ui">Air / pore (void)</span>와 <span class="ui">Vacuum</span>이
+그렇게 정의되어 있습니다.
+<br><br>
+그래서 <b>"역학 해석은 안 할 거니까 E는 0으로 두자"</b>는 흔한 판단이 함정이 됩니다.
+필러의 E를 0으로 두면 그 필러는 조용히 기공이 되고, 열전도도는 공기가 섞인 값으로,
+투과율 해석은 그 입자들을 유로로 보고 풉니다. <b>역학을 쓰지 않더라도 고체에는
+0이 아닌 E를 넣으십시오</b>(정확하지 않아도 됩니다).
+<br><br>
+반대로 유동·기공 관련 해석(투과율, 굴곡도, 여과, 음향, 수은압입, 기공망)은
+<b>기공 영역이 하나라도 있어야</b> 하며, 없으면 "require a pore (void) phase"로 거절됩니다.
+</div>
+
+<div class="note">
+<b>어떤 물성을 신경 써야 하는가</b> — 켠 해석에 쓰이는 물성만 결과에 영향을 줍니다.
+열전도도만 볼 것이라면 ε<sub>r</sub>이나 α는 그대로 두어도 됩니다(E는 위의 이유로 예외입니다).
+다만 밀도는 무게분율(wt%)로 함량을 넣을 때 부피분율 환산에 쓰이므로, 그 경우에는 정확해야 합니다.
+</div>
+
+<h4>내가 넣은 값은 어디에 남는가</h4>
+
+<table>
+  <tr><th>무엇</th><th>어디에</th><th>알아 둘 점</th></tr>
+  <tr><td class="q">라이브러리의 수정·추가</td>
+      <td>이 <b>브라우저</b></td>
+      <td>다른 PC로는 <span class="ui">Export</span> → <span class="ui">Import</span>로 옮깁니다. 브라우저 사이트 데이터를 지우면 사라지므로 중요한 재료는 내보내 두십시오.</td></tr>
+  <tr><td class="q">해석에 실제로 쓰인 값</td>
+      <td>그 런의 <span class="code">spec.json</span>에 <b>숫자 그대로</b></td>
+      <td><b>런은 그 자체로 완결됩니다.</b> 라이브러리가 바뀌어도 이미 끝난 해석의 결과·보고서·재현에는 아무 영향이 없습니다.</td></tr>
+</table>
+
+<div class="note">
+프리셋이나 예전 입력 파일은 재료 값을 <b>케이스 안에 따로</b> 갖고 있을 수 있습니다. 그 값이 라이브러리와
+다르면 Structure 편집기의 물성 목록에 "own values"로 표시되고, <span class="ui">Use library values</span>로
+라이브러리 값으로 바꿀 수 있습니다. 동료에게 조건을 넘길 때는 입력 파일(<span class="code">spec.json</span>)을
+그대로 주십시오 — 물성이 숫자로 들어 있어 받는 쪽 라이브러리와 무관하게 같은 해석이 돌아갑니다.
+</div>
+
+<h3>4.4 이방성 재료를 다룰 때</h3>
+
+<p>h-BN, 그래파이트, 탄소섬유처럼 <b>그 자체가 방향에 따라 물성이 다른</b> 재료가 있습니다.
+라이브러리에는 이런 재료가 <b>방향 평균값</b>으로 들어 있습니다(이름에 "isotropic
+approximation" 또는 "orientation-averaged"라고 적혀 있습니다).</p>
+
+<p>즉 <b>입자가 정렬되어 생기는 이방성은 계산되지만</b>(입자를 한 방향으로 눕히면
+결과 텐서가 이방적으로 나옵니다), <b>입자 내부의 결정 이방성</b>은 평균으로
+뭉뚱그려집니다. 판상 BN의 면내/두께방향 차이가 매우 큰 경우에는 이 점이
+과소평가로 이어질 수 있으니 결과를 보수적으로 해석하십시오.</p>
+
+<h3>4.5 Materials in this case 표</h3>
+
+<p>패널 아래쪽에는 현재 케이스의 기지·상·껍질이 쓰는 재료와 그 k, E, α가 한눈에 보입니다.
+줄을 누르면 그 재료가 위에서 열립니다. 기지와 필러의 물성 대비가 얼마나 큰지 미리 확인하는
+용도이기도 합니다. 이 <b>대비(contrast)</b>가 클수록 해상도가 더 필요합니다 — 예를 들어
+에폭시(0.2)와 AlN(150)은 약 750배 차이이며, 이런 경우 복셀이 거칠면 오차가 커집니다(6장).</p>
+</div>

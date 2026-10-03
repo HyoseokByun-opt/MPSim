@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPSim · Material Property Simulation</title>
+<link rel="stylesheet" href="/static/app.css?v={{ version }}">
+</head>
+<body>
+<div class="ws" id="ws">
+  <!-- ================================================================ title bar -->
+  <header class="titlebar">
+    <div class="brand" id="brand"></div>
+    <div class="tb-case"><label for="caseName">Case</label><input id="caseName" data-k="name" spellcheck="false" autocomplete="off"></div>
+    <div class="grow"></div>
+    <span class="tb-status" id="tbStatus"></span>
+    <button class="tbtn primary" id="btnRun" title="Generate the structure and run the selected analyses"></button>
+    <button class="tbtn danger" id="btnStop" disabled></button>
+  </header>
+
+  <!-- ================================================================ ribbon -->
+  <nav class="ribbon">
+    <div class="rtabs" id="rtabs">
+      <button data-tab="home" class="on">Home</button>
+      <button data-tab="material">Material</button>
+      <button data-tab="structure">Structure</button>
+      <button data-tab="domain">Domain</button>
+      <button data-tab="analysis">Structure Analysis</button>
+      <button data-tab="simulation">Simulation</button>
+      <button data-tab="doe">DOE</button>
+      <button data-tab="optimization">Optimization</button>
+      <button data-tab="calibration">Calibration</button>
+      <button data-tab="results">Results</button>
+    </div>
+    <div class="rbar" id="rbar"></div>
+  </nav>
+
+  <!-- ================================================================ body -->
+  <div class="body">
+    <aside class="lpanel">
+      <div class="phead" id="lhead"></div>
+      <div class="pscroll" id="lbody"></div>
+    </aside>
+
+    <main class="center">
+      <div class="ctabs" id="ctabs">
+        <button data-c="vis" class="on"></button>
+        <button data-c="res"></button>
+        <button data-c="doe"></button>
+        <button data-c="opt"></button>
+        <button data-c="cal"></button>
+        <button data-c="rep"></button>
+        <div class="grow"></div>
+        <span class="ctitle" id="cTitle"></span>
+      </div>
+
+      <section class="cpage on" id="c-vis">
+        <div class="vtoolbar">
+          <div class="seg" id="vMode"><button data-m="3d" class="on">3D</button><button data-m="2d">2D</button><button data-m="quad">3D + sections</button></div>
+          <div class="vsep"></div>
+          <select id="vField" title="Displayed quantity"></select>
+          <select id="vCmap" title="Colour map"><option value="jet">Jet</option><option value="turbo">Turbo</option><option value="viridis">Viridis</option><option value="coolwarm">Cool–warm</option><option value="gray">Grey</option></select>
+          <select id="vRange" title="Colour range"><option value="auto">1–99 %</option><option value="full">Min–max</option><option value="manual">Manual</option></select>
+          <label class="chk inline" title="Logarithmic colour scale"><input type="checkbox" id="vLog"> Log</label>
+          <div class="grow"></div>
+          <button class="ibtn" data-cam="iso" title="Isometric view">ISO</button>
+          <button class="ibtn" data-cam="x" title="View along +X">+X</button>
+          <button class="ibtn" data-cam="y" title="View along +Y">+Y</button>
+          <button class="ibtn" data-cam="z" title="View along +Z">+Z</button>
+          <button class="ibtn" data-cam="reset" title="Fit to view" id="camFit"></button>
+          <div class="vsep"></div>
+          <button class="ibtn" id="vShot" title="Save a screen capture"></button>
+          <button class="ibtn" id="vRender" title="Render a high-resolution figure on the server (PyVista)"></button>
+        </div>
+        <div class="vstage m3d" id="vStage">
+          <div class="vpane v3d" id="v3d">
+            <div class="vempty" id="vEmpty"></div>
+            <div class="vhud" id="vHud"></div>
+            <div class="vcbar" id="vCbar"></div>
+            <div class="vfoot" id="vFoot"></div>
+          </div>
+          <div class="vpane v2d" data-axis="z"><canvas></canvas><div class="vlabel">XY section · z</div></div>
+          <div class="vpane v2d" data-axis="y"><canvas></canvas><div class="vlabel">XZ section · y</div></div>
+          <div class="vpane v2d" data-axis="x"><canvas></canvas><div class="vlabel">YZ section · x</div></div>
+          <div class="v2dbar" id="v2dBar">
+            <div class="seg" id="vAxis2d"><button data-a="z" class="on">Z</button><button data-a="y">Y</button><button data-a="x">X</button></div>
+            <input type="range" id="v2dSlice" min="0" max="1" value="0">
+            <span id="v2dPos"></span>
+          </div>
+          <div class="vtip" id="vTip" hidden></div>
+          <div class="livebox" id="liveBox" hidden></div>
+        </div>
+      </section>
+
+      <section class="cpage" id="c-res">
+        <div class="rv">
+          <nav class="rvnav" id="rvNav"></nav>
+          <div class="rvbody" id="rvBody"></div>
+        </div>
+      </section>
+
+      <section class="cpage" id="c-doe">
+        <div class="vtoolbar">
+          <select id="doeSel" title="DOE study"></select>
+          <span class="hint" id="doeInfo"></span>
+          <div class="grow"></div>
+          <!-- any input or response against any other, with a third on the
+               colour and a fourth on the size: the study is interrogated here
+               rather than in a fixed set of charts -->
+          <span class="hint">x</span><select id="scX" title="Horizontal axis"></select>
+          <span class="hint">y</span><select id="scY" title="Vertical axis"></select>
+          <span class="hint">colour</span><select id="scC" title="Quantity shown as the point colour"></select>
+          <span class="hint">size</span><select id="scS" title="Quantity shown as the point size"></select>
+          <button class="btn sm" id="doeCsv"></button>
+          <button class="btn sm danger" id="doeDelete"></button>
+        </div>
+        <div class="doebody" id="doeBody"></div>
+      </section>
+
+      <section class="cpage" id="c-opt">
+        <div class="vtoolbar">
+          <!-- building a model you can trust and using it to search are two
+               different jobs; doing them behind one button hid whether the
+               model was any good -->
+          <div class="seg" id="optStage">
+            <button data-stage="model" class="on">1 · Surrogate model</button>
+            <button data-stage="optimise">2 · Optimisation</button>
+          </div>
+          <select id="optSel" title="DOE study"></select>
+          <select id="optResp" title="Response quantity"></select>
+          <select id="optGoal" title="Optimisation goal">
+            <option value="max">Maximise</option>
+            <option value="min">Minimise</option>
+            <option value="target">Reach a target</option>
+          </select>
+          <input type="number" step="any" id="optTarget" title="Target value" placeholder="target" hidden>
+          <button class="btn sm primary" id="optRun"></button>
+          <span class="hint" id="optInfo"></span>
+        </div>
+        <div class="doebody" id="optBody"></div>
+      </section>
+
+      <section class="cpage" id="c-cal">
+        <div class="doebody calbody" id="calBody"></div>
+      </section>
+
+      <section class="cpage" id="c-rep">
+        <div class="repbar" id="reportBar"></div>
+        <iframe id="reportFrame" title="Report"></iframe>
+      </section>
+    </main>
+
+    <aside class="rpanel">
+      <div class="rptabs" id="rptabs">
+        <button data-r="display" class="on"></button>
+        <button data-r="runs"></button>
+      </div>
+      <div class="pscroll rpage on" id="r-display">
+        <div class="sec"><div class="sh" id="hScene"></div><div class="sb">
+          <label class="chk"><span class="switch"><input type="checkbox" id="vFaces"><span></span></span> Field on the RVE faces</label>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vParticles" checked><span></span></span> Particle and pore surfaces</label>
+          <div class="seg sm" id="vSurfStyle" title="How particles and pores are drawn"><button data-style="smooth" class="on">Smooth</button><button data-style="voxels">Voxels</button></div>
+          <div class="hint" id="vSurfStyleHint">Smooth: a surface per particle, smoothed within a voxel of the voxel boundary. Voxels: every voxel the solver used (GPU volume rendering), each in the colour of its own value.</div>
+          <div class="note warn" id="vRegionNote" hidden></div>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vColorParticles" checked><span></span></span> Colour surfaces by the field</label>
+          <div class="slrow"><span class="hint" style="text-align:left">Opacity</span><input type="range" id="vOpacity" min="0.05" max="1" step="0.05" value="1"><span id="vOpacityV">1.00</span></div>
+          <label class="chk" id="vVolumeRow"><span class="switch"><input type="checkbox" id="vVolume"><span></span></span> Volume rendering of the field</label>
+          <label class="chk" id="vNetworkRow"><span class="switch"><input type="checkbox" id="vNetwork"><span></span></span> Pore network (balls and sticks)</label>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vOutline" checked><span></span></span> Bounding box</label>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vAxes" checked><span></span></span> Axes with µm scale</label>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vParallel"><span></span></span> Parallel projection</label>
+          <div class="g2"><div><label class="f">Minimum</label><input type="number" step="any" id="vMin"></div><div><label class="f">Maximum</label><input type="number" step="any" id="vMax"></div></div>
+        </div></div>
+        <!-- the two new sections come after the scene controls rather than
+             between them: splitting that section left the viewer showing two
+             Scene-like blocks with unrelated ones wedged in the middle -->
+        <div class="sec" id="secColours"><div class="sh" id="hColours"></div><div class="sb">
+          <div id="vColours"></div>
+          <button class="btn sm" id="vColourReset">Restore the default colours</button>
+        </div></div>
+        <div class="sec"><div class="sh" id="hLight"></div><div class="sb">
+          <div class="slrow"><span class="hint" style="text-align:left">Ambient</span><input type="range" id="vAmbient" min="0" max="1" step="0.02" value="0.18"><span id="vAmbientV">0.18</span></div>
+          <div class="slrow"><span class="hint" style="text-align:left">Diffuse</span><input type="range" id="vDiffuse" min="0" max="1" step="0.02" value="0.82"><span id="vDiffuseV">0.82</span></div>
+          <div class="slrow"><span class="hint" style="text-align:left">Specular</span><input type="range" id="vSpecular" min="0" max="1" step="0.02" value="0.28"><span id="vSpecularV">0.28</span></div>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vShade" checked><span></span></span> Shade the volume rendering</label>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vEdges"><span></span></span> Emphasise edges</label>
+          <div class="hint">Higher diffuse and a little specular make the structure read as solid; ambient lifts the shadows.</div></div></div>
+        <div class="sec"><div class="sh" id="hPhases"></div><div class="sb"><div id="vPhaseToggles"></div></div></div>
+        <div class="sec"><div class="sh" id="hSections"></div><div class="sb">
+          <div class="hint">Section positions are shared by the 3D planes and the 2D views.</div>
+          <div class="slrow"><label class="chk inline"><input type="checkbox" id="vShowX"> X</label><input type="range" id="vSx"><span id="vSxv"></span></div>
+          <div class="slrow"><label class="chk inline"><input type="checkbox" id="vShowY"> Y</label><input type="range" id="vSy"><span id="vSyv"></span></div>
+          <div class="slrow"><label class="chk inline"><input type="checkbox" id="vShowZ"> Z</label><input type="range" id="vSz"><span id="vSzv"></span></div>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vClip"><span></span></span> Cut surfaces at the Z section</label>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vOutlines2d" checked><span></span></span> Phase boundaries in 2D</label>
+        </div></div>
+        <div class="sec" id="vPathsSec"><div class="sh" id="hVectors"></div><div class="sb">
+          <label class="chk" id="vVectorsRow"><span class="switch"><input type="checkbox" id="vVectors"><span></span></span> Vector arrows of the field</label>
+          <div class="slrow"><span class="hint" style="text-align:left">Arrow density</span><input type="range" id="vVecDensity" min="0.4" max="2.2" step="0.1" value="1"><span id="vVecDensityV">1.0</span></div>
+          <div class="slrow"><span class="hint" style="text-align:left">Arrow length</span><input type="range" id="vVecScale" min="0.3" max="3" step="0.1" value="1"><span id="vVecScaleV">1.0</span></div>
+          <label class="chk"><input type="checkbox" id="vVecUniform"> Same length for every arrow (direction only)</label>
+          <div class="hint">Arrows are drawn for a flux, current, field or velocity (a quantity solved as a vector), not for a temperature or potential. Density sets how many stand along an edge; length scales them; by default the length follows the square root of the magnitude, and the colour gives the magnitude itself.</div>
+          <label class="f">Field lines and percolation paths</label>
+          <select id="vPath"></select>
+          <label class="chk"><span class="switch"><input type="checkbox" id="vAnimate" checked><span></span></span> Animate: tracers move along the lines at the local speed</label>
+          <div class="hint" id="vPathInfo"></div>
+        </div></div>
+        <div class="hint" id="vInfo"></div>
+      </div>
+      <div class="pscroll rpage" id="r-runs"><div id="runsList"></div></div>
+    </aside>
+  </div>
+
+  <!-- ================================================================ dock -->
+  <section class="dock" id="dock">
+    <div class="dtabs" id="dtabs">
+      <button data-d="console" class="on">Console</button>
+      <button data-d="conv">Solver convergence</button>
+      <button data-d="checks">RVE checks <span id="chkBadge"></span></button>
+      <button data-d="partial">Intermediate results</button>
+      <button class="dtoggle" id="dockToggle" title="Collapse or expand the dock"></button>
+    </div>
+    <div class="dpage on" id="d-console"><pre id="console"></pre></div>
+    <div class="dpage" id="d-conv"><canvas id="convChart" class="chart"></canvas></div>
+    <div class="dpage" id="d-checks"><table class="grid" id="rveChecks"></table></div>
+    <div class="dpage" id="d-partial" style="padding:8px 12px"><div id="partialBox"></div></div>
+  </section>
+
+  <!-- ================================================================ status bar -->
+  <footer class="statusbar">
+    <span class="sb-state" id="sbState"><i class="dot idle"></i>Ready</span>
+    <div class="sb-prog"><div id="progBar"></div></div>
+    <span id="sbStage"></span>
+    <div class="grow"></div>
+    <span id="sbGrid"></span>
+    <span id="sbServer"></span>
+  </footer>
+</div>
+
+<div class="modal" id="modal" hidden><div class="mbox"><div class="mhead"><b id="mTitle"></b><div class="grow"></div><input id="mFilter" placeholder="Filter" style="width:220px"><button class="btn sm" id="mClose">Close</button></div><div class="mbody" id="mBody"></div></div></div>
+<div id="toast" class="toast" hidden></div>
+<script src="/static/vendor/vtk.js"></script>
+<script src="/static/icons.js?v={{ version }}"></script>
+<script src="/static/charts.js?v={{ version }}"></script>
+<script src="/static/viewer.js?v={{ version }}"></script>
+<script src="/static/app.js?v={{ version }}"></script>
+</body>
+</html>

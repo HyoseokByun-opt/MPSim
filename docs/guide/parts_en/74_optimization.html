@@ -1,0 +1,167 @@
+<div class="sec">
+<h2>29. Optimization — surrogate models and optimisation</h2>
+<p class="src">Open-source codes: <b>scikit-learn</b> Gaussian processes, <b>SciPy</b> global optimisation. Sobol indices and NSGA-II are own implementations</p>
+
+<p class="lead">The results gathered by a DOE are not left as they are: <b>a predictive model is built and used to find the optimum.</b> This tab separates the two
+into <b>distinct stages</b>.</p>
+
+<h3>29.1 Why two stages</h3>
+
+<p>A stage switch sits at the top of the screen.</p>
+
+<table>
+  <tr><th>Stage</th><th>What it does</th><th>The question it answers</th></tr>
+  <tr><td class="q">1 · Surrogate model</td>
+      <td>Trains a model on the finished runs and <b>scores it by cross-validation.</b></td>
+      <td>Can this model be trusted?</td></tr>
+  <tr><td class="q">2 · Optimisation</td>
+      <td>Searches the model — an optimum for one response, a <b>trade-off front</b> for several.</td>
+      <td>So what should be made?</td></tr>
+</table>
+
+<div class="note">
+Doing both with one button would mean <b>accepting an optimum without checking that the model is any good</b>. The optimum is the model's product; a poor model gives
+a poor optimum. Hence the enforced order.
+</div>
+
+<p>A DOE study is needed first (chapter 28). Choose the study, the response and the goal (<span class="ui">Maximise</span> / <span class="ui">Minimise</span> /
+<span class="ui">Reach a target</span>) and press <span class="ui">Run optimisation</span>.</p>
+
+<h3>29.2 Stage 1 — the surrogate and its accuracy</h3>
+
+<figure>
+  <img src="figures/ui_optimization.png">
+  <figcaption>Stage 1: the DOE of example A analysed for maximum density.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Tile</th><th>Example</th><th>Meaning</th></tr>
+  <tr><td class="q">Best run so far</td><td>2.207 g/cm³<br>AlN content 50 · diameter 3</td>
+      <td>The best result <b>among those actually computed</b> — not an estimate.</td></tr>
+  <tr><td class="q">Predicted optimum</td><td>2.207 g/cm³ ± 2.33e-4</td>
+      <td>The optimum predicted by the model and its uncertainty (1σ).</td></tr>
+  <tr><td class="q">Surrogate accuracy</td><td>R² 0.6942<br>LOO · RMSE 0.1124</td>
+      <td><b>The value to read most honestly</b> — see below.</td></tr>
+  <tr><td class="q">Runs used</td><td>7</td>
+      <td>Runs used for training. <b>Failed cases are excluded</b> (chapter 28).</td></tr>
+</table>
+
+<h4>How the accuracy is scored</h4>
+
+<p>As the screen explains, <b>each point is predicted by a model trained without it</b> (leave-one-out cross-validation). It measures not how well the model memorised
+its own data but <b>how wrong it will be under conditions it has not seen</b>.</p>
+
+<h4>Choosing the model — Surrogate tuning in the left panel</h4>
+
+<p>Which model fits well is <b>a property of the response, not a setting fixed once</b>, so it is left open to change.</p>
+
+<table>
+  <tr><th>Setting</th><th>When to change it</th></tr>
+  <tr><td class="q">Model</td>
+      <td>Matérn 5/2 (default, smooth) · 3/2 · 1/2 (rough responses) · RBF (very smooth) · quadratic surface (few points). <b>Retrain after changing and compare R².</b></td></tr>
+  <tr><td class="q">Noise</td>
+      <td>Left empty, it is estimated automatically. Given a value, the model <b>does not force itself through the scatter</b> — particularly important here, where every case
+      generates its structure from new random numbers.</td></tr>
+  <tr><td class="q">Restarts</td>
+      <td>How many times the likelihood optimisation restarts. Raise it when results are unstable.</td></tr>
+</table>
+
+<div class="warn">
+Changing the settings <b>does not retrain automatically.</b> Seeing how R² changes should be a deliberate action, so press <span class="ui">Run optimisation</span> again.
+</div>
+
+<h3>29.3 Key design factors — which factors matter</h3>
+
+<table>
+  <tr><th>Parameter</th><th>Sobol total</th><th>Sobol first</th><th>Std. reg. coeff.</th><th>Pearson r</th><th>Range</th></tr>
+  <tr><td class="q">AlN content</td><td>99.91 %</td><td>95.41 %</td><td>0.8846</td><td>0.9468</td><td>20 … 50</td></tr>
+  <tr><td class="q">AlN diameter</td><td>15.88 %</td><td>10.35 %</td><td>0.2591</td><td>0.4715</td><td>1 … 3</td></tr>
+</table>
+
+<ul>
+  <li><b>Sobol total</b> is everything the factor takes part in, <b>first order</b> its share alone. <b>The difference is the interaction</b> (4.5 % for content, 5.5 % for
+      diameter) — the "effect of size reversing with content" seen in the table of chapter 28, now as numbers.</li>
+  <li>The <b>standardised regression coefficient</b> keeps its sign and tells the <b>direction</b>.</li>
+  <li>This analysis says nothing outside the <b>Range</b>.</li>
+</ul>
+
+<div class="note">
+Total indices summing to more than 100 % is normal: the interaction share is counted on both sides. In the example the content dominates and the size is secondary,
+which makes clear <b>where to spend the design effort</b>.
+</div>
+
+<h3>29.4 Stage 2 — the optimum of one response</h3>
+
+<figure>
+  <img src="figures/ui_opt_stage2.png">
+  <figcaption>Stage 2: left, the optimum of one response; right, the trade-off front of several.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Parameter</th><th>Optimum</th><th>Range searched</th><th>Suggested next run</th></tr>
+  <tr><td class="q">AlN content</td><td>50</td><td>20 … 50</td><td>50</td></tr>
+  <tr><td class="q">AlN diameter</td><td>3</td><td>1 … 3</td><td>2.673</td></tr>
+</table>
+
+<div class="warn">
+<b>The optimum (50, 3) sits at a corner of the search range.</b> That almost always means "the true optimum lies outside the range". Density naturally rises with AlN;
+the thing to do is <b>widen the content range and run the DOE again</b>. Only an optimum inside the range carries meaning.
+</div>
+
+<p>The <b>Suggested next run</b> is the point of largest <b>expected improvement</b>, weighing places predicted good against places still unknown. The example's diameter
+2.673 lies in <b>a stretch never checked</b>, since the DOE ran only 1 and 3. Two buttons put that condition straight into the queue to check the prediction by computation.</p>
+
+<h3>29.5 Stage 2 — several objectives at once (NSGA-II)</h3>
+
+<p>In real design one usually wants more than one thing, and the wishes conflict. More filler raises the thermal conductivity but <b>adds weight</b>. Then no single best design
+exists; what remains is <b>the set of designs in which nothing can be improved without giving something else up</b> — the <b>Pareto front</b>, which NSGA-II finds.</p>
+
+<p>Choose two or more responses, set max/min for each, and press <span class="ui">Find the trade-off front</span>.</p>
+
+<h4>By example — a light material that conducts well</h4>
+
+<p><b>Minimising</b> density while <b>maximising</b> thermal conductivity makes the two collide head-on. The front from the study of example A:</p>
+
+<table>
+  <tr><th>End</th><th>Density</th><th>Thermal conductivity</th></tr>
+  <tr><td class="q">Lightest</td><td>1.590 g/cm³</td><td>0.429 W/m·K</td></tr>
+  <tr><td class="q">Best conducting</td><td>2.207 g/cm³</td><td>1.131 W/m·K</td></tr>
+</table>
+
+<p>Everything in between is a <b>possible design</b>. All this table says is that raising the conductivity 2.6 times costs 39 % more density; choosing by that exchange rate is
+the design decision. The screen also marks the best-balanced point (the <b>knee</b>).</p>
+
+<div class="note">
+<b>Without a conflict the front is a single point.</b> Setting density and conductivity <b>both to maximise</b>, more AlN improves both, nothing conflicts, and the screen shows
+"Trade-off points 1". Not an error but <b>the answer "there is nothing to weigh"</b>.
+</div>
+
+<div class="warn">
+<b>A front is only as trustworthy as the models beneath it.</b> The screen shows R² per response. In the example above density has R² 0.694 but <b>thermal conductivity 0.044</b>
+— practically no predictive power. The vertical axis of this front cannot be trusted, and <b>no conclusion should be drawn before more points are gathered.</b> In such a case
+"the model is not good enough yet" is a more important result than the shape of the front.
+</div>
+
+<h3>29.6 Recommended order</h3>
+<ol>
+  <li>Sweep <b>widely</b> with a DOE (chapter 28).</li>
+  <li>In stage 1 see <b>which factors matter</b>; if R² is low, try another model.</li>
+  <li>If the optimum sits at <b>a corner of the range</b>, widen the range and rerun.</li>
+  <li>Add a few points with <span class="ui">Queue the suggested run</span> and retrain.</li>
+  <li>Once R² is high enough, go to stage 2 and read the optimum or the trade-off front.</li>
+  <li>Run <b>one more real analysis</b> at the chosen condition to confirm the prediction.</li>
+</ol>
+
+<h3>29.7 Limits</h3>
+<table>
+  <tr><th>Item</th><th>Description</th></tr>
+  <tr><td class="q">No predictions outside the range</td>
+      <td>Valid only within the range swept by the DOE; no extrapolation.</td></tr>
+  <tr><td class="q">Few points, weak model</td>
+      <td>Five to ten points per factor are needed. Until then the Sobol indices and regression coefficients are more reliable.</td></tr>
+  <tr><td class="q">Computational uncertainty is unknown</td>
+      <td>Each run's value is trained as exact. For responses that scatter with the seed, the scatter enters the model error — the Noise setting mitigates it.</td></tr>
+  <tr><td class="q">Manufacturability is not judged</td>
+      <td>Whether the optimum can actually be made is unknown; geometrically impossible regions may exist, like the failed case of chapter 28.</td></tr>
+</table>
+</div>

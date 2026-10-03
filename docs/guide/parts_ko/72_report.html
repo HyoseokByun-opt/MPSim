@@ -1,0 +1,72 @@
+<div class="sec">
+<h2>27. 보고서와 파일 내보내기</h2>
+
+<p class="lead">해석이 끝나면 프로그램이 <b>보고서를 자동으로 만들어 둡니다.</b>
+따로 정리할 필요 없이, 그대로 보내거나 인쇄할 수 있는 형태입니다.</p>
+
+<h3>27.1 Report 탭</h3>
+
+<figure>
+  <img src="figures/ui_report.png">
+  <figcaption>Report 탭. 예시 A의 자동 생성 보고서입니다.</figcaption>
+</figure>
+
+<p>보고서는 위에서부터 다음 순서로 구성됩니다.</p>
+
+<table>
+  <tr><th>구성</th><th>내용</th></tr>
+  <tr><td class="q">제목과 이력</td>
+      <td>해석 이름, <b>프로그램 버전, 실행 일시, 소요 시간, 사용한 솔버</b>가 한 줄로 기록됩니다. 예시 A는 "MPSim 1.0.0 · 2026-09-17 10:22:04 · elapsed 98 s · solver NASA PuMA (periodic finite elements)"입니다.</td></tr>
+  <tr><td class="q">Verification 한 줄</td>
+      <td>"24 passed · 3 warnings · 0 failed". <b>보고서를 받은 사람이 가장 먼저 봐야 할 줄</b>입니다(31장).</td></tr>
+  <tr><td class="q">대표값 타일</td>
+      <td>밀도, 열전도도, Dk, Df, CTE, 영률, 입자 수 등 핵심 값이 큰 글씨로 나옵니다. 각 타일 아래에 <b>방향별 값</b>도 작게 붙습니다.</td></tr>
+  <tr><td class="q">1. Input</td>
+      <td>어떤 재료를 어떤 형상·함량으로 넣었는지. Role / Name / Shape and size / Content / Principal properties 열로 정리됩니다.</td></tr>
+  <tr><td class="q">2. RVE model</td>
+      <td>격자 크기, 복셀 크기, 구조 그림.</td></tr>
+  <tr><td class="q">해석별 절</td>
+      <td>실행한 각 해석의 결과 표와 그림.</td></tr>
+  <tr><td class="q">검증 상세</td>
+      <td>점검 항목 전체와 통과·경고·실패.</td></tr>
+</table>
+
+<div class="note">
+<b>입력이 결과와 함께 기록된다는 점이 중요합니다.</b> 물성값만 적힌 표는 몇 달 뒤에
+보면 어떤 조건이었는지 알 수 없습니다. 이 보고서는 입력·해상도·버전·검증 결과를
+모두 담고 있으므로, <b>그 자체로 재현 가능한 기록</b>이 됩니다.
+</div>
+
+<h3>27.2 세 가지 내보내기</h3>
+
+<table>
+  <tr><th>단추</th><th>무엇이 나오는가</th><th>언제 쓰는가</th></tr>
+  <tr><td class="q">Open in a new tab</td>
+      <td>보고서를 새 탭에서 엽니다. 브라우저에서 <b>그대로 인쇄하거나 PDF로 저장</b>할 수 있습니다.</td>
+      <td>빠르게 확인하거나 PDF로 남길 때</td></tr>
+  <tr><td class="q">Save HTML</td>
+      <td>그림까지 <b>하나의 HTML 파일에 담아</b> 저장합니다. 외부 파일에 의존하지 않으므로 그 파일 하나만 보내면 됩니다.</td>
+      <td>메일로 보낼 때. 받는 사람은 브라우저로 열기만 하면 됩니다.</td></tr>
+  <tr><td class="q">Complete ZIP</td>
+      <td>보고서와 함께 <b>원본 데이터 전부</b>를 묶습니다 — 결과 JSON, 구조 파일, 필드 데이터, 그림.</td>
+      <td>다른 사람이 결과를 다시 열어 보거나 재해석해야 할 때</td></tr>
+</table>
+
+<h3>27.3 그 밖의 내보내기</h3>
+
+<table>
+  <tr><th>위치</th><th>내보내는 것</th></tr>
+  <tr><td class="q">DOE 탭의 <span class="ui">CSV</span></td>
+      <td>모든 케이스의 인자와 응답을 표로 저장합니다. 스프레드시트나 다른 분석 도구로 넘길 때 씁니다(28장).</td></tr>
+  <tr><td class="q">3D 화면의 그림 저장</td>
+      <td>현재 화면 그대로의 PNG, 또는 서버에서 다시 렌더링한 <b>고해상도 그림</b>. 논문·발표 자료용입니다(26장).</td></tr>
+  <tr><td class="q">작업 폴더</td>
+      <td>해석마다 폴더가 하나씩 생기며 모든 산출물이 그 안에 있습니다. 구성은 <b>부록 C</b>를 보십시오.</td></tr>
+</table>
+
+<div class="warn">
+보고서를 다른 사람에게 보낼 때는 <b>Verification 줄을 함께 설명</b>해 주십시오.
+경고가 있는 값을 아무 말 없이 전달하면, 받는 사람은 그 값을 확정된 물성으로
+받아들이게 됩니다. 경고의 뜻과 대응은 31장에 정리되어 있습니다.
+</div>
+</div>

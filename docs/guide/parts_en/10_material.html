@@ -1,0 +1,148 @@
+<div class="sec">
+<h2>4. Material library (Material)</h2>
+
+<p class="lead">This tab is the <b>material library</b>. The properties of any material — matrix, filler or pore — are edited
+here, and new materials are added here. Which region uses which material is chosen in the <b>Structure tab</b> (chapter 5).</p>
+
+<figure>
+  <img src="figures/ui_panel_material.png" class="half">
+  <figcaption>The Material tab: the library list at the top, the properties of the selected material in the middle, the
+  materials this case uses at the bottom.</figcaption>
+</figure>
+
+<h3>4.1 Matrix and phases</h3>
+
+<p>The program sees a structure as <b>one matrix + several phases</b>.</p>
+<ul>
+  <li><b>Matrix</b> — the continuous material everything sits in: epoxy, silicone, alumina and the like.</li>
+  <li><b>Phase</b> — a filler or a pore inside it. Any number can be added, each with its shape, size and content.</li>
+</ul>
+<p>Both pick their material from the library <b>the same way, in the Structure tab</b>. Clicking the matrix row of the list
+opens the matrix editor, clicking a phase row opens the phase editor — the tab does not change. To change properties, click
+<span class="ui">Edit this material</span> in the editor or come to this tab.</p>
+
+<p>Pores are phases too: choose air or vacuum as the material. The program recognises a material with an elastic modulus of
+0 or less as <b>void</b> and treats it as pore space in the flow and diffusion analyses.</p>
+
+<h3>4.2 The library</h3>
+
+<p>52 materials common in semiconductor work are included: polymers (epoxy, PI, PTFE, silicone…), inorganics (SiO₂, Al₂O₃,
+AlN, BN, SiC…), metals (Cu, Ag, Al, solders…), carbons (CNT, graphite, carbon black), magnetic materials (Ni, carbonyl iron,
+ferrites), and air and vacuum. Appendix A lists them all.</p>
+
+<ul>
+  <li><b>Search</b> — by part of the name, group or description (e.g. "nitride", "ferrite").</li>
+  <li>Each row shows k, E, α and ε<sub>r</sub>, so the contrast of filler and matrix can be compared at once.</li>
+  <li><span class="chip">edited</span> — a built-in material with changed values, <span class="chip">user</span> — a material
+      added by the user, <span class="ui">in case</span> — used by the current case.</li>
+</ul>
+
+<p>Every material carries all the properties the analyses need.</p>
+
+<table>
+  <tr><th>Property</th><th>Symbol / unit</th><th>Used by</th></tr>
+  <tr><td class="q">Thermal conductivity</td><td>k (W/m·K)</td><td>Thermal conductivity; acoustics and radiation indirectly</td></tr>
+  <tr><td class="q">Density</td><td>ρ (g/cm³)</td><td>Thermal diffusivity, conversion of weight fractions</td></tr>
+  <tr><td class="q">Specific heat</td><td>c<sub>p</sub> (J/kg·K)</td><td>Thermal diffusivity</td></tr>
+  <tr><td class="q">Electrical conductivity</td><td>σ (S/m)</td><td>Electrical conductivity, EMI</td></tr>
+  <tr><td class="q">Relative permittivity / loss</td><td>ε<sub>r</sub>, tanδ</td><td>Permittivity and loss, EMI</td></tr>
+  <tr><td class="q">Relative permeability</td><td>μ<sub>r</sub></td><td>Permeability, EMI</td></tr>
+  <tr><td class="q">Young's modulus / Poisson's ratio</td><td>E (GPa), ν</td><td>Elasticity, thermal stress</td></tr>
+  <tr><td class="q">Thermal expansion</td><td>α (ppm/K)</td><td>CTE, thermal stress</td></tr>
+</table>
+
+<h3>4.3 Editing properties and adding materials</h3>
+
+<p>Clicking a material opens its name, description (source) and ten properties below. A changed value <b>goes into the library
+at once</b> and applies to <b>every region of the current case that uses the material</b> (matrix, phases, coating shells); the
+editor lists them by name.</p>
+
+<table>
+  <tr><th>Action</th><th>Button</th><th>What it does</th></tr>
+  <tr><td class="q">New material</td><td><span class="ui">New material</span></td>
+      <td>A new material starting from the values of the selected one. Rename it first; a group can be set.</td></tr>
+  <tr><td class="q">Duplicate</td><td><span class="ui">Duplicate</span></td>
+      <td>A copy with the same values — e.g. to keep a variant such as "Al₂O₃ (supplier A)".</td></tr>
+  <tr><td class="q">Restore</td><td><span class="ui">Restore library values</span></td>
+      <td>Returns an edited built-in material to its original values and applies them to the case again.</td></tr>
+  <tr><td class="q">Delete</td><td><span class="ui">Delete</span></td>
+      <td>Deletes user materials only. Regions using it keep their values.</td></tr>
+  <tr><td class="q">Export / Import</td><td><span class="ui">Export</span> / <span class="ui">Import</span></td>
+      <td>Saves the edited and added materials as a JSON file and reads them in another PC or browser.</td></tr>
+</table>
+
+<h4>Properties and their allowed ranges</h4>
+
+<p>The <b>ten properties are all required</b>. If any is empty or out of range, the analysis does not start and <b>every faulty
+entry is shown at once</b> — no need to fix one, retry and find the next.</p>
+
+<table>
+  <tr><th>Property</th><th>Symbol (unit)</th><th>Allowed range</th><th>Why the limit</th></tr>
+  <tr><td class="q">Thermal conductivity</td><td>k (W/m·K)</td><td>0 – 100,000</td><td></td></tr>
+  <tr><td class="q">Electrical conductivity</td><td>σ (S/m)</td><td>0 – 10<sup>9</sup></td><td>For an insulator, enter a very small value (e.g. 10<sup>-14</sup>) rather than 0.</td></tr>
+  <tr><td class="q">Relative permittivity</td><td>ε<sub>r</sub> (-)</td><td><b>1</b> – 100,000</td><td>Vacuum is 1, nothing is lower.</td></tr>
+  <tr><td class="q">Loss tangent</td><td>tanδ (-)</td><td>0 – 10</td><td></td></tr>
+  <tr><td class="q">Relative permeability</td><td>μ<sub>r</sub> (-)</td><td><b>1</b> – 1,000,000</td><td>For the same reason values below 1 are refused (diamagnetism is not modelled).</td></tr>
+  <tr><td class="q">Young's modulus</td><td>E (GPa)</td><td>0 – 5,000</td><td><b>0 has a special meaning — see below.</b></td></tr>
+  <tr><td class="q">Poisson's ratio</td><td>ν (-)</td><td>0 – <b>0.4999</b></td><td>0.5 is fully incompressible and the elastic solution diverges.</td></tr>
+  <tr><td class="q">Thermal expansion</td><td>α (ppm/K)</td><td><b>-100</b> – 1,000</td><td>The only property that may be negative (negative-expansion materials such as ZrW<sub>2</sub>O<sub>8</sub>).</td></tr>
+  <tr><td class="q">Density</td><td>ρ (g/cm³)</td><td>0 – 30</td><td></td></tr>
+  <tr><td class="q">Specific heat</td><td>c<sub>p</sub> (J/kg·K)</td><td>0 – 10,000</td><td></td></tr>
+</table>
+
+<div class="warn">
+<b>A Young's modulus of 0 means "pore".</b> The program decides whether a region is empty space <b>by E alone</b> — a region
+with E ≤ 0 is treated as a <b>pore</b>, not a solid. That is how <span class="ui">Air / pore (void)</span> and
+<span class="ui">Vacuum</span> are defined in the library.
+<br><br>
+This turns a common shortcut into a trap: <b>"no mechanics this time, so leave E at 0"</b>. A filler with E = 0 silently becomes
+a pore — the thermal conductivity is computed with air in its place, and the permeability analysis treats those particles as
+flow channels. <b>Give every solid a non-zero E even when mechanics is not used</b> (it need not be accurate).
+<br><br>
+Conversely, the flow and pore analyses (permeability, tortuosity, filtration, acoustics, porosimetry, pore network) <b>need at
+least one pore region</b>; without one they are refused with "require a pore (void) phase".
+</div>
+
+<div class="note">
+<b>Which properties matter</b> — only those used by the analyses switched on affect the results. For thermal conductivity
+alone, ε<sub>r</sub> and α can be left as they are (E is the exception above). The density, however, converts weight fractions
+(wt%) into volume fractions and must be right when contents are entered by weight.
+</div>
+
+<h4>Where the entered values are kept</h4>
+
+<table>
+  <tr><th>What</th><th>Where</th><th>Good to know</th></tr>
+  <tr><td class="q">Edits and additions to the library</td>
+      <td>This <b>browser</b></td>
+      <td>Move them to another PC with <span class="ui">Export</span> → <span class="ui">Import</span>. Clearing the browser's
+      site data removes them, so export important materials.</td></tr>
+  <tr><td class="q">The values an analysis actually used</td>
+      <td><b>As numbers</b> in the run's <span class="code">spec.json</span></td>
+      <td><b>A run is self-contained.</b> Later changes to the library do not affect the results, report or reproduction of
+      a finished analysis.</td></tr>
+</table>
+
+<div class="note">
+Presets and older input files can carry material values <b>of their own inside the case</b>. Where they differ from the
+library, the property list of the Structure editor marks them "own values", and <span class="ui">Use library values</span>
+replaces them with the library's. To hand conditions to a colleague, give the input file (<span class="code">spec.json</span>)
+itself — the properties are in it as numbers, so the same analysis runs regardless of the receiver's library.
+</div>
+
+<h3>4.4 Anisotropic materials</h3>
+
+<p>Some materials — h-BN, graphite, carbon fibre — <b>are themselves direction-dependent</b>. The library holds them as
+<b>orientation-averaged values</b> (their names say "isotropic approximation" or "orientation-averaged").</p>
+
+<p>The <b>anisotropy that comes from aligned particles is computed</b> (particles laid in one direction give an anisotropic
+result tensor), but the <b>crystal anisotropy inside a particle</b> is averaged away. Where it is very large, as between the
+in-plane and through-plane conductivity of BN platelets, this can lead to underestimates; read such results conservatively.</p>
+
+<h3>4.5 The Materials in this case table</h3>
+
+<p>The bottom of the panel shows the materials of the current matrix, phases and shells with their k, E and α. Clicking a row
+opens that material above. It also shows at a glance how large the property contrast between matrix and filler is. The larger
+the <b>contrast</b>, the more resolution is needed — epoxy (0.2) and AlN (150), for instance, differ by about 750×, and a coarse
+voxel then gives large errors (chapter 6).</p>
+</div>

@@ -1,0 +1,109 @@
+<div class="sec">
+<h2>Appendix B. Presets</h2>
+
+<p class="lead">Presets are <b>complete set-ups ready to run</b>: materials, shapes, contents, resolution and analyses are all set; choose one and run.</p>
+
+<p>Use them in two ways:</p>
+<ul>
+  <li><b>When learning</b> — run a similar preset, look at the results, then change the values little by little.</li>
+  <li><b>When looking for a modelling technique</b> — answers to questions such as "how do I lay platelets flat?", "hollow particles?", "interface resistance?" are in the
+      <b>Technique</b> column below. Loading that preset and inspecting its settings is the fastest way.</li>
+</ul>
+
+<h3>B.1 Semiconductor package materials</h3>
+
+<table>
+  <tr><th>Preset</th><th>What it models</th><th>Technique to learn</th></tr>
+  <tr><td class="q">EMC · epoxy + fused silica 50 vol%</td>
+      <td>Semiconductor moulding compound; spherical silica dominates the CTE and conductivity.</td>
+      <td>Giving a <b>log-normal size distribution</b> (cv 0.25)</td></tr>
+  <tr><td class="q">Underfill · epoxy + SiO₂ 40 vol% (1 µm)</td>
+      <td>Flip-chip underfill; the goal is <b>CTE matching</b> with the solder bumps.</td>
+      <td>Basic set-up of a fine monodisperse filler</td></tr>
+  <tr><td class="q">Low-Dk · PPE + hollow silica 30 vol%</td>
+      <td>A substrate with Dk lowered by hollow silica.</td>
+      <td>Setting up <b>hollow particles (shell)</b>; the 0.3 µm shell thickness decides the resolution needed.</td></tr>
+  <tr><td class="q">High-k · epoxy + BaTiO₃ 30 vol%</td>
+      <td>Dielectric for embedded capacitors.</td>
+      <td>Seeing how <b>the distance between particles</b> dominates Dk for high-contrast dielectric fillers</td></tr>
+  <tr><td class="q">Low CTE · epoxy + ZrW₂O₈ 40 vol%</td>
+      <td>A composite with the CTE lowered by a negative-expansion filler.</td>
+      <td>Handling a <b>negative CTE</b></td></tr>
+  <tr><td class="q">Sintered Ag · 15 % porosity</td>
+      <td>Die attach for power modules: how much the pores cut thermal and electrical conduction and stiffness.</td>
+      <td>Adding <b>network-shaped pores</b></td></tr>
+  <tr><td class="q">ECA · epoxy + Ag flakes 20 vol%</td>
+      <td>Electrically conductive adhesive; compares in-plane and through-thickness percolation.</td>
+      <td><b>Laying flat platelets (spheroid, aspect ratio 0.15)</b> and allowing overlap</td></tr>
+</table>
+
+<h3>B.2 Thermal management materials</h3>
+
+<table>
+  <tr><th>Preset</th><th>What it models</th><th>Technique to learn</th></tr>
+  <tr><td class="q">TIM · silicone + Al₂O₃ 50 vol%<br>with interfacial resistance</td>
+      <td>Thermal gap filler. Because of the interface resistance, <b>performance at the same content depends on the particle size.</b></td>
+      <td>Giving an <b>interface thermal resistance (r_int)</b> — the most important setting for closing the gap between real parts and calculation.</td></tr>
+  <tr><td class="q">TIM · epoxy + AlN 40 vol%</td>
+      <td>Highly conductive epoxy, the same composition as <b>example A of this guide</b>.</td>
+      <td>With high filler contrast, <b>the resin films between particles</b> dominate conduction (chapter 24)</td></tr>
+  <tr><td class="q">Silicone + h-BN platelets 25 vol%<br>(in-plane orientation)</td>
+      <td>Heat-spreading sheet. Platelet BN lies in the xy plane, so <b>in-plane and through-thickness conductivities differ strongly.</b></td>
+      <td>Creating anisotropy with <b>an orientation and its spread (spread_deg)</b></td></tr>
+</table>
+
+<h3>B.3 Electromagnetics</h3>
+
+<table>
+  <tr><th>Preset</th><th>What it models</th><th>Technique to learn</th></tr>
+  <tr><td class="q">EMI · epoxy + Ni rods 12 vol%</td>
+      <td>Magnetic metal rods; electrical percolation and permeability decide the shielding together.</td>
+      <td>Forming a network at low content with <b>rods (spherocylinders)</b>. Compare percolation at only 12 vol% with spheres (example C of chapter 8 fails even at 30 vol%).</td></tr>
+</table>
+
+<h3>B.4 Porous media and filters</h3>
+
+<table>
+  <tr><th>Preset</th><th>What it models</th><th>Technique to learn</th></tr>
+  <tr><td class="q">Porous low-k · SiO₂ + 30 % open pores</td>
+      <td>Mesoporous silica low-k film, including the <b>rarefied gas</b> in nanopores.</td>
+      <td>Switching on the <b>Knudsen correction</b> (chapter 17), essential with 5 nm pores.</td></tr>
+  <tr><td class="q">Porous Al₂O₃ · 35 % open pores</td>
+      <td>Porous ceramic for vacuum chucks and filters, of the same family as <b>example B of this guide</b>.</td>
+      <td>A set-up running permeability, tortuosity, intrusion, pore network, radiation and percolation <b>at once</b></td></tr>
+  <tr><td class="q">PTFE membrane · 70 % porosity</td>
+      <td>Filtration membrane for ultrapure water: largest through-pore and <b>isopropanol bubble point</b>.</td>
+      <td><b>Changing the intrusion fluid</b>; values are comparable only with the liquid used in the experiment (chapter 22).</td></tr>
+  <tr><td class="q">Sintered SUS316L · 40 % porosity</td>
+      <td>Point-of-use gas filter: permeability and pore entry size of sintered stainless steel.</td>
+      <td>Handling metallic porous bodies; the pressure loss is converted for a 2 mm thickness.</td></tr>
+</table>
+
+<h3>B.5 Insulation and acoustics</h3>
+
+<table>
+  <tr><th>Preset</th><th>What it models</th><th>Technique to learn</th></tr>
+  <tr><td class="q">Glass-fibre insulation · 8 vol%</td>
+      <td>Equipment insulation that also absorbs sound; fibres lie in the xy plane.</td>
+      <td>A structure whose <b>matrix is air</b> (the filler is the solid): fibre shape (cylinder), absorption at 25 mm thickness, radiation at 600 K (chapters 18, 19).</td></tr>
+</table>
+
+<h3>B.6 Choosing a preset</h3>
+
+<table>
+  <tr><th>What you want</th><th>Preset to start from</th></tr>
+  <tr><td class="q">Remove heat with fillers</td><td>TIM · epoxy + AlN; for interface resistance, TIM · silicone + Al₂O₃</td></tr>
+  <tr><td class="q">Lower the CTE</td><td>Underfill; lower still, Low CTE · ZrW₂O₈</td></tr>
+  <tr><td class="q">Make it conduct electricity</td><td>ECA · Ag flakes (platelets), EMI · Ni rods (rods)</td></tr>
+  <tr><td class="q">Lower or raise the permittivity</td><td>Low-Dk · hollow silica / High-k · BaTiO₃</td></tr>
+  <tr><td class="q">Block electromagnetic waves</td><td>EMI · Ni rods</td></tr>
+  <tr><td class="q">Pass or filter fluids</td><td>Porous Al₂O₃, PTFE membrane, Sintered SUS316L</td></tr>
+  <tr><td class="q">Insulate or absorb sound</td><td>Glass-fibre insulation</td></tr>
+  <tr><td class="q">Direction-dependent properties</td><td>h-BN platelets or ECA · Ag flakes (orientation settings)</td></tr>
+</table>
+
+<div class="note">
+After loading a preset <b>anything can be changed.</b> Replace the materials with the properties of the material actually used, match the content and particle size, and it becomes
+a model of that material. Always check the Verification afterwards — the resolution of the preset may be insufficient for the new conditions (chapter 31).
+</div>
+</div>

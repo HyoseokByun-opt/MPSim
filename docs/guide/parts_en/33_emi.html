@@ -1,0 +1,201 @@
+<div class="sec">
+<h2>11. EMI shielding</h2>
+<p class="src">Open source used: <b>scikit-rf</b> transmission-line theory — combined with σ, ε<sub>r</sub> and μ<sub>r</sub> of the composite</p>
+
+<p class="lead">How many dB a plate of this material <b>blocks</b>. One point to note — this is <b>not a separate electromagnetic analysis</b>:
+it <b>converts the three properties of chapters 8–10 into the shielding of one plate</b>.</p>
+
+<h3>11.1 How it is measured</h3>
+
+<table>
+  <tr><th>Method</th><th>Description</th></tr>
+  <tr><td class="q">Coaxial transmission line<br>(ASTM D4935)</td>
+      <td><b>The standard method.</b> A disc specimen in a coaxial fixture; a network analyser measures the transmitted signal (S21).
+      SE = −20·log₁₀|S21| (dB). Widely used because the specimen can be small.</td></tr>
+  <tr><td class="q">Shielded room</td>
+      <td>The material on a real enclosure; field strengths inside and outside are compared. Close to real use, but needs large specimens.</td></tr>
+  <tr><td class="q">Free space</td>
+      <td>The specimen between horn antennas; suited to high frequencies (GHz).</td></tr>
+</table>
+
+<h3>11.2 How shielding happens — three mechanisms</h3>
+
+<div class="eq">SE<sub>total</sub> = R + A + M　(dB)</div>
+
+<table>
+  <tr><th>Mechanism</th><th>Principle</th><th>Grows with</th></tr>
+  <tr><td class="q">Reflection (R)</td>
+      <td>When the <b>impedances of material and air differ</b>, the wave bounces off the surface and does not even enter.</td>
+      <td><b>Higher conductivity</b>. Dominant at low frequencies.</td></tr>
+  <tr><td class="q">Absorption (A)</td>
+      <td>The wave that enters decays <b>as it turns into heat</b>.</td>
+      <td><b>Greater thickness</b> and larger σ·μ. Dominant at high frequencies.</td></tr>
+  <tr><td class="q">Multiple reflections (M)</td>
+      <td>Bouncing back and forth inside, part of the wave comes back out. It can be <b>negative</b> (it reduces the shielding).</td>
+      <td>Matters only in thin plates; vanishes in thick ones.</td></tr>
+</table>
+
+<div class="note">
+The difference between reflection and absorption matters in practice. <b>A wave stopped by reflection goes elsewhere and causes problems
+there.</b> Materials that stop waves by <b>absorption</b> are therefore preferred, and that needs <b>magnetism (μ<sub>r</sub>)</b>, not just
+conductivity — the reason for magnetic fillers such as carbonyl iron.
+</div>
+
+<h3>11.3 How the simulator calculates it</h3>
+
+<p>In two steps. First the microstructure (RVE) is solved for the <b>effective properties</b> of the composite; then a plane wave meeting a
+<b>plate of thickness t</b> with those properties at normal incidence is transmitted and reflected according to the exact formulae
+(transmission line, Schelkunoff). Since v4 the first step is done <b>at every frequency separately</b>.</p>
+
+<h4>Complex homogenisation per frequency (default)</h4>
+<ol>
+  <li>Every material gets its <b>complex admittivity</b> at the frequency f:
+      <span class="code">κ = σ + jωε₀ε<sub>r</sub>(1 − j tanδ)</span> — conduction and displacement current together.</li>
+  <li>The RVE is <b>solved directly</b> with these values (the finite-volume method of the conduction analysis in complex numbers, in the two
+      in-plane directions x and y). The real part of the result κ<sub>eff</sub>(f) is the effective conductivity σ′(f), the imaginary part the
+      effective permittivity ε′(f).</li>
+  <li>This is repeated at 10 frequencies between f<sub>min</sub> and f<sub>max</sub> (<span class="ui">Solved frequencies</span>) and
+      interpolated logarithmically in between. The permeability μ<sub>eff</sub> is the static value of the magnetic analysis.</li>
+  <li>σ′(f), ε′(f) and μ<sub>eff</sub> give the reflection, absorption and multiple reflections of the plate.</li>
+</ol>
+
+<p>The static method (up to v3, selectable under <span class="ui">Method</span>) solved the DC σ and the static ε <b>separately</b> and combined them,
+missing the effects where the two currents mix.</p>
+<ul>
+  <li><b>Metal particles kept apart</b> — at radio frequencies metal particles behave as perfect conductors and <b>raise</b> the permittivity of the
+      composite. A static permittivity analysis uses the metal's ε<sub>r</sub> (usually 1) as it is and comes out <b>lower</b> instead.</li>
+  <li><b>Weakly conductive fillers</b> (carbon, semiconducting fillers) — charge piling up at the interfaces and relaxing, the <b>interfacial
+      (Maxwell–Wagner) polarisation</b>, makes ε′ and σ′ change with frequency. The static method has no such change.</li>
+  <li><b>A connected conductive network</b> — the conduction current dominates and both methods give the same value.</li>
+</ul>
+
+<figure><div class="g2"><div><img src="figures/c_emi_box1.png"><span>Shielding — the grey dashed line is the earlier static method</span></div>
+<div><img src="figures/c_emi_box2.png"><span>Effective σ′ and ε′ per frequency</span></div></div>
+<figcaption>Example C (epoxy + carbonyl iron 30 vol%, particles apart). The static effective ε<sub>r</sub> was 2.77, below that of epoxy (3.9);
+the frequency-resolved analysis treats the iron particles as conductors and gives <b>9.18</b>. The shielding at 10 GHz goes from 0.01 dB to
+<b>1.5 dB</b> (including the share of the epoxy's dielectric loss tanδ, which grows with frequency).</figcaption></figure>
+
+<div class="note">
+Every frequency solves two in-plane directions in complex numbers, about 20 conduction solves more in all. With a connected network, ε′ is
+below a millionth of σ′ and is not resolved ("—" in the table); it does not affect the shielding.
+</div>
+
+<div class="warn">
+<b>The shielding is right only if the results of chapters 8–10 are right.</b> The electrical conductivity in particular is decided by percolation
+(chapter 8): if the filler is not connected, the shielding comes out close to zero as well.
+</div>
+
+<h3>11.4 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/c2_emi_box1.png">
+  <figcaption>Shielding over frequency, split into reflection, absorption and multiple reflections. Example C2 (epoxy + carbonyl iron 35 vol%,
+  particles touching). The network is connected, so the frequency-resolved analysis and the static method (grey dashed) coincide.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">SE total (dB)</td>
+      <td>Total shielding. <b>20 dB = 99 % blocked, 30 dB = 99.9 %, 40 dB = 99.99 %</b>. Practical targets of commercial shielding materials are usually 30–60 dB.</td></tr>
+  <tr><td class="q">SE reflection (R)</td><td>The part blocked by reflection.</td></tr>
+  <tr><td class="q">SE absorption (A)</td><td>The part blocked by absorption; it grows <b>in proportion to the thickness</b>.</td></tr>
+  <tr><td class="q">Skin depth δ</td>
+      <td>The depth at which the wave falls to 1/e. A plate <b>thicker than 3δ</b> blocks enough by absorption. δ shrinks rapidly as the frequency rises.</td></tr>
+  <tr><td class="q">Impedance ratio</td>
+      <td>Impedance of the material over that of air. The larger the difference, the more reflection.</td></tr>
+</table>
+
+<h4>Reading the example</h4>
+
+<p>Example C2 gives <b>99 dB</b> at 1 MHz. Example C, with the same filler at only 30 vol% and the particles kept apart, gave <b>0 dB</b>. Five vol%
+apart, and the results split completely for one reason — <b>in C2 the filler is connected, in C it is broken.</b> It shows that in shielding
+materials connectivity matters more than content. The σ of C2, however, is sensitive to how the particle contacts are drawn on the grid
+(16 % change in the resolution check, 46 % spread between directions), and the dB values waver accordingly.</p>
+
+<figure>
+  <img src="figures/c2_emi_box3.png">
+  <figcaption>Shielding at representative frequencies. As the frequency rises the absorption grows and the value climbs steeply.</figcaption>
+</figure>
+
+<div class="warn">
+<b>Do not take numbers above 100 dB at face value.</b> Example C2 shows more than 2000 dB at high frequency (10 GHz); the absorption term grows
+exponentially with thickness over skin depth, and the value comes out of the <b>formula</b>. In reality
+<ul>
+  <li>the dynamic range of measuring equipment usually ends at 100–120 dB, and</li>
+  <li>real enclosures leak far more through <b>seams and apertures</b> than through the material.</li>
+</ul>
+Read <b>above 80 dB as "sufficient as a material"</b> and use the digits beyond only for comparison. The real performance is decided by design and assembly.
+</div>
+
+
+<h3>11.5 Assumptions and limits</h3>
+
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">The properties of each material do not depend on frequency</td>
+      <td>The frequency dependence the composite has <b>because of its structure</b> (interfacial polarisation, conductor-like metal particles) is
+      in the frequency-resolved analysis of 11.3. The dispersion <b>of each material itself</b> — the permeability of magnetic fillers dropping sharply
+      above a few hundred MHz (Snoek limit), ε<sub>r</sub>(f) of dielectrics — is not, because the library holds one value. GHz values of magnetic
+      fillers are overestimated.</td></tr>
+  <tr><td class="q">Quasi-static approximation</td>
+      <td>The RVE is much smaller than the wavelength, and conductive particles are thinner than their <b>skin depth</b>; eddy currents inside particles
+      are not computed. The <span class="ui">Validity</span> of the results gives the frequency where this breaks down — for the carbonyl iron of
+      example C2 (σ 10<sup>7</sup> S/m, μ<sub>r</sub> 50) the skin depth falls below the particle size from a few hundred MHz on.</td></tr>
+  <tr><td class="q">Infinite flat plate</td>
+      <td>No edges, curvature, <b>apertures or seams</b> — where most real shielding failures happen.</td></tr>
+  <tr><td class="q">Plane wave, normal incidence</td>
+      <td>A plane wave from afar is assumed. The near field (right beside an antenna, say) behaves differently.</td></tr>
+</table>
+
+<p>In short, the result is <b>for comparing candidate materials and judging their level</b>. It cannot replace certified values; the final judgement
+belongs to an ASTM D4935 measurement.</p>
+
+<h3>11.6 Checking with a full-wave simulation (openEMS) — experimental</h3>
+
+<p><span class="ui">Full-wave check with openEMS</span> places the RVE itself as a plate and solves <b>Maxwell's equations in the time domain, voxel by
+voxel</b> (openEMS, FDTD). This result, which involves no homogenisation at all, is compared at 10–100 GHz with the shielding of the same plate obtained by
+homogenisation. openEMS comes with the offline installation (<span class="code">tools\openEMS</span>); a check takes several minutes and is off by default.</p>
+
+<table>
+  <tr><th>Setting</th><th>Description</th></tr>
+  <tr><td class="q">Domain</td><td>A unit cell of the lateral size of the RVE. Perfect electric conductor (PEC) walls at the x faces, perfect magnetic
+      conductor (PMC) walls at the y faces — the symmetry planes of a normally incident plane wave (E along x). The homogenised value for comparison is
+      solved with <b>the same walls</b> (it may differ slightly from periodic conditions).</td></tr>
+  <tr><td class="q">Grid</td><td>Inside the plate one voxel = one FDTD cell. Outside, cells growing by 1.3×; Mur absorbing boundaries at both ends.</td></tr>
+  <tr><td class="q">Extraction</td><td>Voltage probes before and behind the plate; S21 (shielding) and S11 (reflection) from the ratio to a reference run without the plate.</td></tr>
+</table>
+
+<h4>Verification so far</h4>
+<table>
+  <tr><th>Structure (plate 20 µm thick)</th><th>Largest difference (10–100 GHz)</th><th>Interpretation</th></tr>
+  <tr><td class="q">Homogeneous plate (ε<sub>r</sub> 4, σ 2000 S/m)</td><td>0.001 dB, |S11| 1e-4</td><td>The openEMS set-up and extraction are exact (a self-test check).</td></tr>
+  <tr><td class="q">Weakly conductive filler 20 vol%, particles apart (σ 1 S/m)</td><td><b>0.003 dB</b>, |S11| 2 %</td><td>The frequency-resolved homogenisation, interfacial polarisation included, agrees with the full-wave result.</td></tr>
+  <tr><td class="q">Conductive filler 35 vol%, particles apart (σ 10<sup>4</sup> S/m)</td><td>0.3 dB, |S11| 0.32 vs 0.21</td><td>Shielding agrees; FDTD reflects a little more — the materials of boundary voxels are averaged differently.</td></tr>
+  <tr><td class="q">Conductive network 35 vol%</td><td>2.4 dB</td><td>FDTD conducts slightly better.</td></tr>
+  <tr><td class="q">Conductive spheres 35 vol%, contacts allowed</td><td>6.5 dB</td><td>FDTD treats <b>voxels touching only at an edge</b> as connected (it averages the four
+      cells around), the face-based homogenisation as broken — the same property as the difference between FE and FV (7.2). A large difference means the
+      result is sensitive to how the particle contacts are represented.</td></tr>
+  <tr><td class="q">Carbonyl iron (σ 10<sup>7</sup> S/m, μ<sub>r</sub> 50)</td><td>Not comparable</td><td>The skin depth (0.2 µm) is smaller than voxels and particles, outside
+      the validity of both analyses, and FDTD cannot resolve more than 80 dB. The program says so.</td></tr>
+</table>
+
+<div class="note">
+In short, with particles kept apart the frequency-resolved homogenisation agrees well with the full-wave analysis. Where particles touch at the voxel
+scale, the two represent the contacts differently and differ, and that difference is the uncertainty of the result. This is an experimental feature
+still under review.
+</div>
+<!-- render-section -->
+<h3>11.7 Renderings — EMI has no field of its own</h3>
+<p>The EMI shielding is calculated for a layer from the <b>effective properties</b> (σ, ε, μ) of the electrical, dielectric and permeability analyses,
+so EMI itself has no 3D field. <b>Why</b> the effective properties take their values is seen in the figures of the conduction and magnetic analyses.</p>
+<ul>
+  <li><b>Reflection loss (SE<sub>R</sub>) and absorption loss (SE<sub>A</sub>)</b> are governed by σ, which the current-density picture of chapter 8
+      decides — whether a connected conducting path exists (example C has none and SE close to 0; example C2 has one and a high SE).</li>
+  <li><b>Absorption by magnetic fillers</b> is governed by μ; why μ<sub>eff</sub> comes out far below the filler's own μ is seen in the magnetic-field
+      picture of chapter 10 (H crowding into the gaps).</li>
+</ul>
+<div class="note">
+When explaining EMI results, show <b>the 3D current-density picture (chapter 8)</b> with the spectrum. The connected red path is the direct evidence
+of "why it shields".
+</div>
+</div>

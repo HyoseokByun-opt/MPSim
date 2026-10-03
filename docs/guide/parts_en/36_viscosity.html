@@ -1,0 +1,203 @@
+<div class="sec">
+<h2>13. Viscosity and flowability</h2>
+<p class="src">Solvers: the built-in <b>FANS voxel finite elements</b> (creeping flow, B-bar elements) · Krieger–Dougherty · Farr–Groot maximum packing · Chateau–Ovarlez–Trung non-Newtonian homogenisation</p>
+
+<p class="lead">Before cure, underfills (MUF), moulding compounds (EMC), adhesives and pastes are <b>liquids</b>. This analysis finds how much the
+filler raises the viscosity, how fast the compound fills a narrow gap, and whether the filler settles. The more filler is added to improve the
+thermal and mechanical properties, the worse the flow — the point of this analysis is to see both on the same structure.</p>
+
+<h3>13.1 What it calculates</h3>
+
+<p>The viscosity of the filled liquid divided by that of the resin (matrix) alone, the <b>relative viscosity μ<sub>r</sub></b>.</p>
+
+<div class="eq">μ<sub>r</sub> = μ<sub>compound</sub> / μ<sub>resin</sub></div>
+
+<p>μ<sub>r</sub> is set by <b>the amount, shape, size distribution and arrangement of the filler</b> alone, independent of the resin's viscosity.
+Once known it can be multiplied in when the temperature changes the resin viscosity. With little filler it rises slowly, as Einstein's 1 + 2.5φ;
+close to the <b>maximum packing fraction φ<sub>m</sub></b>, where the particles can no longer move, it diverges. Choosing a filler content in practice
+is mostly a question of how far from this divergence one stays.</p>
+
+<h3>13.2 How it is measured</h3>
+
+<table>
+  <tr><th>Method</th><th>Description</th></tr>
+  <tr><td class="q">Rotational rheometer<br>(parallel plate, cone and plate)</td>
+      <td>The sample between two plates is sheared and the torque measured; varying the shear rate gives the <b>flow curve</b> (viscosity versus shear
+      rate). Divided by the resin alone it gives μ<sub>r</sub> — the measurement most directly comparable with this analysis.</td></tr>
+  <tr><td class="q">Capillary viscometer</td>
+      <td>Pushes the sample through a thin tube and measures the pressure drop; suited to high shear rates (moulding, dispensing).</td></tr>
+  <tr><td class="q">Spiral flow<br>(EMC)</td>
+      <td>The compound is pushed into a spiral mould and the length it flows before curing is measured — a practical index combining viscosity and cure rate.</td></tr>
+  <tr><td class="q">Underfill flow test</td>
+      <td>The time an underfill needs to fill a given distance in a constant gap between two glass plates; compared with the Washburn time of 13.4.</td></tr>
+</table>
+
+<h3>13.3 How the simulator calculates it</h3>
+
+<h4>The flow solved on the RVE</h4>
+<p>Slow viscous flow (creeping or Stokes flow) obeys <b>the equations of an incompressible elastic solid</b>, with velocity for displacement, strain rate for
+strain and viscosity for shear modulus. It is therefore solved with the FANS voxel finite elements of the elastic analysis. B-bar elements prevent the
+locking of incompressibility, and the filler is a fluid <b>1000×</b> more viscous than the resin, practically rigid (the intrinsic viscosity differs by 0.4 %
+between 1000× and 10000× — a self-test check). A unit shear rate is applied to the whole RVE in the yz, xz and xy planes and the viscosity is obtained from
+the mean stress; uniaxial extension is solved once more.</p>
+
+<h4>Maximum packing fraction φ<sub>m</sub></h4>
+<ul>
+  <li><b>Spherical fillers</b> (size distributions and blends of fillers included): the <b>Farr–Groot</b> algorithm (J. Chem. Phys. 131, 244104, 2009) gives
+      the random close packing directly from the particle-size distribution, by turning the packing of 3D spheres into the filling of a 1D line with rods.
+      It reproduces the 27 3D simulations of the paper (binary size ratios 1:2 to 1:10) <b>within 0.011</b> and gives 0.6435 for equal spheres.</li>
+  <li><b>Non-spherical fillers</b> (platelets, fibres, polyhedra and others): the structure generator packs the same particles until they stop growing.
+      Rotating particles converge very slowly, so the number of steps is limited and the value is shown as a <b>lower estimate</b>.</li>
+  <li><b>Friction</b>: rough fillers, or fillers without dispersant, jam under shear before random close packing (0.585 against 0.64 for spheres, Boyer
+      et al. 2011). <span class="ui">Particle friction = Frictional</span> multiplies φ<sub>m</sub> by 0.585/0.64; the results show both cases.</li>
+</ul>
+
+<h4>Intrinsic viscosity [η]</h4>
+<p>2.5 for spheres (Einstein); Simha's limits for slender fibres and thin platelets. For other shapes an RVE with the same particles diluted to 4 vol% is
+solved separately and [η] = (μ<sub>r</sub> − 1)/φ.</p>
+
+<h4>Which value becomes the result</h4>
+<p>When the resin films between particles are thinner than one or two voxels, the grid cannot resolve the lubrication and the RVE value comes out too low.
+<b>Up to 35 vol% filler with particles not touching, the RVE flow solve</b> is the best estimate; above, <b>Krieger–Dougherty with φ<sub>m</sub></b>.</p>
+<div class="eq">μ<sub>r</sub> = (1 − φ/φ<sub>m</sub>)<sup>−[η] φ<sub>m</sub></sup> &nbsp;&nbsp; (Krieger–Dougherty 1959)</div>
+
+<h4>Non-Newtonian resins, underfill, settling</h4>
+<ul>
+  <li>For a shear-thinning resin (power law, Carreau, Cross), the flow curve of the compound follows from the homogenisation of Chateau, Ovarlez and Trung
+      (2008): the resin between the particles is sheared A = √(μ<sub>r</sub>/(1−φ)) times faster than the mean.</li>
+  <li>Underfill filling time: capillary flow in a parallel-plate gap (Washburn), t = 3μL² / (hγ cos θ).</li>
+  <li>Settling: the Stokes velocity times the hindrance of the other particles, (1 − φ)<sup>4.65</sup> (Richardson–Zaki).</li>
+</ul>
+
+<h3>13.4 Reading the numbers</h3>
+
+<p>Example: epoxy (2 Pa·s, Newtonian) with 30 vol% fused-silica spheres of 3 µm, RVE 18 µm (54³).</p>
+
+<figure>
+  <img src="figures/v5_visc_box1.png">
+  <figcaption>The relative-viscosity box. The best estimate of 2.989 comes from the RVE flow solve (30 vol%, particles not touching).</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Best estimate</td>
+      <td>The μ<sub>r</sub> to report, with the method it came from. Here <b>2.989</b> — the compound is about three times as viscous as the resin.</td></tr>
+  <tr><td class="q">Shear yz / xz / xy, Extension</td>
+      <td>Shear viscosities per plane (2.972 / 2.977 / 3.018) and the extensional viscosity. Agreement within 1–2 % means an isotropic structure; aligned
+      platelets or fibres split them widely.</td></tr>
+  <tr><td class="q">Maximum packing fraction φ<sub>m</sub></td>
+      <td>Here <b>0.6435</b> by Farr–Groot (equal spheres). A wider size distribution, or large particles mixed with small ones, raises it and lowers the
+      viscosity at the same content — why highly filled EMCs use bimodal and trimodal distributions.</td></tr>
+  <tr><td class="q">Desmond–Weeks φ<sub>RCP</sub></td>
+      <td>An empirical formula in the variance δ and skewness S of the particle radii (Phys. Rev. E 90, 022204), accurate to ±0.002 for δ ≤ 0.4; a
+      cross-check of Farr–Groot.</td></tr>
+  <tr><td class="q">Krieger–Dougherty, frictional particles</td>
+      <td>For frictional particles φ<sub>m</sub> = 0.588 and μ<sub>r</sub> = 2.857. The difference is <b>the uncertainty from the particle surfaces</b> at this
+      content; it grows steeply with the content.</td></tr>
+  <tr><td class="q">φm that puts Krieger–Dougherty through the RVE value</td>
+      <td>The φ<sub>m</sub> with which Krieger–Dougherty reproduces the RVE value (0.540 here). Extrapolating to other contents with it gives a curve that
+      follows the RVE.</td></tr>
+</table>
+
+<figure>
+  <img src="figures/v5_visc_box2.png">
+  <figcaption>Relative viscosity against content. Solid: Krieger–Dougherty with φ<sub>m</sub> = 0.6435; dashed: frictional particles; red dot: the RVE value.</figcaption>
+</figure>
+
+<p>This chart is the most useful in practice. Look at <b>how steep the curve is at the current content</b>: where it has started to stand upright, a few vol%
+more multiply the viscosity. Einstein and Batchelor are dilute limits and already far too low at 30 vol% (1.75, 2.31); the Hashin–Shtrikman lower bound (2.07)
+is the value no arrangement can go below — an RVE value under it would cast doubt on the solve (an automatic check).</p>
+
+<figure>
+  <img src="figures/v5_visc_gd_slice.png">
+  <figcaption>Local shear rate / applied shear rate (xy shear, z section). In the narrow gaps between particles it exceeds four times the applied rate.</figcaption>
+</figure>
+
+<p><span class="ui">Local shear rate / applied shear rate</span> in the 3D/2D view shows how fast the resin is actually sheared. Red where particles are
+close is normal. Because of this amplification a shear-thinning resin thins further inside the compound; the mean amplification (2.07 here) is the A of
+Chateau's formula above.</p>
+
+<figure>
+  <img src="figures/v5_visc_box3.png">
+  <figcaption>Flow curves and the viscosity at the reference shear rate (10 1/s): resin 2 Pa·s → compound 5.98 Pa·s.</figcaption>
+</figure>
+
+<figure>
+  <img src="figures/v5_visc_box4.png">
+  <figcaption>Underfill filling time (gap 50 µm, length 10 mm, γ 35 mN/m, θ 30°): resin alone 396 s, compound 1183 s.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Filling time, compound</td>
+      <td>Three times the viscosity, three times the filling time. It grows with the square of the die size (flow length) and falls with the gap height,
+      so the effect of <b>a design change that lowers the bumps</b> can be calculated at once. The bump array, the dispensing path and curing during the
+      flow are not included; use it for <b>comparison</b> rather than absolute values.</td></tr>
+  <tr><td class="q">Filler settling</td>
+      <td>The distance settled in the 60 minutes before gelation — 1.8 µm here, negligible. Large particles (settling speed ∝ d²) or dense fillers (Al₂O₃,
+      metals) settle tens of µm and change the filler concentration near the bottom.</td></tr>
+</table>
+
+<h4>Flowability in motion</h4>
+<table>
+  <tr><th>View</th><th>What it shows</th></tr>
+  <tr><td class="q">Flow front under the die</td>
+      <td>The flow fronts of the resin alone and of the compound advance side by side in the same gap (<span class="ui">Play</span> or the time slider) — how
+      much later the compound fills is seen at once.</td></tr>
+  <tr><td class="q">Animated resin flow</td>
+      <td>In the 3D view, tracers on the resin streamlines move at the local speed: the layers slide, the fillers turn, and the resin speeds up in the gaps
+      between them. The lines are coloured by speed (relative to the wall), so fast and slow layers are told apart even when the animation stops.</td></tr>
+  <tr><td class="q">Local shear rate</td>
+      <td>Where the resin between the fillers is sheared several times harder than the mean (red) — the places that raise the viscosity; in 3D and in sections.</td></tr>
+  <tr><td class="q">Resin speed / arrows</td>
+      <td>Magnitude and direction of the resin speed in simple shear. As arrows in the 2D view they show the flow going round the fillers.</td></tr>
+</table>
+<p>Section 32.1 shows each view on a real example and how to read it.</p>
+
+<h3>13.5 Checking the flowability of a MUF</h3>
+
+<p>A MUF (moulded underfill) moulds over the chip and fills between the bumps in one step, so <b>the demand for much filler to lower the thermal expansion</b>
+collides head-on with <b>the demand to flow between narrow bumps</b>. Check in this order:</p>
+
+<ol>
+  <li><b>Material</b>: the MUF resin as the matrix, spherical fused silica as the filler.</li>
+  <li><b>Structure</b>: the filler-size distribution (single size, log-normal, or several fillers of different sizes) and the content.</li>
+  <li>Switch on <b>Simulation → Viscosity and flowability</b> and enter the viscosity model of the resin <b>at the moulding temperature</b> (Newtonian, Carreau,
+      Cross or power law), the reference shear rate (a representative value during moulding, e.g. 10 1/s), the underfill gap (bump height) and the flow
+      length (die size).</li>
+  <li>After the run, look at the four items below in the Result Viewer.</li>
+</ol>
+
+<table>
+  <tr><th>Check</th><th>Where</th><th>Judgement</th></tr>
+  <tr><td class="q">① Compound viscosity</td><td>"Compound at 10 1/s" in the Flow curve box</td><td>Below what the process (moulding press, dispenser) can handle?</td></tr>
+  <tr><td class="q">② Margin to jamming</td><td>The ratio φ/φ<sub>m</sub>, the slope of the content–viscosity curve</td><td>Above φ/φ<sub>m</sub> = 0.85, 1 vol% of variation moves the viscosity by more than 15 % (sensitive to batch scatter)</td></tr>
+  <tr><td class="q">③ Filling the gap</td><td>The Capillary underfill box</td><td>The capillary filling time between the bumps (the CUF reference; a MUF is filled under pressure, but in proportion to the viscosity, so it serves as a comparison index)</td></tr>
+  <tr><td class="q">④ Settling</td><td>The Filler settling table</td><td>Is the settling before gelation small against the bump height?</td></tr>
+</table>
+
+<p>Section <b>32.1</b> works through two real MUF designs in this order (single 5 µm and bimodal 15 + 3 µm, 55 vol%) and shows how the resin flows between
+the fillers with section streamlines, dye lines, moving 3D streamlines and the flow front under the die.</p>
+
+<h3>13.6 Points to watch</h3>
+
+<div class="warn">
+<b>Bubbles (air) are calculated without surface tension.</b> The flow solve has no surface tension, so bubbles deform freely and <b>lower</b> the viscosity, to
+1 − (5/3)φ in the dilute limit. Small bubbles held round by surface tension (low capillary number) <b>raise</b> it instead, to 1 + φ (Taylor). With bubbles present
+the checks show this warning.
+</div>
+
+<div class="note">
+<b>At high contents (50 vol% and above) φ<sub>m</sub> is almost the whole result.</b> At 60 vol%, changing φ<sub>m</sub> from 0.64 to just 0.70 changes μ<sub>r</sub>
+from 84 to 30, almost threefold. With one or two measured flow curves, the most reliable use — simpler than <b>Calibration (chapter 30)</b> — is to fit φ<sub>m</sub>
+to the measurement, as in "φm that puts Krieger–Dougherty through the RVE value", and predict other contents with it.
+</div>
+
+<ul>
+  <li>The RVE sees only <b>steady shear viscosity</b>. Thixotropy, time-dependent yield stress and the viscosity rise of curing enter only through the resin model
+      (yield stress, Carreau and so on).</li>
+  <li>Nano-fillers (a few hundred nm and below) raise the viscosity further through Brownian motion and adsorbed surface layers. These effects are not in the
+      calculation, so measurements come out higher at the same content.</li>
+  <li>Touching particles are seen by the RVE as one rigid cluster, and the value becomes too high; Krieger–Dougherty then becomes the best estimate automatically.</li>
+</ul>
+</div>

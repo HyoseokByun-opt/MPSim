@@ -1,0 +1,26 @@
+# MPSim (Material Property Simulation) v5 - everything the program imports, for a PC
+# without internet and without conda. 1_INSTALL_OFFLINE.bat installs these from
+# wheels\ into the Python runtime in python\ (no download at any point).
+#
+# The versions are the ones the self-test was run with (conda environment
+# "rvesim", Windows 11). tools\build_offline.py downloads exactly these.
+#
+# NASA PuMA: installed from wheels\pumapy-3.2.2-cp311-cp311-win_amd64.whl,
+# which tools\build_offline.py packs from the conda-forge build. The PyPI
+# project called "pumapy" is an unrelated package and is never downloaded.
+pumapy==3.2.2
+numpy==1.26.4
+scipy==1.11.4
+numba==0.64.0
+scikit-image==0.26.0
+vtk==9.5.2
+pyvista==0.47.1
+matplotlib==3.10.8
+tifffile==2026.3.3
+flask==3.1.3
+scikit-learn==1.9.0
+psutil==7.2.2
+porespy==3.0.4
+scikit-rf==1.3.0
+pyamg==5.1.0
+pandas==2.3.3

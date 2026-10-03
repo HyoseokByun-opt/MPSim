@@ -1,0 +1,186 @@
+<div class="sec">
+<h2>29. Optimization — 대리모델과 최적화</h2>
+<p class="src">사용 오픈소스: <b>scikit-learn</b> 가우시안 프로세스, <b>SciPy</b> 전역 최적화. Sobol 지수와 NSGA-II는 자체 구현</p>
+
+<p class="lead">DOE로 모은 결과를 그대로 두지 않고, <b>예측하는 모델을 만들고 그 모델로
+최적점을 찾습니다.</b> 이 탭은 그 두 가지를 <b>서로 다른 단계</b>로 나누어 놓았습니다.</p>
+
+<h3>29.1 왜 두 단계인가</h3>
+
+<p>화면 위쪽에 단계 전환이 있습니다.</p>
+
+<table>
+  <tr><th>단계</th><th>하는 일</th><th>답하는 질문</th></tr>
+  <tr><td class="q">1 · Surrogate model</td>
+      <td>끝난 실행들로 모델을 학습시키고 <b>교차검증으로 점수를 매깁니다.</b></td>
+      <td>이 모델을 믿어도 되는가?</td></tr>
+  <tr><td class="q">2 · Optimisation</td>
+      <td>그 모델을 탐색합니다 — 응답 하나면 최적점, 여럿이면 <b>절충 전선</b>.</td>
+      <td>그래서 무엇을 만들어야 하는가?</td></tr>
+</table>
+
+<div class="note">
+한 단추로 둘을 한꺼번에 하면 <b>모델이 쓸 만한지 확인하지 않은 채 최적점을 받아들이게</b>
+됩니다. 최적점은 모델이 만든 것이므로, 모델이 엉터리면 최적점도 엉터리입니다.
+그래서 순서를 강제합니다.
+</div>
+
+<p>실행하려면 DOE 스터디가 있어야 합니다(28장). 스터디와 응답, 목표
+(<span class="ui">Maximise</span> / <span class="ui">Minimise</span> /
+<span class="ui">Reach a target</span>)를 고르고
+<span class="ui">Run optimisation</span>을 누릅니다.</p>
+
+<h3>29.2 1단계 — 대리모델과 그 정확도</h3>
+
+<figure>
+  <img src="figures/ui_optimization.png">
+  <figcaption>1단계. 예시 A의 DOE를 밀도 최대화로 분석한 결과입니다.</figcaption>
+</figure>
+
+<table>
+  <tr><th>타일</th><th>예시 값</th><th>의미</th></tr>
+  <tr><td class="q">Best run so far</td><td>2.207 g/cm³<br>AlN content 50 · diameter 3</td>
+      <td><b>실제로 계산한 것 중</b> 가장 좋은 결과. 추정이 아닙니다.</td></tr>
+  <tr><td class="q">Predicted optimum</td><td>2.207 g/cm³ ± 2.33e-4</td>
+      <td>모델이 예측하는 최적값과 그 불확실도(1σ).</td></tr>
+  <tr><td class="q">Surrogate accuracy</td><td>R² 0.6942<br>LOO · RMSE 0.1124</td>
+      <td><b>가장 정직하게 봐야 할 값</b>입니다. 아래를 보십시오.</td></tr>
+  <tr><td class="q">Runs used</td><td>7</td>
+      <td>학습에 쓴 실행 수. <b>실패한 케이스는 제외</b>됩니다(28장).</td></tr>
+</table>
+
+<h4>정확도는 어떻게 매기는가</h4>
+
+<p>화면의 설명대로, <b>각 점을 그 점 없이 학습한 모델로 예측해</b> 맞춰 봅니다
+(leave-one-out 교차검증). 자기가 배운 데이터를 얼마나 잘 외웠는지가 아니라,
+<b>처음 보는 조건에서 얼마나 틀릴지</b>를 나타냅니다.</p>
+
+<h4>모델 고르기 — 왼쪽 패널의 Surrogate tuning</h4>
+
+<p>어떤 모델이 잘 맞는지는 <b>응답의 성질이지 한 번에 정해지는 설정이 아닙니다.</b>
+그래서 바꿀 수 있게 열어 두었습니다.</p>
+
+<table>
+  <tr><th>설정</th><th>언제 바꾸는가</th></tr>
+  <tr><td class="q">Model</td>
+      <td>Matérn 5/2(기본, 매끄러움) · 3/2 · 1/2(거친 응답) · RBF(아주 매끄러움) · 2차 곡면(점이 적을 때). <b>바꾼 뒤 다시 학습시켜 R²를 비교</b>하십시오.</td></tr>
+  <tr><td class="q">Noise</td>
+      <td>비워 두면 자동으로 추정합니다. 값을 주면 모델이 <b>산포를 억지로 지나가지 않습니다</b> — 케이스마다 구조를 새로 난수 생성하는 이 프로그램에서는 특히 중요합니다.</td></tr>
+  <tr><td class="q">Restarts</td>
+      <td>우도 최적화를 몇 번 다시 시작할지. 결과가 불안정할 때 올립니다.</td></tr>
+</table>
+
+<div class="warn">
+설정을 바꿔도 <b>자동으로 다시 학습하지는 않습니다.</b> R²가 어떻게 달라지는지 보는 것은
+의도적인 행동이어야 하므로, 다시 <span class="ui">Run optimisation</span>을 누르십시오.
+</div>
+
+<h3>29.3 Key design factors — 어떤 인자가 중요한가</h3>
+
+<table>
+  <tr><th>Parameter</th><th>Sobol total</th><th>Sobol first</th><th>Std. reg. coeff.</th><th>Pearson r</th><th>Range</th></tr>
+  <tr><td class="q">AlN content</td><td>99.91 %</td><td>95.41 %</td><td>0.8846</td><td>0.9468</td><td>20 … 50</td></tr>
+  <tr><td class="q">AlN diameter</td><td>15.88 %</td><td>10.35 %</td><td>0.2591</td><td>0.4715</td><td>1 … 3</td></tr>
+</table>
+
+<ul>
+  <li><b>Sobol total</b>은 그 인자가 관여하는 전부, <b>first order</b>는 혼자서 만드는 몫.
+      <b>둘의 차이가 상호작용</b>입니다(함량 4.5 %, 입경 5.5 %) — 28장에서 표로 본
+      "입경의 효과가 함량에 따라 뒤집히는" 현상이 숫자로 나타난 것입니다.</li>
+  <li><b>표준화 회귀계수</b>는 부호가 살아 있어 <b>방향</b>을 알려줍니다.</li>
+  <li><b>Range</b> 밖의 이야기는 이 분석이 할 수 없습니다.</li>
+</ul>
+
+<div class="note">
+총지수의 합이 100 %를 넘어도 정상입니다 — 상호작용 몫이 양쪽에 중복해서 세어지기
+때문입니다. 예시에서는 함량이 압도적이고 입경은 보조적이므로, <b>설계 자원을 어디에
+쓸지</b>가 분명해집니다.
+</div>
+
+<h3>29.4 2단계 — 응답 하나의 최적점</h3>
+
+<figure>
+  <img src="figures/ui_opt_stage2.png">
+  <figcaption>2단계. 왼쪽은 응답 하나의 최적점, 오른쪽은 여러 응답의 절충 전선.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Parameter</th><th>Optimum</th><th>Range searched</th><th>Suggested next run</th></tr>
+  <tr><td class="q">AlN content</td><td>50</td><td>20 … 50</td><td>50</td></tr>
+  <tr><td class="q">AlN diameter</td><td>3</td><td>1 … 3</td><td>2.673</td></tr>
+</table>
+
+<div class="warn">
+<b>최적점 (50, 3)이 탐색 범위의 모서리에 있습니다.</b> 이는 거의 언제나
+"진짜 최적은 범위 밖"이라는 뜻입니다. 밀도는 AlN을 넣을수록 커지니 당연하고,
+할 일은 <b>함량 범위를 넓혀 DOE를 다시 돌리는 것</b>입니다.
+최적점이 안쪽에 있을 때 비로소 그 값이 의미를 가집니다.
+</div>
+
+<p><b>Suggested next run</b>은 <b>기대 개선</b>이 가장 큰 지점입니다 — 예측이 좋은 곳과
+아직 모르는 곳을 저울질해 고릅니다. 예시의 입경 2.673은 DOE가 1과 3만 돌려
+<b>한 번도 확인한 적 없는 구간</b>입니다. 두 단추로 그 조건을 바로 대기열에 넣어
+예측을 실측으로 확인할 수 있습니다.</p>
+
+<h3>29.5 2단계 — 여러 목적을 한꺼번에 (NSGA-II)</h3>
+
+<p>실제 설계에서 원하는 것은 대개 하나가 아니고, 서로 싸웁니다. 필러를 넣으면
+열전도도는 오르지만 <b>무거워집니다.</b> 이럴 때는 최선의 설계가 하나로 정해지지 않고,
+<b>무엇 하나를 포기하지 않고는 다른 것을 개선할 수 없는 설계들의 집합</b>이 남습니다.
+이것을 <b>파레토 전선</b>이라 하고, NSGA-II가 그 집합을 찾아 줍니다.</p>
+
+<p>응답을 둘 이상 고르고 각각 max/min을 정한 뒤
+<span class="ui">Find the trade-off front</span>를 누릅니다.</p>
+
+<h4>예시로 보기 — 가볍고 잘 전도되는 재료</h4>
+
+<p>밀도를 <b>최소화</b>하고 열전도도를 <b>최대화</b>하면 둘이 정면으로 충돌합니다.
+예시 A의 스터디에서 나온 전선은 이렇습니다.</p>
+
+<table>
+  <tr><th>끝점</th><th>밀도</th><th>열전도도</th></tr>
+  <tr><td class="q">가장 가벼운 쪽</td><td>1.590 g/cm³</td><td>0.429 W/m·K</td></tr>
+  <tr><td class="q">가장 잘 전도되는 쪽</td><td>2.207 g/cm³</td><td>1.131 W/m·K</td></tr>
+</table>
+
+<p>그 사이가 모두 <b>선택 가능한 설계</b>입니다. 열전도도를 2.6배로 올리려면
+밀도를 39 % 더 감수해야 한다는 것이 이 표가 말하는 전부이고, 그 교환비를 보고
+고르는 것이 설계입니다. 화면에는 가장 균형 잡힌 지점(<b>knee</b>)도 함께 표시됩니다.</p>
+
+<div class="note">
+<b>상충이 없으면 전선은 한 점입니다.</b> 밀도와 열전도도를 <b>둘 다 최대화</b>로 두면
+AlN을 넣을수록 둘 다 좋아지므로 싸울 일이 없고, 화면은 "Trade-off points 1"을
+보여줍니다. 이것은 오류가 아니라 <b>"고민할 것이 없다"는 답</b>입니다.
+</div>
+
+<div class="warn">
+<b>전선은 그 아래 깔린 모델만큼만 믿을 수 있습니다.</b> 화면은 응답마다 R²를 함께
+보여줍니다. 위 예시에서 밀도는 R² 0.694지만 <b>열전도도는 0.044</b> — 사실상
+예측력이 없습니다. 즉 이 전선의 세로축은 신뢰할 수 없고,
+<b>점을 더 모으기 전에는 결론을 내리면 안 됩니다.</b> 이런 경우 전선의 모양보다
+"아직 모델이 부족하다"는 사실이 더 중요한 결과입니다.
+</div>
+
+<h3>29.6 권장하는 순서</h3>
+<ol>
+  <li>DOE로 <b>넓게</b> 훑습니다(28장).</li>
+  <li>1단계에서 <b>어떤 인자가 중요한지</b> 보고, R²가 낮으면 모델을 바꿔 봅니다.</li>
+  <li>최적점이 <b>범위 모서리</b>에 있으면 범위를 넓혀 다시 돌립니다.</li>
+  <li><span class="ui">Queue the suggested run</span>으로 점을 몇 개 더하고 다시 학습시킵니다.</li>
+  <li>R²가 충분히 오르면 2단계로 가서 최적점 또는 절충 전선을 읽습니다.</li>
+  <li>고른 조건으로 <b>실제 해석을 한 번 더</b> 돌려 예측을 확인합니다.</li>
+</ol>
+
+<h3>29.7 한계</h3>
+<table>
+  <tr><th>항목</th><th>내용</th></tr>
+  <tr><td class="q">범위 밖은 예측하지 않습니다</td>
+      <td>DOE가 훑은 범위 안에서만 유효하며 외삽하지 않습니다.</td></tr>
+  <tr><td class="q">점이 적으면 모델이 약합니다</td>
+      <td>인자 하나당 5~10점은 있어야 합니다. 그전까지는 Sobol 지수와 회귀계수가 더 믿을 만합니다.</td></tr>
+  <tr><td class="q">계산의 불확실도를 모릅니다</td>
+      <td>각 실행의 값이 정확하다고 보고 학습합니다. 시드에 따라 흔들리는 응답이라면 그 흔들림이 모델 오차로 들어갑니다 — Noise 설정이 그 완화책입니다.</td></tr>
+  <tr><td class="q">제조 가능성은 판단하지 않습니다</td>
+      <td>최적점이 실제로 만들 수 있는 조건인지는 모릅니다. 28장의 실패 케이스처럼 기하학적으로 불가능한 영역이 있을 수 있습니다.</td></tr>
+</table>
+</div>

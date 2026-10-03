@@ -1,0 +1,300 @@
+<div class="sec">
+<h2>5. 구조 만들기 (Structure)</h2>
+
+<p class="lead">이 탭에서 <b>재료의 속을 실제로 만듭니다.</b> 어떤 filler를 얼마나, 어떤 크기와
+모양으로, 어떻게 놓을지 정하면 프로그램이 그 조건을 만족하는 3차원 구조(RVE)를 생성합니다.
+v4에서는 형상이 크게 늘었고, <b>pore와 filler를 형상이 아니라 재료로 구분</b>합니다.</p>
+
+<figure>
+  <img src="figures/ui_panel_structure.png" class="half">
+  <figcaption>Structure 탭. 위쪽에 phase 목록, 아래에 선택한 phase의 편집기와 미리보기가 있습니다.</figcaption>
+</figure>
+
+<h3>5.1 Phase 추가하기 — 형상</h3>
+
+<p>패널 맨 위의 <span class="ui">Add</span> 단추나 리본의 <span class="ui">Add a phase</span>에서 형상을 고릅니다.
+모든 형상은 <b>회전·배향·크기 분포·shell(코팅/중공)·겹침 허용</b>을 똑같이 지원합니다.</p>
+
+<figure>
+  <img src="figures/ui_ribbon_structure.png">
+  <figcaption>Structure 리본. 형상 단추는 재료와 관계없이 phase를 하나 추가합니다(재료를 Air로 두면 pore).</figcaption>
+</figure>
+
+<table>
+  <tr><th>형상</th><th>치수</th><th>쓰는 경우</th></tr>
+  <tr><td class="q">Sphere</td><td>지름 d</td><td>구형 silica, alumina, AlN 분말, 중공 유리구</td></tr>
+  <tr><td class="q">Spheroid</td><td>d, 종횡비 c/a</td><td>판상(c/a &lt; 1, BN·graphite flake), 짧은 막대(c/a &gt; 1)</td></tr>
+  <tr><td class="q">Cylinder</td><td>d, 전체 길이</td><td>절단 fiber, rod, 원판(길이 &lt; d)</td></tr>
+  <tr><td class="q">Capsule</td><td>d, 전체 길이</td><td>끝이 둥근 fiber — 실제 fiber에 더 가깝습니다</td></tr>
+  <tr><td class="q">Cube</td><td>모서리 d</td><td>입방체 결정, 각진 filler</td></tr>
+  <tr><td class="q">Cuboid</td><td>모서리 a, b, c</td><td>벽돌형, 사각 판상 입자</td></tr>
+  <tr><td class="q">Rounded box</td><td>a, b, c, blockiness n</td><td>모서리가 둥근 각진 입자. <b>superellipsoid</b> |x/a|ⁿ+|y/b|ⁿ+|z/c|ⁿ ≤ 1로,
+      n = 2면 타원체, n이 클수록 상자에 가까워집니다. DEM(이산요소법) 코드의 "meta-particle"과 같은 표현입니다.</td></tr>
+  <tr><td class="q">Polyhedron</td><td>외접 지름 d, 종류</td><td>정다면체(tetra·octa·dodeca·icosahedron), 또는 <b>irregular grains</b> —
+      분쇄 입자처럼 제각각인 볼록 다면체를 여러 변형(variants)으로 섞어 넣습니다</td></tr>
+  <tr><td class="q">Helix</td><td>선 지름 d, 코일 지름, pitch, 감긴 수</td><td>감긴(curled) fiber, 스프링형 filler. 코일 지름은 선 중심 기준입니다</td></tr>
+  <tr><td class="q">Network</td><td>ligament 폭</td><td>서로 이어진 무작위 구조(아래 5.2)</td></tr>
+</table>
+
+<p>편집기 아래 미리보기가 현재 치수로 그려지므로 의도한 모양인지 먼저 확인하십시오.</p>
+
+<h4>기지(Matrix)와 각 상의 재료 고르기</h4>
+<p>목록 맨 위의 <b>기지 행</b>을 누르면 기지 편집기가 열립니다(탭은 바뀌지 않습니다). 상과 똑같이
+<span class="ui">Material</span> 목록에서 라이브러리 재료를 고르며, 기지를 Air로 고르면 상들이 충전층이나
+다공 고체를 이룹니다. 편집기의 <span class="ui">Properties</span>에는 그 재료의 물성이 <b>읽기 전용</b>으로
+보이고, 물성을 고치려면 <span class="ui">Edit this material</span>을 눌러 Material 탭의 라이브러리에서
+고칩니다(4장). 라이브러리에서 고친 값은 그 재료를 쓰는 모든 영역에 한 번에 적용됩니다.</p>
+
+<figure>
+  <img src="figures/ui_panel_structure_matrix.png" class="half">
+  <figcaption>기지 행을 누르면 열리는 기지 편집기. 재료는 상과 같은 방식으로 고르고, 물성은 라이브러리에서 고칩니다.</figcaption>
+</figure>
+
+<figure>
+  <div class="g3">
+    <div><img src="figures/g_cube.png"><span>Cube · AlN 30 %</span></div><div><img src="figures/g_cuboid.png"><span>Cuboid 7×4×1.5 µm · z 정렬 20 %</span></div><div><img src="figures/g_rounded_box.png"><span>Rounded box (n = 5) 30 %</span></div>
+    <div><img src="figures/g_icosahedron.png"><span>Polyhedron · icosahedron 30 %</span></div><div><img src="figures/g_irregular_grains.png"><span>Polyhedron · irregular grains 30 %</span></div><div><img src="figures/g_helix.png"><span>Helix · Cu 6 %</span></div>
+  </div>
+  <figcaption>v4 형상으로 만든 구조(128³, voxel 0.25 µm). 모두 서로 겹치지 않고, 함량이 허락하는 한 닿지 않게 배치되었습니다.</figcaption>
+</figure>
+
+<h3>5.2 Pore는 형상이 아니라 재료입니다</h3>
+
+<p>v3까지는 "Spherical pores", "Pore network"라는 기공 전용 형상이 있었습니다. v4에서는
+<b>어떤 형상이든 재료가 기체(Air)이면 pore</b>입니다. 편집기의
+<span class="ui">Make it pore space (Air)</span> 단추를 누르거나 재료 목록에서 Air를 고르면 됩니다.</p>
+
+<table>
+  <tr><th>만들고 싶은 것</th><th>설정</th></tr>
+  <tr><td class="q">독립 구형 기공 (closed-cell foam)</td><td>Sphere + Air</td></tr>
+  <tr><td class="q">납작한 기공, 균열 모양 void</td><td>Spheroid(c/a &lt; 1) 또는 Cuboid + Air</td></tr>
+  <tr><td class="q">열린 연결 기공 (filter, membrane, 다공 세라믹)</td><td>Network + Air</td></tr>
+  <tr><td class="q">소결 금속·세라믹 skeleton, foam의 solid</td><td>Network + 해당 solid, matrix는 Air</td></tr>
+  <tr><td class="q">입자 충전층 (packed bed, 분말층)</td><td>Matrix를 Air로, 입자는 solid</td></tr>
+</table>
+
+<div class="note">
+구분이 재료 기준이므로 투과도·여과·흡음·porosimetry 같은 pore 해석은 <b>기체인 모든 영역</b>(matrix가 Air이면
+matrix 포함)에서 이루어집니다. 독립 기공은 서로 떨어져 있어 유체가 통하지 않으므로 투과도가 0입니다 —
+유동 해석에는 연결된 pore(Network + Air, 또는 Air matrix)가 필요합니다.
+</div>
+
+<figure>
+  <div class="g2">
+    <div><img src="figures/g_ellipsoidal_pores.png"><span>Spheroid(c/a 0.3) + Air · z 정렬 20 % — 납작한 독립 기공</span></div><div><img src="figures/g_sintered_skeleton_in_air.png"><span>Network + Al, matrix Air — 소결 skeleton 35 %</span></div>
+  </div>
+  <figcaption>같은 형상 도구로 만든 pore와 solid. 왼쪽은 epoxy 속의 공기 방울, 오른쪽은 공기 속의 금속 골격입니다.</figcaption>
+</figure>
+
+<h3>5.3 함량 (Content)</h3>
+
+<p>부피분율 <span class="ui">vol %</span>과 무게분율 <span class="ui">wt %</span> 중에서
+고를 수 있습니다. wt%로 넣으면 각 재료의 밀도로 vol%로 환산하므로 <b>밀도가 정확해야</b> 합니다.
+패널 맨 아래 <span class="ui">Composition</span> 표에 환산 결과와 전체 밀도, 비열이 표시됩니다.</p>
+
+<h3>5.4 크기 분포와 배향</h3>
+
+<p><span class="ui">Log-normal</span>을 고르고 <b>변동계수(CV)</b>를 주면 모든 치수가 같은 비율로
+분포합니다. 구가 아닌 형상에는 배향이 있습니다.</p>
+
+<table>
+  <tr><th>설정</th><th>결과</th></tr>
+  <tr><td class="q">Random 3D</td><td>완전 무작위 회전. 결과가 등방성으로 나옵니다.</td></tr>
+  <tr><td class="q">Aligned with x / y / z</td><td>입자의 긴 축(국부 z축)을 해당 축으로 정렬하고, 그 축 둘레 회전은 무작위입니다.</td></tr>
+  <tr><td class="q">Random in the xy plane</td><td>면내에 눕되 면내 방향은 무작위. <b>film·sheet에서 가장 흔한 상태</b>입니다.</td></tr>
+</table>
+
+<p><b>Orientation spread</b>(°)로 정렬의 완전함을 조절합니다. 0°면 완벽한 정렬이고, 실제 공정에서는 15~30°가 현실적입니다.
+판상 입자(c/a &lt; 1 spheroid, 얇은 cuboid)를 z로 정렬하면 판이 <b>xy 면에 눕습니다</b>.</p>
+
+<h3>5.5 입자 배치 — 높은 함량과 맞닿은 입자</h3>
+
+<p>입자는 겹치지 않게 배치됩니다. 프로그램은 조건에 따라 세 가지 방법을 자동으로 고릅니다.</p>
+
+<table>
+  <tr><th>방법</th><th>언제</th><th>원리</th></tr>
+  <tr><td class="q">Growth with overlap relaxation + Monte-Carlo</td><td>모든 입자가 구</td>
+      <td>작은 구에서 시작해 크기를 키우며 겹침을 밀어내 풉니다(force-biased / collective rearrangement 계열).
+      목표 전에 멈추면 Monte-Carlo 압축(Metropolis 이동 후 첫 접촉까지 팽창)이 이어받습니다.
+      같은 크기 구 250개: 60 %를 3.5 s에, 무작위 최밀충전(64 %)에서 목표 크기의 0.997까지.</td></tr>
+  <tr><td class="q">Voxel RSA</td><td>구가 아닌 형상, 낮은~중간 함량</td>
+      <td>무작위 위치·방향으로 하나씩 넣되, 실제 격자에서 겹치면 다시 뽑습니다. 겹침 판정이 정확하지만
+      구는 약 38 %, 긴 입자는 그보다 훨씬 낮은 함량에서 더 들어가지 않습니다(jamming).</td></tr>
+  <tr><td class="q">Rigid clump relaxation</td><td>RSA가 목표 전에 막힐 때</td>
+      <td>각 입자를 구 여러 개의 묶음(clump, DEM의 multi-sphere 방식)으로 근사해 작은 크기에서 시작하고,
+      겹침을 밀어내면서 입자를 <b>이동·회전</b>시켜 목표 크기까지 키웁니다. 배향 조건(정렬, 면내)은 유지됩니다.
+      마지막에 실제 형상으로 격자에 그리고, clump가 덮지 못한 모서리·가장자리에서 남은 겹침을 없앱니다.
+      겹친 voxel마다 두 입자를 중심을 잇는 방향으로 밀고, 그 voxel에서 생기는 토크로 <b>돌립니다</b> —
+      모서리끼리 걸린 입자는 미는 것만으로는 빠지지 않지만 돌리면 빠집니다. 그래도 남으면 관련 입자만
+      모양과 방향을 유지한 채 2 %씩 줄입니다. 입자는 <b>겹치지도, 깎이지도</b> 않습니다.</td></tr>
+</table>
+
+<div class="note">
+<b>얼마나 채울 수 있나.</b> 같은 크기 구의 무작위 최밀충전은 약 64 %이고, 크기 분포가 있으면 더 올라갑니다.
+긴 입자와 판상 입자의 무작위 충전 한계는 종횡비가 클수록 낮아집니다. 목표가 그 형상의 한계를 넘으면
+프로그램은 겹침을 만들지 않고, <b>도달한 크기(Particle size reached)</b>를 점검 항목으로 보고합니다.
+정렬된 입자는 무작위보다 더 채울 수 있습니다.
+</div>
+
+<div class="note">
+<b>여러 입자를 섞을 때(blending)의 겹침 점검.</b> 생성된 모든 입자를 하나씩 빈 격자에 다시 그려, 두 입자 안에 동시에 드는
+voxel을 셉니다. 구는 중심 거리와 반지름 합도 비교합니다(v5.0.1).
+<table>
+  <tr><th>혼합</th><th>배치 방법</th><th>두 입자에 든 voxel</th></tr>
+  <tr><td class="q">구 10 + 2.5 µm, 55 vol% · 구 12 + 3 µm(거친 voxel), 55 vol%</td><td>Growth + Monte-Carlo</td><td class="n">0</td></tr>
+  <tr><td class="q">구 8 + 3 + 1.2 µm, 60 vol% · 로그정규(CV 0.4), 58 vol%</td><td>Growth + Monte-Carlo</td><td class="n">0</td></tr>
+  <tr><td class="q">구 + 큐브 40 % · 구 + 판상 30 % · 구 + 섬유 30 %</td><td>Clump relaxation</td><td class="n">0</td></tr>
+  <tr><td class="q">큐브 + 판상(8 × 8 × 1.5 µm), 45 vol%</td><td>Clump relaxation</td><td class="n">0 (v5.0: 271, 입자 123개의 모서리가 잘림)</td></tr>
+</table>
+판상 입자 하나를 clump 구 40개가 덮는 부피는 35 %, 큐브는 82 %뿐이라 고충전에서는 실제 형상의 모서리가 서로 파고듭니다.
+v5.0까지는 그 voxel을 먼저 놓인 입자에 주어 다른 입자의 모서리를 잘랐고, 지금은 밀고 돌려서 떼어 놓습니다.
+<br><b>3D 그림에서 겹쳐 보일 때.</b> RVE 면에 걸친 입자는 면에서 잘린 단면(납작한 원판)으로 그려집니다. 큰 입자가 RVE에 비해 크면
+(예: 60 µm RVE의 15 µm 입자) 이런 원판이 많아지고, 서로 다른 면의 원판이 원근 때문에 포개져 겹친 것처럼 보입니다.
+2D 단면으로 보면 입자가 떨어져 있습니다(아래 그림).
+</div>
+
+<figure>
+  <img src="figures/g_blend_sections.png">
+  <figcaption>이중 분포(15 + 3 µm, 55 vol%, 60 µm RVE)의 z 단면 세 개. 색은 voxel, 검은 선은 각 입자의 실제 원 단면입니다 — 두 원이 겹치는 곳이 없습니다.</figcaption>
+</figure>
+
+<figure>
+  <div class="g2">
+    <div><img src="figures/g_dense_spheres_62.png"><span>Sphere 62 % (무작위 최밀충전 근처)</span></div><div><img src="figures/g_dense_cubes_45.png"><span>Cube 45 % (clump relaxation)</span></div>
+  </div>
+  <figcaption>고충전 구조. 겹침 없이 목표 함량에 도달했으며, 이 함량에서는 일부 입자가 맞닿습니다(아래 Touching particles).</figcaption>
+</figure>
+
+<h4>맞닿은 입자 (Touching particles)</h4>
+<p>연속 형상에서 겹치지 않는 두 입자라도, 표면 사이 간격이 voxel 하나보다 좁으면 격자에서는 <b>이웃한 voxel</b>이 되어
+닿은 것처럼 보입니다. 이 "격자 위의 접촉"이 열전도 해석을 크게 흔듭니다. voxel FE(PuMA)는 모서리·꼭짓점만 맞닿은
+voxel 사이로도 열을 흘리고, 면 기반 FV는 면을 공유할 때만 흘립니다. 입자 모양을 바꾸지 않고 이를 다루는 세 가지 방식이 있습니다.</p>
+
+<table>
+  <tr><th>설정</th><th>동작</th></tr>
+  <tr><td class="q">Keep apart where the loading allows<br>(기본값)</td>
+      <td>입자를 <b>옮겨서</b>(깎지 않고) 어느 방향(26 이웃)으로도 다른 입자의 voxel과 붙지 않게 합니다.
+      RSA는 그런 위치를 거절하고, packing은 표면 간격 2 voxel(꼭짓점 이웃을 없애는 √3 voxel 이상)을 둡니다.
+      clump packing 뒤에는 실제 형상으로 다시 그려, 남은 접촉 쌍을 반대쪽으로 밀어 없앱니다.
+      함량이 높아 간격이 들어가지 않으면 들어가는 만큼만 두고, <b>꼭 필요한 곳에서만</b> 닿게 합니다.</td></tr>
+  <tr><td class="q">Allow contacts</td>
+      <td>packing이 놓은 대로 둡니다. 입자는 서로 닿을 수 있습니다. 접촉 network를 의도할 때(R<sub>c</sub>와 함께) 씁니다.</td></tr>
+  <tr><td class="q">Trim contacts to matrix (v3)</td>
+      <td>맞닿은 voxel을 matrix로 지웁니다. 접촉은 없어지지만 <b>filler의 형상이 깎입니다</b>.</td></tr>
+</table>
+
+<figure>
+  <img src="figures/ui_touching.png" class="half">
+  <figcaption>Structure 탭 아래쪽의 Touching particles 선택. 기본값은 Keep apart where the loading allows입니다.</figcaption>
+</figure>
+
+<p>남은 접촉은 <span class="ui">Touching particles</span> 점검 항목에 voxel 이웃 쌍의 수(그중 면 접촉 수)로 보고되고,
+면 접촉에는 5.7절의 contact resistance R<sub>c</sub>를 줄 수 있습니다.</p>
+
+<p>측정 예 — Al₂O₃ 구(6 µm, 30 W/m·K)를 epoxy(0.2 W/m·K)에 넣은 64³ RVE(입경 16 voxel)의 x 방향 열전도도입니다.
+기본 계산(주기적 FV)과, 비교용 PuMA FE 값입니다.</p>
+<table>
+  <tr><th>함량</th><th>설정</th><th>닿은 voxel 쌍 (면)</th><th>FV (기본)</th><th>PuMA FE</th></tr>
+  <tr><td>30 %</td><td class="q">Keep apart</td><td class="n">0</td><td class="n">0.463</td><td class="n">0.508</td></tr>
+  <tr><td>30 %</td><td class="q">Allow contacts</td><td class="n">592 (30)</td><td class="n">0.514</td><td class="n">0.652</td></tr>
+  <tr><td>50 %</td><td class="q">Keep apart (간격 1 voxel까지만 들어감)</td><td class="n">853 (0)</td><td class="n">0.891</td><td class="n">1.96</td></tr>
+  <tr><td>50 %</td><td class="q">Allow contacts</td><td class="n">4,458 (376)</td><td class="n">1.43</td><td class="n">2.50</td></tr>
+  <tr><td>60 %</td><td class="q">둘 다 (간격이 들어갈 자리 없음)</td><td class="n">23,314 (2,535)</td><td class="n">5.52</td><td class="n">8.09</td></tr>
+  <tr><td>30 % 정육면체</td><td class="q">Keep apart</td><td class="n">0</td><td class="n">0.543</td><td class="n">0.629</td></tr>
+</table>
+
+<p>50 % Keep apart 구조를 <b>그대로 두고 격자만 촘촘하게</b> 다시 그려 푼 결과입니다. 입자 위치·크기는 연속 좌표로
+저장되어 있어 같은 구조를 어떤 voxel 크기로도 다시 그릴 수 있습니다.</p>
+<table>
+  <tr><th>격자 (입경당 voxel)</th><th>64³ (16)</th><th>128³ (32)</th><th>192³ (48)</th><th>외삽값</th></tr>
+  <tr><td class="q">FV (기본)</td><td class="n">0.891</td><td class="n">0.876</td><td class="n">0.871</td><td class="n">0.861</td></tr>
+  <tr><td class="q">PuMA FE</td><td class="n">1.960</td><td class="n">0.971</td><td class="n">0.930</td><td class="n">0.848</td></tr>
+</table>
+<ul>
+  <li><b>FV는 입경 16 voxel에서도 수렴값과 3.5 % 차이</b>입니다. 64³에서는 간격이 1 voxel밖에 들어가지 않아 모서리로 닿은 voxel이
+      853쌍 남는데, FV는 이런 곳으로 열을 흘리지 않고 FE는 흘립니다(+130 %).</li>
+  <li><b>접촉을 허용하면 FV로도 크게 달라집니다</b>(50 %에서 0.89 → 1.43). 입자가 실제로 붙어 있는 재료인지, 얇은 수지층으로
+      떨어져 있는 재료인지가 결과를 정합니다. 실제로 닿는 재료라면 R<sub>c</sub>로 접촉의 물리를 넣어야 합니다.</li>
+  <li>Domain 탭의 계획 점검 <span class="ui">Voxel size that keeps every particle apart</span>가 해석 전에
+      간격이 들어가는 voxel 크기를 알려 줍니다(Standard 품질은 입경당 10 voxel이라 50 % 구에서는 경고가 나옵니다).</li>
+</ul>
+
+<div class="warn">
+<b>전도도 차이가 큰 filler를 높은 함량으로 넣으면, 결과를 정하는 것은 입자 사이의 좁은 틈과 접촉입니다.</b>
+틈이 voxel 한두 개로만 그려지면 계산 방법과 해상도에 따라 값이 크게 달라질 수 있습니다. 기본 설정(Keep apart + FV)은
+이 영향을 가장 작게 만드는 조합이며, 확인이 필요하면 Simulation 탭에서 <span class="ui">Also solve with the other method
+and compare</span>를 켜 두 방법의 차이를 보거나, voxel을 더 잘게 해 값이 변하지 않는지 봅니다.
+</div>
+
+<p><b>Minimum gap</b>(크기의 배수)을 주면 입자 사이에 실제 간격을 둡니다(분산제·코팅으로 떨어진 입자).
+<span class="ui">Overlap permitted</span>를 켜면 겹침을 허용합니다 — 응집체, fiber network, 소결 접촉을 만들 때 씁니다.</p>
+
+<h3>5.6 코팅과 중공 입자 (Shell)</h3>
+
+<p><span class="ui">Coating or hollow shell</span>을 켜면 모든 형상에 shell을 씌울 수 있습니다. Shell은 입자 표면을
+법선 방향으로 두께만큼 바깥으로 옮긴 영역입니다(구·원기둥·상자·다면체·helix에서 정확한 offset).</p>
+
+<ul>
+  <li><b>표면처리·코팅</b> — silane 층, 금속 도금층.</li>
+  <li><b>중공 입자</b> — phase 재료를 <span class="ui">Air</span>, shell을 <span class="ui">SiO₂</span>로 두면 속이 빈 입자입니다.</li>
+</ul>
+
+<div class="warn">
+<b>입력한 치수는 shell 안쪽(core)의 치수입니다.</b> Shell은 바깥에 덧붙으므로 바깥 지름은 <b>d + 2 × 두께</b>입니다
+(다면체는 모든 면이 두께만큼 바깥으로 이동). 카탈로그의 중공 유리구는 보통 바깥 지름으로 표기되므로,
+바깥 20 µm·벽 1 µm라면 d = 18 µm를 넣습니다. 함량은 shell을 포함한 입자 전체 기준입니다.
+입경 분포가 있을 때 <span class="ui">Wall scales with particle size</span>를 켜면 모든 입자의 벽두께/반경이 같아집니다
+(같은 density grade의 중공 유리구).
+</div>
+
+<p>얇은 shell은 해상도를 요구합니다. 자동 격자는 shell 두께에 voxel 2개(전도형 해석), 탄성·열팽창이 있으면 4개가
+들어가도록 voxel 크기를 정합니다.</p>
+
+<figure>
+  <div class="g3">
+    <div><img src="figures/g_hollow_cubes.png"><span>중공 cube(벽 SiO₂ 0.5 µm) 25 %</span></div><div><img src="figures/g_hollow_cubes_clip.png"><span>z 중간에서 자른 3D</span></div><div><img src="figures/g_hollow_cubes_2d.png"><span>같은 위치의 voxel 단면</span></div>
+  </div>
+  <figcaption>Shell은 모든 형상에 씌울 수 있습니다. 잘라 보면 속(Air)과 벽(SiO₂)이 모두 격자에 해상되어 있습니다.</figcaption>
+</figure>
+
+<h3>5.7 계면 열저항 — R<sub>int</sub>와 R<sub>c</sub></h3>
+
+<p>실제 복합재에서 filler와 matrix 사이, 그리고 맞닿은 두 filler 사이에는 <b>열이 건너갈 때 생기는 저항</b>이 있습니다
+(Kapitza 저항, 단위 m²K/W). 열전도도 계산에서 가장 중요한 보정 인자 가운데 하나이며, filler가 작을수록 영향이 큽니다.</p>
+
+<table>
+  <tr><th>입력</th><th>작용하는 곳</th></tr>
+  <tr><td class="q">R<sub>int</sub> filler–matrix</td><td>그 phase(shell이 있으면 shell)와 matrix가 만나는 모든 voxel 면</td></tr>
+  <tr><td class="q">R<sub>c</sub> filler–filler contact</td><td>서로 다른 두 입자가 맞닿은 voxel 면(5.5절에서 기록한 면)</td></tr>
+  <tr><td class="q">Contact resistance between fillers<br>(필러가 둘 이상일 때)</td><td><b>서로 다른 필러</b>끼리 맞닿은 면. 필러 쌍마다 따로 줄 수 있고(예: Al₂O₃–AlN),
+      비워 두면 두 필러 R<sub>c</sub>의 평균을 씁니다. v4까지는 같은 필러끼리의 접촉에만 R<sub>c</sub>가 들어가고 다른 필러끼리의 접촉면은 저항 없이 남았습니다.</td></tr>
+</table>
+<p>열전도도 결과에는 필러 쌍마다 <b>적용된 R<sub>c</sub>와 그 쌍이 맞닿은 voxel 면의 수</b>가 표로 나옵니다. 예를 들어 Al₂O₃와 AlN을 섞은
+고충진 구조에서는 서로 다른 필러 사이의 접촉면이 가장 많을 수 있으므로, 그 쌍의 값이 결과를 좌우합니다. 측정값에서
+R<sub>int</sub>나 R<sub>c</sub>를 거꾸로 찾는 방법은 30장을 보십시오.</p>
+
+<figure>
+  <img src="figures/ui_interface_r.png" class="half">
+  <figcaption>Phase 편집기의 Interfacial thermal resistance. R<sub>int</sub>를 넣으면 임계 반경 R<sub>int</sub>·k<sub>matrix</sub>가 바로 계산되어 표시됩니다.</figcaption>
+</figure>
+
+<p>두 값 모두 열전도도 해석에만 쓰이며, 저항이 하나라도 있으면 열전도 해석은 <b>내장 periodic finite-volume solver</b>로
+풀립니다. 이 solver는 voxel 면마다 1/k<sub>면</sub> = 1/(2k<sub>a</sub>) + 1/(2k<sub>b</sub>) + R/h로 저항을 넣습니다.
+PuMA의 finite element는 이웃 요소가 절점을 공유해 면 저항을 담을 수 없기 때문입니다. 격자 표면은 계단 모양이라
+실제 표면보다 면적이 넓으므로(구에서 약 1.5배), 프로그램이 해석적 표면적과 비교해 R을 보정합니다.
+v3는 matrix 한 층의 열전도도를 낮추는 근사를 썼는데, 이 방식은 층을 따라 흐르는 열까지 막는 오차가 있어 v4에서 바꾸었습니다.</p>
+
+<div class="note">
+<b>임계 반경.</b> 구형 filler는 반지름이 a<sub>c</sub> = R<sub>int</sub> × k<sub>matrix</sub>보다 작으면 아무리 열전도가 높아도
+복합재의 열전도도를 올리지 못합니다. 예를 들어 epoxy(0.2 W/m·K)에 R<sub>int</sub> = 1×10⁻⁷ m²K/W면 a<sub>c</sub> = 0.02 µm이고,
+1×10⁻⁶이면 0.2 µm입니다. 편집기가 현재 값의 임계 반경을 보여 줍니다. 값을 모르면 0(완전 접합)으로 두고 결과를
+<b>상한</b>으로 이해하십시오. 전형적인 값은 10⁻⁹~10⁻⁷ m²K/W입니다.
+</div>
+
+<h3>5.8 미리보기와 생성</h3>
+
+<p>리본의 <span class="ui">Generate structure</span>를 누르면 해석 없이 구조만 만들어 3D로 보여 줍니다.
+함량, 입자 수, 뭉침, 맞닿은 면의 수, 도달한 크기를 여기서 먼저 확인하고 해석으로 넘어갑니다.
+만든 구조는 그 런에 보관되어, 이어서 <span class="ui">Run</span>을 누르면 <b>다시 생성하지 않고 같은 런에서
+해석을 이어 갑니다</b>(2.4절). 해석을 나중에 추가해도 마찬가지입니다.</p>
+</div>

@@ -1,0 +1,219 @@
+<div class="sec">
+<h2>26. Working with the 3D / 2D view</h2>
+
+<p class="lead">Numbers alone rarely tell "why that value came out". This view shows <b>what actually happened inside the structure</b>.</p>
+
+<figure>
+  <img src="figures/ui_viewer.png">
+  <figcaption>The 3D view. The toolbar at the top picks the quantity and colours; the panel on the right decides what is drawn.</figcaption>
+</figure>
+
+<h3>26.1 What to show — the toolbar</h3>
+
+<table>
+  <tr><th>Item</th><th>Description</th></tr>
+  <tr><td class="q">Displayed quantity (list)</td>
+      <td>The structure (phase colours) and every computed field. <b>Every direction solved</b> is listed separately, so, for example, the heat flux under an X and a Z gradient can be compared in turn.</td></tr>
+  <tr><td class="q">Colour map (Jet / Turbo / Viridis …)</td>
+      <td>Pick what looks best. For reports, Viridis also survives black-and-white printing.</td></tr>
+  <tr><td class="q">Colour range (1–99 % / Min–max / Manual)</td>
+      <td>The default 1–99 % keeps extreme values from hogging the colours. When comparing several conditions side by side, set <b>the same range with Manual</b>.
+        <br>Two exceptions apply automatically. <b>Class numbers</b> (percolation and the like) are not measured values and use the <b>full range</b> — when one class fills most of the volume, a percentile window collapses onto it and the view turns a single colour.
+        <br>And <b>quantities that change sign</b> (stresses and the like) get colours symmetric about 0, but <b>only when the data actually cross 0</b>. When everything is compressive (negative), as in thermal stress, a symmetric range would waste half the colours, so the data range is used.</td></tr>
+  <tr><td class="q">Log</td>
+      <td>Switch on when values span tens of times or more (current density and the like) to reveal the structure.</td></tr>
+  <tr><td class="q">ISO / +X / +Y / +Z</td><td>Set the view to fixed directions.</td></tr>
+</table>
+
+<h3>26.2 What to draw — the Display panel</h3>
+
+<figure>
+  <img src="figures/ui_display_panel.png" class="half">
+  <figcaption>The Display panel on the right.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Switch</th><th>When to use it</th></tr>
+  <tr><td class="q">Particle and pore surfaces</td>
+      <td>Draws the surfaces of particles and pores. <b>On by default</b> — the most natural way to see a structure.</td></tr>
+  <tr><td class="q">Smooth / Voxels</td>
+      <td>How surfaces are drawn. <b>Smooth</b> gives each particle a smoothed surface; <b>Voxels</b> shows the voxel faces exactly as the solver computed them. See below.</td></tr>
+  <tr><td class="q">Colour surfaces by the field</td>
+      <td>Paints those surfaces with the computed values — for the temperature or stress distribution on particle surfaces.</td></tr>
+  <tr><td class="q">Field on the RVE faces</td>
+      <td>Draws the field on the six faces of the cube. Good for the overall distribution, but <b>it hides the interior.</b></td></tr>
+  <tr><td class="q">Opacity</td><td>Makes surfaces translucent to look inside.</td></tr>
+  <tr><td class="q">Section planes (X/Y/Z)</td><td>Cut sections to see the interior; the sliders move them.</td></tr>
+  <tr><td class="q">Vector arrows</td><td>Arrows show the <b>direction</b> of the flux. Density and length are adjustable (see "Arrows" below).</td></tr>
+  <tr><td class="q">Field lines / paths</td><td>Draws streamlines or particle paths. Streamlines are coloured by the local magnitude (resin velocity, heat flux), with their colour bar at the top right. With <span class="ui">Animate</span> on, a dark dot (tracer) moves along each line <b>at the local speed</b> — in resin flow one sees layers sliding and speeding up in the gaps between fillers, in heat flux the channels where heat passes quickly (section 32.1).</td></tr>
+  <tr><td class="q">Volume rendering</td><td>Shows the whole distribution like a translucent fog.</td></tr>
+  <tr><td class="q">Pore network</td><td>Shows the pore network as balls and sticks.</td></tr>
+  <tr><td class="q">Phase colours</td><td>Choose a colour per phase; see below.</td></tr>
+  <tr><td class="q">Lighting and depth</td><td>Adjusts the sense of depth; see below.</td></tr>
+</table>
+
+<div class="note">
+<b>Particle surfaces are extracted from the solver grid itself.</b> Thinning the grid for display would tear or erase thin shells two or three voxels thick
+(the glass wall of hollow particles, for instance), so up to a 400³ grid the solver grid is used as it is. Core, shell and matrix all appearing distinct is
+normal; to look inside, cut with <span class="ui">Section planes</span>.
+</div>
+
+<h4>Smooth surfaces and voxels</h4>
+
+<figure>
+  <img src="figures/ui_surface_styles.png">
+  <figcaption>The same structure (Al₂O₃ 50 vol%, 70³) drawn Smooth (left) and as Voxels (right); top the structure, bottom coloured by the heat flux.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Style</th><th>How it is made</th><th>When to use it</th></tr>
+  <tr><td class="q">Smooth (default)</td>
+      <td>A surface is built <b>for each particle separately</b> (VTK SurfaceNets) and smoothed by at most one voxel from the voxel boundary. Touching particles
+          keep their own surfaces and do not melt into one lump.</td>
+      <td>Most views of structures and field distributions; report figures.</td></tr>
+  <tr><td class="q">Voxels</td>
+      <td><b>The voxel faces exactly</b> as the solver computed them, each face coloured with its voxel's value (no interpolation).</td>
+      <td>To check whether particles really touch, how many voxels a gap spans, or whether the staircase of a boundary affects the result.</td></tr>
+</table>
+
+<div class="note">
+Early versions built one surface for all particles of a phase. The denser the particles, the more close neighbours fused during smoothing and looked
+<b>soldered together</b>, and parts with the wrong surface orientation (outside) looked <b>dark like holes</b>. Now surfaces are built per particle number,
+and the outside of each face is judged from the particle itself. If a section and the 3D view still disagree, switch to <span class="ui">Voxels</span> —
+that is the structure the solver saw. The 3D data of older runs can be rebuilt when the run kept its structure (<span class="code">pipeline.rebuild_view</span>).
+</div>
+
+<h4>Arrows (Vector arrows)</h4>
+
+<ul>
+  <li>Arrows are available only for <b>quantities computed as vectors</b> — heat flux, current density, electric field, magnetic field, velocity. While a scalar
+      such as temperature or potential is shown, the switch is disabled; pick a quantity such as velocity or current in <span class="ui">Displayed quantity</span> first.</li>
+  <li>Switching arrows on makes the particles <b>translucent automatically</b>: arrows stand evenly in particles and matrix, and opaque particles would hide most of them.</li>
+  <li><span class="ui">Arrow density</span> is the number of arrows along an edge (about 18 by default); <span class="ui">Arrow length</span> is a length factor.</li>
+  <li>By default the length follows <b>the square root of the magnitude</b>. Drawn proportional to the magnitude, the arrows in a poorly conducting matrix (where most
+      of them stand) shrank to a few pixels, and moving the slider seemed to change nothing. <span class="ui">Same length for every arrow</span> gives all arrows the
+      same length, showing <b>direction only</b>; read the magnitude from the colour.</li>
+  <li>In 2D sections the in-plane component is drawn, and figures saved with <span class="ui">High-resolution figure</span> follow the same rules.</li>
+</ul>
+
+<h4>Which side's value is painted on a surface</h4>
+
+<p>A surface is <b>the boundary between two phases</b>. Quantities that differ between phases, such as temperature or stress, jump at the boundary, and the
+picture changes completely depending on which side is read. The program reads by these rules:</p>
+
+<table>
+  <tr><th>Quantity</th><th>Side read</th><th>Why</th></tr>
+  <tr><td class="q">Most quantities<br>(temperature, stress, velocity, current density …)</td>
+      <td><b>Just inside the surface</b> — the phase itself</td>
+      <td>A particle surface must carry <b>the particle's value</b>; with matrix values mixed in, one cannot tell which phase it belongs to.</td></tr>
+  <tr><td class="q">Matrix ligament thickness</td>
+      <td><b>Just outside the surface</b> — the matrix</td>
+      <td>It is 0 inside particles, so it only makes sense read on the matrix side.</td></tr>
+  <tr><td class="q"><b>Electric and magnetic field enhancement</b><br>(|E|/E₀, |H|/H₀)</td>
+      <td>The side with <b>the lower permittivity (permeability)</b></td>
+      <td>The normal D (B) is continuous at the boundary, so the field always crowds into the lower side. High-permittivity or high-permeability particles
+          <b>lower</b> the field inside themselves and push it into the gaps, so the matrix side is read; where the particle side is lower, as in hollow
+          particles or pores, the inside is read. Reading the other side would erase the very concentration one wants to see.</td></tr>
+</table>
+
+<div class="note">
+These rules apply <b>only to 3D surfaces</b>. 2D sections and the RVE faces draw the voxel values as they are, so both sides of a boundary are visible.
+<b>When unsure which side a value belongs to, check in 2D</b> — hovering shows the phase and the value at that point.
+</div>
+
+<h4>Choosing colours per phase</h4>
+
+<figure>
+  <img src="figures/ui_colours.png" class="half">
+  <figcaption>The phase names of the loaded run appear as they are, each with its own colour.</figcaption>
+</figure>
+
+<p>The colours of matrix and fillers can be chosen directly. The list is built from <b>the phase names of the loaded run</b>, so each case shows its own phases.</p>
+
+<div class="note">
+A colour is <b>set in one place and applied everywhere</b> — 3D surfaces, 2D section pixels and the legend all change together. Use it to match report
+figures to a house standard, or to keep phases distinguishable in black-and-white print. <span class="ui">Restore the default colours</span> reverts at any time.
+</div>
+
+<h4>Lighting and depth</h4>
+
+<figure>
+  <img src="figures/ui_lighting.png" class="half">
+  <figcaption>The three terms of the Phong model, volume shading and outlines.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>What changes</th></tr>
+  <tr><td class="q">Ambient</td>
+      <td>Light reaching equally from every direction. Raising it <b>brightens the shadows</b> and flattens the look.</td></tr>
+  <tr><td class="q">Diffuse</td>
+      <td>Brightness varying with how much a face turns to the light — <b>the main source of depth</b>.</td></tr>
+  <tr><td class="q">Specular</td>
+      <td>Shiny highlights. A little makes surfaces look solid; a lot makes them look like plastic.</td></tr>
+  <tr><td class="q">Shade the volume rendering</td>
+      <td>Shading for volume rendering too. <b>Off, it looks like flat fog.</b></td></tr>
+  <tr><td class="q">Emphasise edges</td>
+      <td>Draws outlines on the surfaces of each phase — effective for <b>telling touching particles apart</b>, whose boundaries blur with smooth shading alone.</td></tr>
+</table>
+
+<div class="note">
+The defaults (ambient 0.18 · diffuse 0.82 · specular 0.28) are a safe choice but can look dull for some structures. <b>When dense particles look like a lump</b>,
+raise diffuse, lower ambient and switch on <span class="ui">Emphasise edges</span>. The sliders act <b>immediately on the current view</b>.
+</div>
+
+<div class="note">
+Arrows and paths lie <b>inside the structure</b>. If they are on but invisible, <span class="ui">Field on the RVE faces</span> is hiding them. The program
+switches it off automatically, but check if you switched it on yourself.
+</div>
+
+<h3>26.3 Three view modes</h3>
+
+<figure>
+  <img src="figures/ui_viewer_quad.png">
+  <figcaption>3D + sections mode: the 3D view and three sections together.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Mode</th><th>Use</th></tr>
+  <tr><td class="q">3D</td><td>The overall shape and distribution.</td></tr>
+  <tr><td class="q">2D</td><td>One large section — best for <b>reading values precisely</b>.</td></tr>
+  <tr><td class="q">3D + sections</td><td>Both at once: the 3D shape and the internal sections together.</td></tr>
+</table>
+
+<h4>What the 2D view can do</h4>
+<figure>
+  <img src="figures/ui_viewer_2d.png">
+  <figcaption>A 2D section. Hovering shows the coordinates, phase and value at that point.</figcaption>
+</figure>
+<ul>
+  <li><b>Hovering</b> shows the coordinates, the phase and the computed value at that point.</li>
+  <li><b>Clicking</b> moves the other two sections through that point.</li>
+  <li>The wheel zooms, dragging pans, a double click resets.</li>
+  <li>With arrows on, the in-plane flux direction is drawn over the section.</li>
+</ul>
+
+<h3>26.4 Saving figures</h3>
+
+<p>Two options sit at the right of the toolbar:</p>
+<ul>
+  <li><b>Save view</b> — saves exactly what is visible as a PNG. Fast.</li>
+  <li><b>High-resolution figure</b> — re-renders on the server with PyVista, keeping the current view and colour range but much sharper: suited to
+      <b>report and paper figures</b>.</li>
+</ul>
+
+<h3>26.5 Good things to check with this view</h3>
+
+<table>
+  <tr><th>Question</th><th>How to look</th></tr>
+  <tr><td class="q">Is the filler actually connected?</td>
+      <td>Show current density or heat flux in Log and switch on the field lines. If connected, the paths follow the filler.</td></tr>
+  <tr><td class="q">Where does stress concentrate?</td>
+      <td>Paint the von Mises field on the surfaces; the narrow places between particles turn red.</td></tr>
+  <tr><td class="q">Which channels carry the fluid?</td>
+      <td>Velocity field + streamlines: stagnant zones and main channels separate.</td></tr>
+  <tr><td class="q">How large a particle passes?</td>
+      <td>Switch on the percolation path: the particle moves along it at its real size.</td></tr>
+  <tr><td class="q">Was the structure made as intended?</td>
+      <td>Show the structure (phase colours) only and sweep the sections; clusters and voids become visible.</td></tr>
+</table>
+</div>

@@ -1,0 +1,150 @@
+<div class="sec">
+<h2>2. Installation and a first analysis</h2>
+
+<h3>2.1 Installation</h3>
+
+<p>There are two ways to install. On a PC <b>without internet access</b>, such as one on a secured network, the whole package
+is copied and installed — <b>conda (Miniconda/Anaconda) is not needed</b>. On a PC with internet access the environment can
+also be created with conda.</p>
+
+<table>
+  <tr><th>Situation</th><th>File to run</th><th>What it needs</th></tr>
+  <tr><td class="q">PC without internet (recommended)</td><td><span class="ui">1_INSTALL_OFFLINE.bat</span></td>
+      <td>Nothing. Python and every package, NASA PuMA included, are in the package.</td></tr>
+  <tr><td class="q">PC with internet</td><td><span class="ui">1_INSTALL.bat</span></td>
+      <td>conda. It creates an environment in <span class="ui">env\</span> from conda-forge (about 2–3 GB).</td></tr>
+</table>
+
+<h4>Offline installation (no conda)</h4>
+<ol>
+  <li>Copy the whole folder to the PC, on a <b>short path</b> (for example <span class="ui">C:\MPSim\</span>). Some packages
+      create deep folders; on a long path the installation stops at the 260-character path limit of Windows with
+      "file name too long" (WinError 206). The installer warns beforehand when the path is long.</li>
+  <li><span class="ui">1_INSTALL_OFFLINE.bat</span> — uses no internet at all. It does three things:
+    <ul>
+      <li>unpacks the official Python 3.11 runtime of <span class="ui">runtime\</span> (the embeddable distribution from
+          python.org) into a <span class="ui">python\</span> folder, registering nothing in Windows;</li>
+      <li>installs the 76 packages of <span class="ui">wheels\</span> (NASA PuMA included) into it;</li>
+      <li>checks that every component imports and runs the short self-test (38 checks).</li>
+    </ul></li>
+  <li><span class="ui">2_RUN_LOCAL.bat</span> — starts the program; the browser opens by itself.</li>
+</ol>
+
+<div class="note">
+Installing means <b>creating one <span class="ui">python\</span> folder beside the program</b> (about 1.6 GB), nothing more.
+Deleting that folder undoes it completely. The launchers use <span class="ui">python\</span> when it exists and look for a
+conda environment only when it does not.
+</div>
+
+<h4>Contents of the offline package</h4>
+<table>
+  <tr><th>Item</th><th>Content</th></tr>
+  <tr><td class="q"><span class="code">runtime\python-3.11.9-embed-amd64.zip</span></td><td>Official Python 3.11 runtime (11 MB)</td></tr>
+  <tr><td class="q"><span class="code">wheels\</span></td><td>Every package needed (76 wheels, about 235 MB).</td></tr>
+  <tr><td class="q"><span class="code">requirements-offline.txt</span></td><td>The packages and versions to install — the versions that passed the self-test.</td></tr>
+  <tr><td class="q"><span class="code">constraints-offline.txt</span></td><td>Versions that must not be exceeded (numpy &lt; 2, scipy 1.11, vtk 9.5.2) — PuMA is built against them.</td></tr>
+  <tr><td class="q"><span class="code">tools\build_offline.py</span></td><td>The script that builds the package (run once on a PC with internet).</td></tr>
+  <tr><td class="q"><span class="code">tools\check_imports.py</span></td><td>Reports what imports and what is missing.</td></tr>
+</table>
+
+<h4>Why NASA PuMA works without conda</h4>
+<p>PuMA is distributed only on conda-forge, but what the conda package actually installs is an ordinary Python package
+(<span class="code">pumapy</span>). Its four compiled modules need only <span class="code">python311.dll</span>,
+<span class="code">VCRUNTIME140.dll</span> (part of every python.org Python) and the Windows C runtime; they rely on no other
+library of the conda environment. <span class="code">tools\build_offline.py</span> therefore packs the installed PuMA into a
+standard wheel (<span class="code">pumapy-3.2.2-cp311-cp311-win_amd64.whl</span>), which the offline PC installs like any other
+package. PuMA is distributed under the NASA Open Source Agreement 1.3, and its licence file travels inside the wheel.</p>
+
+<div class="note">
+<b>Verification</b> — the package was installed with conda removed from the PATH (only the Windows folders left). The
+short self-test (38 checks) and three complete pipelines (filled composite, thin film, porous body) all passed, with the
+same numbers as in the conda environment (for example k = 0.4015 W/m·K).
+</div>
+
+<h4>Building the package again (PC with internet)</h4>
+<div class="code">conda run -p .\env python tools\build_offline.py</div>
+<p>It downloads the Python runtime, builds the wheel from the PuMA in that PC's conda environment and downloads every
+other package as a wheel for Windows and Python 3.11. Then the whole folder is moved to the offline PC.</p>
+
+<h4>Serving other PCs</h4>
+<p>Started with <span class="ui">3_RUN_SERVER.bat</span>, the program can be opened in a browser from other PCs on the same
+network. The server PC does the solving, so one powerful PC serving several users is the efficient arrangement. If other
+PCs cannot connect, <span class="ui">4_NETWORK_CHECK.bat</span> tells whether a firewall or wireless isolation is the cause.</p>
+
+<h4>Always start the program with the .bat files</h4>
+<p>The numbered .bat files decide, through <span class="ui">_common.bat</span>, which Python to use
+(<span class="ui">python\</span> → <span class="ui">env\</span> → a conda environment) and set the console encoding to UTF-8.
+Always start the program with them.</p>
+
+<h3>2.2 A first analysis, step by step</h3>
+
+<p>The quickest start is a preset. Following the steps below gives a first result within five minutes.</p>
+
+<h4>① Choose a preset</h4>
+<p>The left panel of the <span class="ui">Home</span> tab holds typical problems. Clicking, for example,
+<b>EMC · epoxy + fused silica 50 vol%</b> fills in the materials, the structure and the analyses at once. Under each preset
+the analyses it switches on are listed.</p>
+
+<h4>② Build the structure</h4>
+<p>In the <span class="ui">Structure</span> tab, click <span class="ui">Generate structure</span>. Nothing is solved: only the
+<b>structure</b> is built and shown in 3D, so that the filler content and the sizes can be checked by eye first. The structure is
+<b>kept in that run</b>, and when the analyses are run in step ⑤ it is used as it is instead of being generated again
+(section 2.4).</p>
+
+<h4>③ Set the resolution</h4>
+<p>The <span class="ui">Domain</span> tab shows the voxel size and the RVE size. The automatic setting is fine to begin with.
+When a value is changed, the expected grid appears at once below, with a warning if a criterion is not met (chapter 6).</p>
+
+<h4>④ Choose the analyses</h4>
+<p>Switch on what is needed in the <span class="ui">Simulation</span> and <span class="ui">Structure Analysis</span> tabs.
+<b>Several can be on at once.</b> The ribbon icons and the switches on the cards in the left panel both toggle them.</p>
+
+<h4>⑤ Run</h4>
+<p>Click <span class="ui">Run</span> at the top right. The progress scrolls in the Console below, and intermediate results appear
+as they come. When the run finishes, the Result Viewer opens by itself.</p>
+
+<h3>2.3 Recommended settings for a first run</h3>
+
+<table>
+  <tr><th>Setting</th><th>Recommended</th><th>Why</th></tr>
+  <tr><td class="q">Accuracy level</td><td>Start with <b>Fast</b></td>
+      <td>Enough to see trends, and much faster. Run again at Standard or above when numbers for a report are needed.</td></tr>
+  <tr><td class="q">Load directions</td><td>z, x and y</td>
+      <td>Shows whether there is anisotropy. When time is short, z (through the thickness) alone will do — fields and arrows
+      are stored for the first direction, z.</td></tr>
+  <tr><td class="q">Analyses</td><td>Only what is needed</td>
+      <td>Elasticity and CTE solves seven load cases and takes longest. Analyses added later do not rebuild the structure
+      (section 2.4).</td></tr>
+  <tr><td class="q">Realisations</td><td>1</td>
+      <td>Two or more give the scatter, with a 95 % confidence interval.</td></tr>
+</table>
+
+<div class="warn">
+The solving time grows with the cube of the grid. Halving the voxel size makes the grid eight times larger, and the time
+grows by more than that. Start coarse and refine only as far as needed.
+</div>
+
+<h3>2.4 Continuing with the same structure</h3>
+
+<p>A run keeps the structure it built in its <span class="code">structure\</span> folder (the voxel map and the particle list).
+When a new analysis starts, the program looks among the runs of the same work folder and case for <b>the same structure</b>
+(same shapes, sizes, contents, grid, contact handling and seed) and, if there is one, proceeds as follows.</p>
+
+<table>
+  <tr><th>Situation</th><th>What happens</th></tr>
+  <tr><td class="q"><span class="ui">Run</span> after <span class="ui">Generate structure</span></td>
+      <td>The structure-only run <b>continues as an analysis run</b>. The structure is not generated again, and no extra run is created.</td></tr>
+  <tr><td class="q">Analyses added to a finished run (e.g. thermal → thermal + dielectric)</td>
+      <td>That run continues. <b>The analyses already there are kept and only the new ones are solved</b>, merged into the
+      results, the report and the 3D fields. The folder name follows the analyses it holds (<span class="code">thermal</span>
+      → <span class="code">dielectric+thermal</span>).</td></tr>
+  <tr><td class="q">Nothing new</td><td>The program says that everything is already there and solves nothing.</td></tr>
+  <tr><td class="q">Material properties or analysis options changed</td>
+      <td>The results would differ, so a <b>new run</b> is created — but it takes over the structure of the earlier run. The
+      earlier results are kept.</td></tr>
+  <tr><td class="q">Shapes, contents, grid or seed changed</td><td>A different structure, generated anew.</td></tr>
+</table>
+
+<p>A run open on screen that matches takes precedence. To turn this behaviour off, clear
+<span class="ui">Reuse the structure of a matching run</span> in the <span class="ui">Simulation</span> tab.</p>
+</div>

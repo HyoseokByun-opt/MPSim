@@ -1,0 +1,96 @@
+<div class="sec">
+<h2>25. Reading the Result Viewer</h2>
+
+<p class="lead">When the analysis is done, every result is arranged on this screen. There seem to be many items, but <b>the structure is always the same.</b>
+Learn it in this chapter and you can read analyses you have never seen before.</p>
+
+<h3>25.1 Layout of the screen</h3>
+
+<figure>
+  <img src="figures/ui_result_nav.png" class="half">
+  <figcaption>Contents on the left. Only the analyses switched on appear, grouped by category.</figcaption>
+</figure>
+
+<p>The contents on the left have four groups:</p>
+<ul>
+  <li><b>Overview</b> — summary of this run</li>
+  <li><b>Simulation</b> — property results (thermal, electrical, electromagnetic, mechanical, flow)</li>
+  <li><b>Structure analysis</b> — quantification of the structure itself (pores, particles)</li>
+  <li><b>Verification</b> — check results and input conditions</li>
+</ul>
+
+<p>Clicking an item jumps to its section. <b>Only the analyses switched on are shown</b>; an item missing from the screen was not switched on.</p>
+
+<h3>25.2 Summary — where to look first</h3>
+
+<figure>
+  <img src="figures/a_overview_tiles.png">
+  <figcaption>Summary tiles: the headline values of the run in one row.</figcaption>
+</figure>
+
+<p>The tiles at the top show <b>only the most important values</b> — density, thermal conductivity, permittivity and so on, depending on the analyses
+switched on. When comparing several conditions, this row is often enough.</p>
+
+<p>Below them the run time, the solvers used and the library versions are recorded — information kept so that, <b>looking at a result later, one knows
+under which conditions it was calculated</b>.</p>
+
+<h3>25.3 Three things common to every property analysis</h3>
+
+<h4>(1) Tensor table</h4>
+<p>A property can differ with direction, so it is given as a <b>3×3 tensor</b>; the screen shows the diagonal components xx, yy, zz.</p>
+<ul>
+  <li>Three similar values → <b>isotropic</b>: the particles lie at random.</li>
+  <li>One direction larger → <b>anisotropic</b>: particle orientation or connection paths.</li>
+  <li><b>Isotropic mean</b> — the mean of the three, to compare with measurements that do not distinguish direction.</li>
+  <li>With repeated realisations a <b>95 % CI</b> appears too. A wide interval signals a small RVE.</li>
+</ul>
+
+<h4>(2) Derived numbers</h4>
+<p>Below the tensor come practical values derived from it: thermal resistance and diffusivity for the thermal conductivity, resistivity and sheet
+resistance for the electrical conductivity, and so on. Values that need a <b>layer thickness</b> use the thickness entered on screen.</p>
+
+<h4>(3) Field statistics per region</h4>
+<p>The mean and maximum of the computed quantity in each phase (matrix, filler) are tabulated. <b>A maximum far above the mean</b> means local
+concentration — a clue to where breakdown or cracks start.</p>
+
+<h3>25.4 Bounds and mean-field models — is the value plausible?</h3>
+
+<figure>
+  <img src="figures/a_thermal_box2.png">
+  <figcaption>Whether the computed value lies within the theoretical limits. The top two rows are bounds (bars), the rows below the computed and model values (dots).</figcaption>
+</figure>
+
+<p>This one plot tells <b>whether the result makes physical sense</b>.</p>
+
+<table>
+  <tr><th>Item</th><th>Meaning</th></tr>
+  <tr><td class="q">Wiener bounds</td><td>The loosest upper and lower bounds, set by the volume fractions alone — series and parallel arrangements.</td></tr>
+  <tr><td class="q">Hashin–Shtrikman bounds</td><td>The tightest <b>rigorous</b> bounds for isotropic two-phase composites. Real values usually lie inside them.</td></tr>
+  <tr><td class="q">RVE xx / yy / zz (periodic FV)</td><td>The values actually solved, per direction; the method in brackets.</td></tr>
+  <tr><td class="q">RVE mean (PuMA FE check)</td><td>A value solved by another method, shown only when the comparison of both methods is switched on in the Simulation tab.</td></tr>
+  <tr><td class="q">Maxwell-Garnett / Mori–Tanaka</td><td>Classical models that fit well when particles are sparse.</td></tr>
+  <tr><td class="q">Bruggeman (EMA)</td><td>A model better suited to high contents where particles begin to touch.</td></tr>
+</table>
+
+<div class="note">
+Reading order — <b>① is the computed value inside the rigorous bounds (bars)?</b> If not, it is an error, recorded as failed in the Verification.
+<b>② Is the change in the resolution check small</b> (and, with the comparison switched on, are the two methods close)? A large change means insufficient
+resolution. <b>③ The difference from the model values</b> is not an error but the effect of the microstructure — that difference is the very output of this analysis.
+</div>
+
+<h3>25.5 Reading the graphs</h3>
+
+<table>
+  <tr><th>Graph</th><th>Where</th><th>How to read it</th></tr>
+  <tr><td class="q">Directional value n·K·n</td><td>Conduction family</td><td>The property in every direction as a polar plot; close to a circle means isotropic.</td></tr>
+  <tr><td class="q">Energy share by region</td><td>Conduction family</td><td>Through which phase the flux passes — whether the filler formed paths.</td></tr>
+  <tr><td class="q">Distribution histograms</td><td>Structure analysis</td><td>Pore and particle size distributions: bars are the distribution, the line the cumulative.</td></tr>
+  <tr><td class="q">Spectra</td><td>EMI, acoustics</td><td>Change with frequency; logarithmic horizontal axis.</td></tr>
+</table>
+
+<h3>25.6 From the results to the 3D view</h3>
+
+<p>At the top right of each section are buttons such as <span class="ui">Show field</span>, <span class="ui">Streamlines</span> and
+<span class="ui">Show the particle and its path</span>. They <b>jump straight to the 3D view of that result</b> — the fastest way to see what happened
+inside the structure when the numbers alone do not explain it (chapter 26).</p>
+</div>

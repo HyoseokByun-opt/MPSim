@@ -1,0 +1,124 @@
+<div class="sec">
+<h2>21. Percolation and passing particle size</h2>
+<p class="src">Open-source basis: <b>scikit-image</b> distance transform and shortest paths (MCP_Geometric) — own implementation</p>
+
+<p class="lead">Answers "<b>how large a particle can pass through this structure</b>?" Used for the largest particle passing a filter, the
+cut-off of a membrane and the flowability of powders. The result is not only a number: <b>the path the particle actually takes is shown in 3D.</b></p>
+
+<h3>21.1 How it is measured — bubble point</h3>
+
+<p>There is a clear counterpart in the laboratory: the <b>bubble point test (ASTM F316)</b>.</p>
+
+<ol>
+  <li>The pores of the specimen are fully wetted with a liquid (a special liquid of low surface tension).</li>
+  <li>Gas pressure is slowly raised on one side.</li>
+  <li>At some pressure the <b>first bubble</b> appears on the other side; the opening it came through is <b>the largest through-pore</b>.</li>
+</ol>
+
+<div class="eq">d = 4 γ cos θ / Δp</div>
+
+<p>Raising the pressure further and recording the flow gives the size distribution of the through-pores (capillary flow porometry). <b>This
+analysis computes exactly that value.</b></p>
+
+<div class="note">
+<b>Easily confused with mercury intrusion (chapter 22).</b> Mercury intrusion measures the size distribution of pores that <b>can be entered</b>;
+the bubble point measures the narrowest throat of a path that <b>goes all the way through</b>. The former includes inner pores, the latter only
+through-paths, so the bubble-point value always comes out smaller.
+</div>
+
+<h3>21.2 How the simulator calculates it</h3>
+
+<p>It asks whether "a ball of radius r can roll through the pores to the other side".</p>
+
+<ol>
+  <li>The <b>distance transform</b> is computed: at each point of the pores, the distance to the nearest solid wall. Where it is ≥ r, the centre of a
+      ball of radius r can sit.</li>
+  <li>Only the region with distance ≥ r is kept.</li>
+  <li>Whether that region <b>connects</b> one face to the opposite face is checked.</li>
+  <li>r is reduced from large values to find <b>the largest r that passes</b>.</li>
+  <li>For each passing size, the <b>shortest path</b> is found and drawn in 3D.</li>
+</ol>
+
+<h3>21.3 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/b_percolation_box1.png">
+  <figcaption>Connectivity per direction: in which directions each phase spans the RVE.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Phase</td>
+      <td>The phase examined. Both the <b>pores</b> and the <b>filler</b> are checked.</td></tr>
+  <tr><td class="q">Connected (x / y / z)</td>
+      <td>Whether the phase is connected in that direction. <b>Pores with ○ mean zero permeability and diffusion</b>; <b>a filler with ○ conducts no current</b> (chapter 8).</td></tr>
+  <tr><td class="q">Spanning fraction</td>
+      <td>Fraction belonging to the spanning cluster. Close to 1, almost everything is one connected body; small, much of it is isolated.</td></tr>
+  <tr><td class="q">Largest cluster</td>
+      <td>Size of the largest cluster; changes abruptly near the percolation threshold.</td></tr>
+</table>
+
+<figure>
+  <img src="figures/b_percolation_box2.png">
+  <figcaption>Passing particle sizes, largest first: whether each size passes, with the length and tortuosity of its path.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Sphere diameter</td>
+      <td>The particle diameter tested. The top row is <b>the largest size that passes</b>, to be compared with a bubble-point test.</td></tr>
+  <tr><td class="q">Passes</td>
+      <td>Whether it passes; smaller sizes further down naturally pass.</td></tr>
+  <tr><td class="q">Path length</td>
+      <td>The actual distance the particle travelled.</td></tr>
+  <tr><td class="q">Path tortuosity</td>
+      <td>Actual distance / straight distance. <b>Larger particles detour more</b> because they cannot use narrow shortcuts — a trend visible in the table.</td></tr>
+</table>
+
+<h3>21.4 Seeing the path</h3>
+
+<p><span class="ui">Show the path</span> in the table switches to the 3D view and plays <b>a ball of that size moving along the actual path</b>.
+The ball is drawn at its real diameter, so one sees which gaps it barely squeezes through.</p>
+
+<div class="note">
+The paths of very small particles are drawn <b>larger than real</b> for visibility; a note at the bottom of the view says so.
+</div>
+
+<h3>21.5 A judgement by example</h3>
+
+<p>In example B (45 % open pores) the median pore diameter of mercury intrusion was <b>2.46 µm</b>, yet the largest passing sphere comes out
+smaller. No contradiction —</p>
+
+<ul>
+  <li>Mercury intrusion counts sizes including <b>wide chambers</b>.</li>
+  <li>The passing size is caught at <b>the narrowest throat</b> of the path.</li>
+</ul>
+
+<p>In short, <b>a wide room with a narrow door cannot be passed.</b> That is why filtration performance must be judged by <b>this value</b>,
+not by the pore-size distribution.</p>
+
+<h3>21.6 Assumptions behind the calculation</h3>
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">Rigid spherical particles</td>
+      <td>Deformable particles (cells, emulsion droplets, soft polymers) pass narrower throats.</td></tr>
+  <tr><td class="q">The structure does not change</td>
+      <td>No particles widening the structure as they push through, no clogging.</td></tr>
+  <tr><td class="q">No surface tension or wetting</td>
+      <td>Solved as a pure geometry problem; factors such as the contact angle of the bubble-point pressure–diameter conversion do not enter.</td></tr>
+  <tr><td class="q">Voxel resolution</td>
+      <td><b>The point needing most care.</b> When the narrowest throat is only two or three voxels wide, passing or not becomes uncertain. Check that the value holds at a finer resolution (chapter 29).</td></tr>
+  <tr><td class="q">RVE size</td>
+      <td>A through-path is a search for <b>the best route in the whole structure</b>. In a small RVE a lucky open route may or may not exist, and the value scatters. Repeat with several seeds.</td></tr>
+</table>
+<!-- render-section -->
+<h3>21.7 Reading the renderings — connectivity and the passing sphere</h3>
+<figure><div class="g2"><div><img src="figures/r_a_perc2d.png"><span>Percolation class of the AlN particles — example A (z)</span></div><div><img src="figures/r_b_perc3d.png"><span>Largest sphere passing the pores — example B (z)</span></div></div><figcaption>Percolation results.</figcaption></figure>
+<ul>
+  <li><b>Class map</b> — 3 (red): clusters spanning from the top face to the bottom; 2: dead-end clusters attached to one face only;
+      1 (cyan): isolated clusters touching no face. In example A, 96 % of the AlN belongs to spanning clusters — why particle chains do the work in
+      heat conduction.</li>
+  <li><b>Passing sphere</b> — the largest sphere that can cross the pores to the other side (example B: 2.1 µm diameter) and its path. Larger particles or
+      molecules cannot pass this structure. The path length ÷ thickness is the geometric tortuosity.</li>
+</ul>
+</div>

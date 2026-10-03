@@ -1,0 +1,102 @@
+<div class="sec">
+<h2>25. Result Viewer 읽는 법</h2>
+
+<p class="lead">해석이 끝나면 모든 결과가 이 화면에 정리됩니다. 항목이 많아 보이지만
+<b>구조는 항상 같습니다.</b> 이 장에서 그 구조를 익히면 처음 보는 해석도 읽을 수 있습니다.</p>
+
+<h3>25.1 화면의 짜임</h3>
+
+<figure>
+  <img src="figures/ui_result_nav.png" class="half">
+  <figcaption>왼쪽 목차. 켠 해석만 나타나며, 분류별로 묶여 있습니다.</figcaption>
+</figure>
+
+<p>왼쪽 목차는 네 묶음입니다.</p>
+<ul>
+  <li><b>Overview</b> — 이번 해석의 요약</li>
+  <li><b>Simulation</b> — 물성 해석 결과 (열·전기·전자기·역학·유동)</li>
+  <li><b>Structure analysis</b> — 구조 자체의 정량화 (기공·입자)</li>
+  <li><b>Verification</b> — 점검 결과와 입력 조건</li>
+</ul>
+
+<p>항목을 누르면 해당 절로 이동합니다. <b>켠 해석만 표시</b>되므로, 화면에 없는 항목은
+그 해석을 켜지 않았다는 뜻입니다.</p>
+
+<h3>25.2 Summary — 먼저 보는 곳</h3>
+
+<figure>
+  <img src="figures/a_overview_tiles.png">
+  <figcaption>요약 타일. 이번 해석의 대표값들이 한 줄로 나옵니다.</figcaption>
+</figure>
+
+<p>맨 위 타일에는 <b>가장 중요한 값들만</b> 골라 표시됩니다. 밀도, 열전도도, 유전율처럼
+켠 해석에 따라 달라집니다. 여러 조건을 비교할 때는 이 줄만 봐도 충분한 경우가 많습니다.</p>
+
+<p>그 아래에는 해석에 걸린 시간, 사용한 솔버, 라이브러리 버전이 기록됩니다.
+<b>나중에 결과를 다시 볼 때 어떤 조건으로 계산했는지</b> 알 수 있도록 남겨 두는 정보입니다.</p>
+
+<h3>25.3 모든 물성 해석에 공통인 세 가지</h3>
+
+<h4>(1) 텐서 표</h4>
+<p>물성은 방향에 따라 다를 수 있으므로 <b>3×3 텐서</b>로 나옵니다. 화면에는 대각 성분
+xx, yy, zz가 표시됩니다.</p>
+<ul>
+  <li>세 값이 비슷하다 → <b>등방성</b>. 입자가 무작위로 놓였다는 뜻입니다.</li>
+  <li>한 방향만 크다 → <b>이방성</b>. 입자 배향이나 연결 경로 때문입니다.</li>
+  <li><b>Isotropic mean</b> — 세 값의 평균. 방향을 구분하지 않고 잰 실험값과 비교할 대상입니다.</li>
+  <li>반복 계산을 했다면 <b>95 % CI</b>가 함께 나옵니다. 넓으면 RVE가 작다는 신호입니다.</li>
+</ul>
+
+<h4>(2) 파생 수치</h4>
+<p>텐서 아래에는 그 물성에서 유도되는 실무 값들이 나옵니다. 열전도도라면 열저항·열확산율,
+전기전도도라면 비저항·면저항 같은 것입니다. <b>층 두께</b>가 필요한 값들은 화면에서
+입력한 두께를 씁니다.</p>
+
+<h4>(3) 영역별 필드 통계</h4>
+<p>계산된 물리량이 각 상(기지·필러) 안에서 평균 얼마였고, 최대 얼마였는지 표로 나옵니다.
+<b>최댓값이 평균보다 훨씬 크면</b> 국부 집중이 있다는 뜻이며, 절연파괴나 크랙의
+출발점을 찾는 단서가 됩니다.</p>
+
+<h3>25.4 Bounds and mean-field models — 값의 타당성</h3>
+
+<figure>
+  <img src="figures/a_thermal_box2.png">
+  <figcaption>계산값이 이론적 한계 안에 있는지 보여주는 그림. 위 두 개는 한계선(막대), 아래는 계산값과 모델값(점).</figcaption>
+</figure>
+
+<p>이 그림 하나로 <b>결과가 물리적으로 말이 되는지</b>를 판단할 수 있습니다.</p>
+
+<table>
+  <tr><th>항목</th><th>뜻</th></tr>
+  <tr><td class="q">Wiener bounds</td><td>부피분율만으로 정해지는 가장 느슨한 상·하한. 직렬·병렬 배치에 해당합니다.</td></tr>
+  <tr><td class="q">Hashin–Shtrikman bounds</td><td>등방성 2상 복합재의 가장 좁은 <b>엄밀</b> 경계. 실제 값은 대개 여기 안에 있습니다.</td></tr>
+  <tr><td class="q">RVE xx / yy / zz (periodic FV)</td><td>실제로 푼 값. 방향별로 표시되며, 괄호 안이 계산 방법입니다.</td></tr>
+  <tr><td class="q">RVE mean (PuMA FE check)</td><td>Simulation 탭에서 두 방법 비교를 켰을 때만 나오는, 다른 방법으로 푼 값.</td></tr>
+  <tr><td class="q">Maxwell-Garnett / Mori–Tanaka</td><td>입자가 드문 경우에 잘 맞는 고전 모델.</td></tr>
+  <tr><td class="q">Bruggeman (EMA)</td><td>함량이 높아 입자가 맞닿기 시작할 때 더 적합한 모델.</td></tr>
+</table>
+
+<div class="note">
+읽는 순서 — <b>① 계산값이 엄밀 경계(막대) 안에 있는가</b>를 먼저 봅니다. 벗어나면 오류이며
+Verification에 실패로 기록됩니다. <b>② 해상도 점검의 변화가 작은가</b>(두 방법 비교를 켰다면 두 값이 가까운가)를 봅니다.
+크게 변하면 해상도가 부족한 것입니다. <b>③ 모델값과의 차이</b>는 오류가 아니라
+미세구조의 영향이므로, 오히려 그 차이가 이 해석의 결과물입니다.
+</div>
+
+<h3>25.5 그래프 읽기</h3>
+
+<table>
+  <tr><th>그래프</th><th>나오는 곳</th><th>읽는 법</th></tr>
+  <tr><td class="q">Directional value n·K·n</td><td>전도 계열</td><td>모든 방향의 물성을 원형으로. 원에 가까우면 등방성입니다.</td></tr>
+  <tr><td class="q">Energy share by region</td><td>전도 계열</td><td>어느 상을 통해 흐르는지의 비율. 필러가 경로를 만들었는지 확인합니다.</td></tr>
+  <tr><td class="q">분포 히스토그램</td><td>구조 해석</td><td>기공·입자 크기 분포. 막대는 분포, 선은 누적입니다.</td></tr>
+  <tr><td class="q">스펙트럼</td><td>EMI, 흡음</td><td>주파수에 따른 변화. 가로축이 로그입니다.</td></tr>
+</table>
+
+<h3>25.6 결과에서 3D 화면으로</h3>
+
+<p>각 절의 오른쪽 위에는 <span class="ui">Show field</span>, <span class="ui">Streamlines</span>,
+<span class="ui">Show the particle and its path</span> 같은 단추가 있습니다. 누르면
+<b>그 결과에 해당하는 3D 화면으로 바로 이동</b>합니다. 숫자만으로 이해가 안 될 때
+구조 안에서 무슨 일이 일어났는지 보는 가장 빠른 길입니다(26장).</p>
+</div>

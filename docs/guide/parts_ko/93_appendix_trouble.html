@@ -1,0 +1,105 @@
+<div class="sec">
+<h2>부록 D. 문제 해결</h2>
+
+<p class="lead">실제로 자주 마주치는 상황을 <b>증상 → 원인 → 대응</b>으로 정리했습니다.
+문제가 생기면 먼저 해석 폴더의 <span class="ui">run.log</span>를 열어 보십시오.</p>
+
+<h3>D.1 프로그램이 실행되지 않을 때</h3>
+
+<table>
+  <tr><th>증상</th><th>원인과 대응</th></tr>
+  <tr><td class="q">창은 뜨는데 화면이 비어 있다</td>
+      <td>브라우저가 서버에 접속하지 못한 것입니다. 다른 프로그램이 같은 포트를 쓰고 있을 수 있습니다. <span class="ui">4_NETWORK_CHECK.bat</span>으로 확인하십시오.</td></tr>
+  <tr><td class="q">"ImportError: vtkCapsuleSource"</td>
+      <td><b>VTK 버전 충돌입니다.</b> PuMA는 <b>vtk 9.5.2</b>와 함께 써야 합니다. 최신 vtk(9.7)가 설치되면 PyVista와 PuMA가 모두 깨집니다. 환경을 만들 때 <span class="ui">vtk=9.5.2</span>와 <span class="ui">pyvista=0.47.1</span>을 반드시 고정하십시오.</td></tr>
+  <tr><td class="q">import porespy에서 조용히 죽는다<br>(오류 메시지도 없이)</td>
+      <td>DLL을 찾지 못한 것입니다. PuMA 환경의 <span class="ui">Library\bin</span>이 PATH에 있어야 합니다. 배포판은 <span class="ui">_common.bat</span>이 자동으로 복원합니다.</td></tr>
+  <tr><td class="q">PuMA 환경을 찾지 못한다</td>
+      <td><span class="ui">0_CHECK_ENVIRONMENT.bat</span>을 실행하면 어느 환경을 찾았는지 알려줍니다.</td></tr>
+  <tr><td class="q">설치 중 패키지를 받으러 간다</td>
+      <td>오프라인 설치는 <span class="ui">--no-index</span>로 동작해야 합니다. 인터넷에 나가려 한다면 <span class="ui">wheels\</span> 폴더에 해당 패키지가 빠진 것입니다.</td></tr>
+  <tr><td class="q">설치 후 numpy 오류가 난다</td>
+      <td>numpy 2.x가 들어오면 PuMA가 깨집니다. <span class="ui">constraints-offline.txt</span>가 numpy&lt;2, scipy 1.11을 고정하고 있는지 확인하십시오.</td></tr>
+  <tr><td class="q">돌린 해석이 Runs 목록에 없다</td>
+      <td>브라우저는 각자의 표식을 쿠키에 갖고 있어 <b>자기가 돌린 해석만</b> 목록에 보입니다. 반면 <span class="ui">6_RUN_COMMANDLINE.bat</span>이나 스크립트로 돌린 해석은 <b>소유자가 없어 모든 사용자에게 보입니다.</b> 그래도 안 보인다면 다른 브라우저(또는 시크릿 창)에서 돌린 것이므로, 그 창에서 확인하거나 작업 폴더를 직접 여십시오(부록 C).</td></tr>
+</table>
+
+<div class="note">
+설치 직후에는 <span class="ui">5_SELF_TEST.bat</span>을 한 번 돌려 보시기를 권합니다.
+정답이 알려진 54가지 문제(빠른 점검은 38가지)를 풀어 엔진이 제대로 동작하는지 확인합니다(31장).
+</div>
+
+<h3>D.2 구조를 만들 때</h3>
+
+<table>
+  <tr><th>증상</th><th>원인과 대응</th></tr>
+  <tr><td class="q">구조 생성이 실패한다</td>
+      <td>요구한 함량을 <b>기하학적으로 채울 수 없습니다.</b> 작은 입자를 높은 함량으로 넣을 때 자주 생깁니다. ① 겹침 허용, ② 최소 간격 축소, ③ 함량을 낮추기 중 하나를 택하십시오.</td></tr>
+  <tr><td class="q">실제 함량이 목표보다 낮다</td>
+      <td>입자를 다 넣지 못하고 끝난 것입니다. 구조 분석(20장)에서 실제 부피분율을 확인하고, 물성 해석은 <b>그 실제 값 기준</b>으로 해석하십시오.</td></tr>
+  <tr><td class="q">부피분율 오차 경고</td>
+      <td>복셀로 형상을 근사하기 때문에 생깁니다. 복셀을 줄이면 함께 줄어듭니다. 3 % 안팎이면 실질적 영향은 거의 없습니다.</td></tr>
+  <tr><td class="q">시드마다 결과가 달라진다</td>
+      <td>입자 수가 적어 통계가 불안정한 것입니다. RVE를 키우거나, 같은 조건을 여러 시드로 돌려 평균과 편차를 보십시오.</td></tr>
+</table>
+
+<h3>D.3 해석 중</h3>
+
+<table>
+  <tr><th>증상</th><th>원인과 대응</th></tr>
+  <tr><td class="q">"Solver did not converge"</td>
+      <td>반복 해가 목표 잔차에 도달하지 못했습니다. <b>이 값은 쓰지 마십시오.</b> 물성 대비가 극단적이거나(10¹⁰ 이상) 격자가 거칠 때 생깁니다. 해상도를 올리거나 허용오차를 조정하십시오.</td></tr>
+  <tr><td class="q">탄성 해석이 너무 오래 걸린다</td>
+      <td>하중을 7개 풀어야 하므로 가장 무겁습니다(12장). 이 항목만 낮은 해상도로 먼저 돌려 경향을 보십시오.</td></tr>
+  <tr><td class="q">메모리가 부족하다</td>
+      <td>격자 크기를 줄이십시오. 필요 메모리는 복셀 수에 비례하며, 격자 한 변을 2배로 하면 8배가 됩니다.</td></tr>
+  <tr><td class="q">DOE의 일부 케이스만 실패한다</td>
+      <td>대개 구조 생성 실패입니다. 28장 4절을 보십시오. 실패한 케이스는 최적화 학습에서 제외됩니다.</td></tr>
+</table>
+
+<h3>D.4 결과가 이상할 때</h3>
+
+<table>
+  <tr><th>증상</th><th>원인과 대응</th></tr>
+  <tr><td class="q">투과도가 0이다</td>
+      <td>기공이 그 방향으로 <b>이어지지 않았습니다.</b> 구조 분석의 <b>열린 기공률</b>과 퍼콜레이션의 <b>Connected</b> 표시를 보십시오(20·21장). 기공률이 높아도 갇혀 있으면 유체는 통하지 않습니다.</td></tr>
+  <tr><td class="q">전기전도도가 절연체 수준이다</td>
+      <td>필러가 이어지지 않은 것입니다. 입자 분석의 <b>Clusters</b>와 <b>Percolating</b>을 보십시오(24장). 함량을 올리기보다 <b>겹침 허용</b>이나 <b>고종횡비 필러</b>가 효과적입니다(8장).</td></tr>
+  <tr><td class="q">EMI 차폐가 0 dB다</td>
+      <td>전기전도도가 0이기 때문입니다. 위 항목을 먼저 해결하십시오(11장).</td></tr>
+  <tr><td class="q">차폐가 1000 dB를 넘는다</td>
+      <td>수식상 나오는 값입니다. 실제 측정은 100 dB 부근이 한계이며, 실물에서는 이음새 누설이 지배합니다. <b>80 dB 이상은 "충분함"으로 읽으십시오</b>(11장).</td></tr>
+  <tr><td class="q">FE와 FV 값이 크게 다르다</td>
+      <td>물성 대비가 크고 격자가 거칠 때 생깁니다. <b>해상도를 올려 다시 돌리십시오.</b> 그대로 쓴다면 그 차이만큼의 불확실도를 감안해야 합니다(31장).</td></tr>
+  <tr><td class="q">등방 구조인데 방향별 값이 흩어진다</td>
+      <td>RVE가 작거나 입자가 적습니다. 퍼콜레이션 문턱 근처라면 <b>정상적인 물리</b>일 수도 있습니다(31장 4절).</td></tr>
+  <tr><td class="q">값이 엄밀 경계 밖으로 나갔다</td>
+      <td>이것은 경고가 아니라 <b>오류</b>입니다. 그 값은 쓰지 마십시오. 물성 입력과 해상도를 확인하십시오.</td></tr>
+  <tr><td class="q">계산값이 실험값보다 좋게 나온다</td>
+      <td>정상입니다. 계산에는 계면 저항·기포·응집이 없습니다. 31장 6절의 대응표를 보십시오.</td></tr>
+</table>
+
+<h3>D.5 화면에서</h3>
+
+<table>
+  <tr><th>증상</th><th>원인과 대응</th></tr>
+  <tr><td class="q">화살표나 유선이 보이지 않는다</td>
+      <td><span class="ui">Field on the RVE faces</span>가 가리고 있습니다. 그 스위치를 끄거나 투명도를 낮추십시오(26장).</td></tr>
+  <tr><td class="q">유선이 몇 개만 그려진다</td>
+      <td>기공 폭에 비해 복셀이 거칠어 벽 근처 속도가 거의 0이기 때문입니다. 해상도를 올리면 늘어납니다. 관통한 선이 너무 적으면 <b>오해를 막기 위해 아예 그리지 않습니다.</b></td></tr>
+  <tr><td class="q">색이 한쪽에 몰려 구조가 안 보인다</td>
+      <td>값의 범위가 넓은 경우입니다(전류밀도 등). <span class="ui">Log</span>를 켜십시오.</td></tr>
+  <tr><td class="q">여러 조건을 비교하기 어렵다</td>
+      <td>색 범위를 <span class="ui">Manual</span>로 같게 고정하십시오.</td></tr>
+  <tr><td class="q">경로의 입자가 실제보다 커 보인다</td>
+      <td>보기 쉽도록 확대해 그린 것입니다. 화면 아래에 그 사실이 안내됩니다(21장).</td></tr>
+</table>
+
+<h3>D.6 그래도 해결되지 않으면</h3>
+<ol>
+  <li>해석 폴더의 <span class="ui">run.log</span>를 확인합니다.</li>
+  <li><span class="ui">0_CHECK_ENVIRONMENT.bat</span>과 <span class="ui">5_SELF_TEST.bat</span>의 결과를 함께 확인합니다.</li>
+  <li>같은 문제가 <b>더 작은 격자에서도</b> 생기는지 확인하면 원인을 좁힐 수 있습니다.</li>
+  <li>문의할 때는 <span class="ui">spec.normalized.json</span>과 <span class="ui">run.log</span>를 함께 보내 주십시오. 이 둘이면 조건을 그대로 재현할 수 있습니다.</li>
+</ol>
+</div>

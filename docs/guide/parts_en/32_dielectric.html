@@ -1,0 +1,150 @@
+<div class="sec">
+<h2>9. Permittivity and loss</h2>
+<p class="src">Default: <b>periodic finite volume (FV)</b> · optional: <b>NASA PuMA</b> periodic finite elements — the equation of heat conduction, with the permittivity as the property</p>
+
+<p class="lead">The values that decide <b>how much a signal slows down and how much of it is lost</b> when this material is an insulating
+layer — basic properties of package substrates, antenna substrates and capacitor design.</p>
+
+<h3>9.1 Why it matters</h3>
+
+<table>
+  <tr><th>What Dk does</th><th>What Df does</th></tr>
+  <tr><td>Sets the <b>propagation speed</b> of a signal. The delay grows with √Dk, so a high Dk slows signals — why high-speed substrates look for a low Dk.</td>
+      <td>The fraction of the signal <b>lost as heat</b>. The insertion loss grows roughly with Df·√Dk·f, so at high frequencies Df decides.</td></tr>
+  <tr><td>In capacitors it is the other way round: <b>higher</b> is better, more capacitance per area.</td>
+      <td>Must be low in capacitors too: it means heating and lost efficiency.</td></tr>
+</table>
+
+<h3>9.2 How it is measured</h3>
+
+<table>
+  <tr><th>Method</th><th>Description</th></tr>
+  <tr><td class="q">Parallel-plate capacitor<br>(ASTM D150)</td>
+      <td><b>The basic method.</b> The specimen between two electrodes forms a capacitor whose capacitance C and loss tanδ are measured
+      with an LCR meter or impedance analyser; the ratio to the capacitance in vacuum is Dk. <b>This is the experiment the calculation
+      imitates.</b></td></tr>
+  <tr><td class="q">Dielectric spectroscopy<br>(BDS)</td>
+      <td>Sweeps a wide frequency range to follow Dk and Df; used to study relaxation.</td></tr>
+  <tr><td class="q">Resonator methods<br>(SPDR, cavity)</td>
+      <td>Used in the GHz range; obtained from the shift of the resonant frequency and Q. <b>The most accurate at high frequency.</b></td></tr>
+</table>
+
+<div class="warn">
+Measured Dk and Df <b>depend on the frequency</b>, which is why datasheets always say "at 1 MHz" or "at 10 GHz". <b>This calculation does
+not distinguish frequencies</b> — it treats the entered phase properties as the values at some frequency and calculates once.
+<b>Enter the phase properties at the target frequency</b> to obtain the result at that frequency.
+</div>
+
+<h3>9.3 How the simulator calculates it</h3>
+
+<p><b>Exactly like</b> the heat conduction of chapter 7, with the potential in place of the temperature and the permittivity in place of
+the conductivity.</p>
+
+<ol>
+  <li>A potential difference is applied across the RVE; the other faces are periodic.</li>
+  <li>The potential and the electric displacement inside are solved.</li>
+  <li>The mean displacement gives the effective permittivity.</li>
+  <li>Three directions give the tensor.</li>
+</ol>
+
+<h4>How the loss (Df) comes out — not a simple average</h4>
+
+<p>The loss of a composite is <b>not</b> the volume average of the tanδ of its phases. It is decided by <b>where the energy of the electric
+field actually resides</b>. Less field enters a phase of high permittivity, so its loss counts for less than its volume fraction.</p>
+
+<p>The panel therefore says <b>Dissipation factor Df (energy-weighted)</b> — the loss <b>weighted by the field energy</b>. This is possible
+because the solved field gives the field energy in each phase exactly.</p>
+
+<h3>9.4 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/a_dielectric_box1.png">
+  <figcaption>Permittivity tensor and derived numbers of example A (epoxy + AlN 40 vol%).</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item on screen</th><th>Example A</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Relative permittivity tensor</td><td>xx 5.425 / yy 5.424 / zz 5.428</td>
+      <td>Relative permittivity per direction. The three are nearly equal: <b>isotropic</b>. The off-diagonal values (below 0.002) should be
+      close to 0; large ones mean a tilted structure.</td></tr>
+  <tr><td class="q">Isotropic mean</td><td>5.426</td>
+      <td>The value to report as one number — the Dk of a datasheet.</td></tr>
+  <tr><td class="q">Resolution check</td><td>50³ 5.425 → 76³ 5.444 (+0.34 %)<br>extrapolated 5.481</td>
+      <td>The same structure redrawn on a grid 1.5× finer and solved again (7.2). It ran automatically because particles touch on the
+      grid. A change of 0.3 % is small: the resolution is sufficient.</td></tr>
+  <tr><td class="q">Dissipation factor Df<br>(energy-weighted)</td><td>0.009189</td>
+      <td>Dielectric loss tanδ, energy-weighted. 0.009 is typical of general epoxy composites; low-loss materials for high-speed substrates
+      aim below 0.002.</td></tr>
+  <tr><td class="q">Anisotropy (xx+yy)/2 : zz</td><td>0.999</td>
+      <td>In-plane over through-thickness. <b>1 is isotropic</b>; layered or oriented structures move away from 1.</td></tr>
+  <tr><td class="q">Capacitance per area</td><td>0.4804 pF/mm²</td>
+      <td><b>The value design uses directly</b> — the capacitance per area at the <b>layer thickness</b> shown with it (0.1 mm here). It is
+      inversely proportional to the thickness.</td></tr>
+  <tr><td class="q">Field-line tortuosity</td><td>1.010</td>
+      <td>How far the field lines detour. <b>1.010 is almost straight</b> — epoxy (about 3.5) and AlN (about 8.8) differ little, so the
+      field has no reason to avoid anything. Compare the magnetic example of chapter 10 (1.243).</td></tr>
+  <tr><td class="q">Field lines that cross</td><td>37 of 40</td>
+      <td>How many of the traced lines reach the opposite side. <b>Most crossing</b> is a sign of an evenly spread field.</td></tr>
+</table>
+
+<h3>9.5 Bounds and models</h3>
+
+<figure>
+  <img src="figures/a_dielectric_box2.png">
+  <figcaption>Comparison with rigorous bounds and classical models.</figcaption>
+</figure>
+
+<p>Locating example A's 5.426 in the chart:</p>
+<ul>
+  <li><b>Wiener bounds 5.016 – 5.857</b> — absolute limits set by the volume fractions alone. Inside.</li>
+  <li><b>Hashin–Shtrikman bounds 5.464 – 5.622</b> — narrower limits for isotropic composites. The value is <b>0.7 % below</b> the lower bound.</li>
+  <li><b>Maxwell-Garnett / Mori–Tanaka 5.464</b> — a model of non-interacting particles (equal to the HS lower bound for spherical fillers).</li>
+  <li><b>Bruggeman (EMA) 5.536</b> — a model weighting the interaction between particles heavily.</li>
+</ul>
+
+<p>The value lies slightly below the HS lower bound because this example uses a coarse grid — <b>3 µm particles with 0.4 µm voxels (7.5 voxels
+per diameter, Fast quality)</b>. FV tends to come out slightly low on coarse grids (table in 7.2), and the extrapolated value of the resolution
+check, 5.481, falls inside the bounds. The program records a value outside the Wiener bounds as <b>failed</b> and more than 1 % outside the HS
+bounds as a <b>warning</b>; smaller departures are differences a finite voxel RVE can produce and pass. For numbers to report, solve again at
+Standard quality or above.</p>
+
+<h3>9.6 Assumptions</h3>
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">Quasi-static</td>
+      <td>The field is computed like an electrostatic field, not a propagating wave — valid only <b>when the wavelength is much longer than
+      the RVE</b>. Not at tens of GHz and above.</td></tr>
+  <tr><td class="q">Properties independent of frequency</td>
+      <td>No relaxation (Debye) behaviour; one calculation at the entered values.</td></tr>
+  <tr><td class="q">No interfacial polarisation (Maxwell–Wagner)</td>
+      <td>Charge accumulating at the boundaries between phases, which raises Dk strongly at low frequencies, is not modelled — <b>a common
+      reason for a measured low-frequency Dk above the calculation</b>.</td></tr>
+  <tr><td class="q">No conduction loss</td>
+      <td>Df contains the dielectric loss of the phases only; losses by leakage current are separate.</td></tr>
+  <tr><td class="q">Perfect interfaces</td>
+      <td>No voids or interphase between filler and resin. In reality such a layer changes both Dk and Df.</td></tr>
+</table>
+<!-- render-section -->
+<h3>9.7 Reading the renderings — where the field concentrates</h3>
+<p>The permittivity analysis keeps the potential φ and <b>the local field enhancement |E|/E₀</b>. Above 1, the field there is stronger than the
+mean. Below is example A (epoxy + AlN 40 vol%, field along z).</p>
+
+<figure><div class="g2"><div><img src="figures/r_a_dielectric_E2d.png"><span>|E|/E₀ section (y = 10 µm) with arrows</span></div><div><img src="figures/r_a_dielectric_E3d.png"><span>|E|/E₀ — particle surfaces (low-permittivity side)</span></div></div><figcaption>Local field enhancement, range 0.64–1.61.</figcaption></figure>
+
+<table>
+  <tr><th>What is seen</th><th>Meaning</th><th>Interpretation</th></tr>
+  <tr><td class="q">|E|/E₀ ≈ 0.7 inside the particles (blue)</td><td>The field weakens inside the high-permittivity AlN.</td>
+      <td>The normal component of D = εE is continuous at a boundary, so E is smaller on the side of larger ε.</td></tr>
+  <tr><td class="q">Red bands in the matrix above and below the particles (up to 1.6×)</td><td>The field crowds into the gaps between particles facing each other along the field (z).</td>
+      <td><b>Where breakdown and partial discharge begin first.</b> The narrower the gap, the stronger the enhancement: particles lined up
+          closely along the field raise the permittivity but hurt the dielectric strength.</td></tr>
+  <tr><td class="q">Red poles (top and bottom) of the 3D surfaces</td><td>The surfaces are coloured with the value on the matrix side (26.2).</td>
+      <td>The sides (equator) are blue — the field is weaker where the surface runs parallel to it.</td></tr>
+</table>
+
+<div class="note">
+The effective permittivity ε<sub>eff</sub> comes from the energy average of this field. Two structures with the same ε<sub>eff</sub> can have very
+different maximum enhancements, so <b>for insulation design look at the maximum of this picture together with ε<sub>eff</sub></b>. The
+<span class="ui">Field statistics</span> of the results list maxima and percentiles per phase.
+</div>
+</div>

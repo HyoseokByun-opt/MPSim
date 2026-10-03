@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.nbi
+*.nbc
+
+# environments and the offline package (tools/build_offline.py writes them)
+/env/
+/python/
+/runtime/
+/wheels/
+/tools/openEMS/
+/Download/
+/GitHub/
+
+# results and local settings
+/workspace/
+settings.json
+.session_secret
+
+# editors and the operating system
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,69 @@
+<div class="sec">
+<h2>27. Reports and file export</h2>
+
+<p class="lead">When an analysis finishes, the program <b>writes a report automatically.</b> No tidying up is needed: it is ready to send or print as it is.</p>
+
+<h3>27.1 The Report tab</h3>
+
+<figure>
+  <img src="figures/ui_report.png">
+  <figcaption>The Report tab: the report generated automatically for example A.</figcaption>
+</figure>
+
+<p>From the top, the report contains:</p>
+
+<table>
+  <tr><th>Part</th><th>Content</th></tr>
+  <tr><td class="q">Title and history</td>
+      <td>The run name, <b>program version, date and time, run time and solvers</b> in one line, e.g. "MPSim 1.0.0 · 2026-09-17 10:22:04 · elapsed 98 s · solver NASA PuMA (periodic finite elements)" for example A.</td></tr>
+  <tr><td class="q">Verification line</td>
+      <td>"24 passed · 3 warnings · 0 failed" — <b>the line a recipient of the report should read first</b> (chapter 31).</td></tr>
+  <tr><td class="q">Headline tiles</td>
+      <td>Key values in large type: density, thermal conductivity, Dk, Df, CTE, Young's modulus, particle count and so on, each with its <b>per-direction values</b> in small type below.</td></tr>
+  <tr><td class="q">1. Input</td>
+      <td>Which materials went in, with which shapes and contents, in the columns Role / Name / Shape and size / Content / Principal properties.</td></tr>
+  <tr><td class="q">2. RVE model</td>
+      <td>Grid size, voxel size, picture of the structure.</td></tr>
+  <tr><td class="q">Sections per analysis</td>
+      <td>Result tables and figures of each analysis run.</td></tr>
+  <tr><td class="q">Verification details</td>
+      <td>All check items with pass, warning and failure.</td></tr>
+</table>
+
+<div class="note">
+<b>That the input is recorded with the results matters.</b> A table of property values alone says nothing about the conditions a few months later.
+This report holds the input, resolution, version and verification, so it is <b>a reproducible record in itself</b>.
+</div>
+
+<h3>27.2 Three exports</h3>
+
+<table>
+  <tr><th>Button</th><th>What it produces</th><th>When to use it</th></tr>
+  <tr><td class="q">Open in a new tab</td>
+      <td>Opens the report in a new tab, from which the browser can <b>print it or save it as PDF</b>.</td>
+      <td>A quick look, or keeping a PDF</td></tr>
+  <tr><td class="q">Save HTML</td>
+      <td>Saves the report with its figures <b>in one HTML file</b>, independent of other files — send that single file.</td>
+      <td>E-mailing; the recipient just opens it in a browser.</td></tr>
+  <tr><td class="q">Complete ZIP</td>
+      <td>Bundles <b>all the raw data</b> with the report — result JSON, structure file, field data, figures.</td>
+      <td>When someone else must reopen or re-analyse the results</td></tr>
+</table>
+
+<h3>27.3 Other exports</h3>
+
+<table>
+  <tr><th>Where</th><th>What it exports</th></tr>
+  <tr><td class="q"><span class="ui">CSV</span> in the DOE tab</td>
+      <td>Factors and responses of all cases as a table, for spreadsheets or other analysis tools (chapter 28).</td></tr>
+  <tr><td class="q">Figure saving in the 3D view</td>
+      <td>A PNG of the current view, or a <b>high-resolution figure</b> re-rendered on the server, for papers and presentations (chapter 26).</td></tr>
+  <tr><td class="q">Work folder</td>
+      <td>Every run gets its own folder holding all outputs; see <b>Appendix C</b> for its layout.</td></tr>
+</table>
+
+<div class="warn">
+When sending a report to someone, <b>explain the Verification line with it</b>. A value with warnings passed on without comment will be taken as a settled
+property. The meaning of the warnings and what to do about them are in chapter 31.
+</div>
+</div>

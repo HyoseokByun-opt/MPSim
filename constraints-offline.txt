@@ -1,0 +1,10 @@
+# Limits pip must never cross.
+#
+# NASA PuMA 3.2.2 is compiled against numpy 1.x and scipy 1.11; numpy 2.x or a
+# newer scipy next to it breaks PuMA at import, and the failure looks like a
+# broken installation rather than a version clash.
+numpy<2
+scipy==1.11.*
+# vtk 9.7 dropped vtkCapsuleSource, which pyvista 0.47 imports (and PuMA
+# imports pyvista): pinned together with pyvista.
+vtk==9.5.2

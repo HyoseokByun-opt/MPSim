@@ -1,0 +1,183 @@
+<div class="sec">
+<h2>12. Elasticity and CTE</h2>
+<p class="src">Solver: <b>FANS</b> (the periodic Q1 voxel finite elements of NASA PuMA, solved by FFT-preconditioned conjugate gradients — default since v5) · NASA PuMA FE (optional). Six strains + one temperature load = seven load cases</p>
+
+<p class="lead">Many reliability problems of semiconductor packages come from <b>joining materials whose thermal expansions differ</b>. This
+analysis obtains the elastic moduli and the thermal expansion of the composite together, and shows the stresses that arise inside when the
+temperature changes.</p>
+
+<h3>12.1 How they are measured</h3>
+
+<h4>Coefficient of thermal expansion (CTE)</h4>
+<p><b>TMA (thermomechanical analysis)</b> or a <b>dilatometer</b> measures the change in length while the specimen is heated slowly.</p>
+<div class="eq">α = (1 / L) · (dL / dT)</div>
+<p>Usually in ppm/K (= 10⁻⁶/K). The value changes strongly through the glass transition, so <b>the temperature range</b> always comes with it.</p>
+
+<h4>Elastic moduli</h4>
+<p>From the initial slope of the stress–strain curve in tension or bending (universal testing machine), or from the longitudinal and shear wave
+speeds measured <b>ultrasonically</b>. The ultrasonic method is better for the small-strain moduli.</p>
+
+<h3>12.2 How the simulator calculates them</h3>
+
+<p>Instead of pulling in one direction at a time as an experiment does, <b>seven solves</b> settle the whole behaviour at once.</p>
+
+<ol>
+  <li><b>Six strains</b> — three normal (x, y, z) and three shear strains, each of unit size, give the stresses in the RVE; each fills one column
+      of the 6×6 <b>stiffness matrix C*</b>.</li>
+  <li><b>One temperature load</b> — with the strain held at zero, only the temperature rises by ΔT. The internal stresses from the phases trying
+      to expand differently give the <b>thermal expansion</b>.</li>
+</ol>
+
+<h4>The solver of v5: FANS</h4>
+<p>Up to v4 the elastic analysis solved NASA PuMA's finite elements by MINRES iterations. On larger grids <b>the iteration count grew with the
+grid</b>, and on a 500³ grid more than 30 hours were not enough to reach a relative residual of 1e-5. v5 keeps the same elements (periodic Q1 voxel
+finite elements) but solves them by conjugate gradients preconditioned with <b>the exact inverse, computed by FFT, of the stiffness of a homogeneous
+reference material</b> (FANS, Leuschner and Fritzen 2018). The inverse of the reference is one 3×3 matrix per frequency, almost free, and the
+iteration count stays at a few tens per load <b>whatever the grid</b>.</p>
+
+<table>
+  <tr><th>Seven loads (18-core PC, relative residual 1e-6)</th><th>64³</th><th>96³</th><th>128³</th><th>192³</th></tr>
+  <tr><td class="q">FANS (v5 default) — iterations per load</td><td class="n">18 s<br><span class="src">72–75</span></td><td class="n">49 s<br><span class="src">73–76</span></td><td class="n">175 s<br><span class="src">73–76</span></td><td class="n">599 s<br><span class="src">74–77</span></td></tr>
+  <tr><td class="q">PuMA MINRES (Jacobi preconditioned) — same structure</td><td class="n">107 s<br><span class="src">605–675</span></td><td class="n">525 s<br><span class="src">920–1039</span></td><td class="n">—</td><td class="n">—</td></tr>
+</table>
+
+<p>Both solvers solve the same discretisation and agree (C11 within 5e-8; 3.5e-9 in the self-test). Only the speed differs, and since PuMA's
+iterations grow with the grid while FANS's stay constant, the gap widens on larger grids. One iteration costs in proportion to the voxels, so
+scaling the measurements to seven loads on 500³ gives <b>about 3 hours</b> for FANS and, with eight times the iterations of 64³, <b>about 100 hours</b>
+for PuMA (a proportional estimate, not a measurement — consistent with PuMA not finishing 500³ in more than 30 hours). Already at 96³ FANS is 11×
+faster.</p>
+
+<p>The iteration runs to a relative residual of 1e-6 (1e-5 at Fast quality), where C equals the fully converged value within two parts per million.
+The self-test checks a homogeneous RVE and laminates (exact to 1e-15), the exact relation for two-phase composites (Levin's theorem), the
+Hashin–Shtrikman bounds for dilute spheres, iteration counts that do not grow with the grid (24³ and 48³), and agreement with PuMA (chapter 31).</p>
+
+<p>The <span class="ui">Elasticity and CTE</span> choices also include an FFT (Moulinec–Suquet) solver. It is a <b>different discretisation</b> and gives
+different values on coarse grids. For epoxy + 29 vol% stiff spheres the Young's modulus was 8.16/7.62/7.16 GPa with FANS (voxel finite elements) on
+24³/32³/48³ and 6.88/6.76/6.62 GPa with FFT; refined, both meet at about 6.3 GPa. Both converge from above, but the voxel finite elements come out much
+stiffer on coarse grids, and FFT is closer to the converged value. The difference between the two methods shows the discretisation error of that grid;
+values to report should come from a grid fine enough by the resolution check (chapter 6).</p>
+
+<div class="warn">
+<b>A correction to the elasticity and CTE results up to v4.</b> During the development of v5, the isotropic-material function of PuMA 3.2.2 was found to
+<b>double the shear modulus</b> of every phase (it uses engineering shear strains while placing 2μ on the stiffness diagonal) and to return the shear axes
+in reversed order. v5 builds the material matrices itself and corrects the axes. In an epoxy + Al₂O₃ 25 vol% example the v4 values were biased by C11
++12 %, bulk modulus +11 % and thermal expansion −8 %. Levin's theorem checks only that C and α agree with each other and could not catch this; v5 checks
+the G of a homogeneous RVE and the Hashin–Shtrikman shear bounds separately. <b>Recalculate elasticity and CTE values obtained with v4 in v5.</b>
+</div>
+
+<div class="note">The rubbery properties above Tg (α2, the hot modulus) come with the same analysis when <span class="ui">Also above Tg</span> is on (14.5).</div>
+
+<h3>12.3 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/a_cte_box1.png">
+  <figcaption>Thermal expansion and engineering constants of example A (epoxy + AlN 40 vol%).</figcaption>
+</figure>
+
+<h4>α tensor (ppm/K)</h4>
+<p>Six components (xx, yy, zz, yz, xz, xy). The first three are the linear expansions in each direction, similar when isotropic. The
+<b>Volumetric mean</b> below is their mean, to compare with a TMA measurement that does not distinguish directions. The last three (yz, xz, xy) are
+<b>tensor components α<sub>ij</sub></b>, close to 0 for a random structure. <span class="ui">layer_card.json</span> stores them as the Voigt vector that
+pairs with C*, so there these three entries are <b>2α<sub>ij</sub></b>.</p>
+<p>Example A gives 21.7 ppm/K (xx 22.0, yy 21.5, zz 21.7). Epoxy alone is usually around 60 ppm/K, so 40 vol% AlN <b>lowers it to a third</b> — reducing
+the CTE is one of the main reasons for adding filler. The value agrees with the exact two-phase relation (Levin's theorem) within one part per million.</p>
+
+<h4>E, G, ν (per direction)</h4>
+<p>Young's modulus E (stiffness in tension), shear modulus G and Poisson's ratio ν per direction; anisotropic materials differ between directions.
+<b>ν<sub>xy</sub> and ν<sub>yx</sub> may differ</b> — not an error but a normal property of anisotropic materials.</p>
+
+<h4>Voigt / Reuss / Hill</h4>
+<p>Three ways to <b>summarise an anisotropic result by one isotropic value</b>: Voigt the upper bound, Reuss the lower, Hill their mean. Use Hill for rough
+comparison with other data or when one number must be reported.</p>
+
+<h4>Universal anisotropy index A<sup>U</sup></h4>
+<p>0 is perfect isotropy; larger is more directional. Spherical fillers placed at random should give close to 0; a large value signals a small RVE or
+biased particles.</p>
+
+<div class="warn">
+<b>Much stiff filler gives A<sup>U</sup> of 0.1–0.2 even with random spheres.</b> Example A (AlN 40 vol%) gives 0.14: the normal stiffness along the
+grid axes exceeds that at 45° (Zener ratio 0.71). It appears to come from voxelised particles and thin matrix gaps lying parallel to the grid axes, not
+from the real material, and shrinks at lower contents or on finer grids. To pass such a material on as one isotropic value, use the <b>Hill mean</b>; do not
+read the directional differences of E and G as real anisotropy.
+</div>
+
+<h4>Stiffness C* / Compliance S*</h4>
+<p>The full 6×6 matrices, in a form that can be <b>entered directly as this material's properties</b> in other programs (structural FEA), linking the
+scales of a multiscale analysis.</p>
+
+<h3>12.4 Thermal stress — the most practical result</h3>
+
+<figure>
+  <img src="figures/a_cte_box5.png">
+  <figcaption>Thermal stress per region: mean, 99th percentile and maximum of the stress in each phase under ΔT.</figcaption>
+</figure>
+
+<p>The stresses that <b>actually arise inside</b> when the temperature changes by ΔT, per phase. ΔT is set on screen, usually the cooling from the
+process temperature to room temperature.</p>
+
+<table>
+  <tr><th>Item</th><th>Meaning</th></tr>
+  <tr><td class="q">von Mises</td><td>The equivalent stress for judging yield and damage; <b>the maximum</b> matters.</td></tr>
+  <tr><td class="q">Hydrostatic</td><td>The hydrostatic part: positive is tension, negative compression. Interfaces debond more easily in tension.</td></tr>
+  <tr><td class="q">99th percentile</td><td>The level of the top 1 %, not the single most extreme point — steadier than the maximum for practical judgement.</td></tr>
+</table>
+
+<div class="note">
+A low mean with a <b>much larger maximum</b> means the stress concentrates at certain points — usually narrow gaps where particles face each other
+closely. Painting the von Mises field on the surfaces in the 3D view shows where (chapter 26).
+</div>
+
+<h3>12.5 Comparison with models</h3>
+
+<figure>
+  <img src="figures/a_cte_box3.png">
+  <figcaption>α compared with analytical models: the Turner and Kerner models and the Schapery bounds side by side.</figcaption>
+</figure>
+
+<p>Thermal expansion has classical models too. <b>Turner</b> assumes every phase undergoes the same strain and comes out low; <b>Kerner</b> accounts
+for shear and comes out higher. The <b>Schapery bounds</b> are rigorous upper and lower limits; a value outside them is an error.</p>
+
+<h3>12.6 Assumptions</h3>
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">Linear elasticity</td>
+      <td>No plasticity, creep or viscoelasticity. Epoxy is strongly viscoelastic near its glass transition; its behaviour there is outside this analysis.</td></tr>
+  <tr><td class="q">Perfectly bonded interfaces</td>
+      <td>Filler and matrix do not separate. Debonding would change both stiffness and stresses.</td></tr>
+  <tr><td class="q">Properties independent of temperature</td>
+      <td>E and α are constant over ΔT; not true over wide temperature ranges.</td></tr>
+  <tr><td class="q">Starting free of residual stress</td>
+      <td>Stresses already present from cure shrinkage are not included.</td></tr>
+  <tr><td class="q">Stiffness of pores</td>
+      <td>Pores get a very small stiffness rather than exactly zero (for numerical stability); the ratio is shown on screen.</td></tr>
+</table>
+
+<div class="warn">
+The elastic analysis solves seven loads and <b>needs the most memory and time</b> of all analyses (about 2.5 kB per voxel). When time is short, run it
+alone at a lower resolution first to see the trend.
+</div>
+<!-- render-section -->
+<h3>12.7 Reading the renderings — where the stress gathers</h3>
+<p>The thermal-expansion analysis keeps the <b>thermal stress</b> under the temperature load (ΔT) — von Mises stress, hydrostatic stress σ<sub>m</sub>,
+and the components σ<sub>zz</sub> and τ<sub>xz</sub>. Below is example A (epoxy + AlN 40 vol%, ΔT = 100 K, constrained).</p>
+
+<figure><div class="g2"><div><img src="figures/r_a_cte_vm3d.png"><span>von Mises stress — particle surfaces</span></div><div><img src="figures/r_a_cte_hyd2d.png"><span>Hydrostatic stress σm, section (y = 10 µm)</span></div></div><figcaption>Thermal stress (ΔT = 100 K, constrained boundary).</figcaption></figure>
+
+<table>
+  <tr><th>What is seen</th><th>Meaning</th><th>Interpretation</th></tr>
+  <tr><td class="q">Most particle surfaces blue, red spots here and there (up to about 87 MPa)</td>
+      <td>Stress concentrates where particles touch or come very close.</td>
+      <td><b>Candidate sites for cracks and interface debonding</b>; compare with the strength of the matrix (epoxy). The more contacts (the higher the
+          content), the more such spots.</td></tr>
+  <tr><td class="q">σm at −60 to −70 MPa almost everywhere</td>
+      <td>The <b>constrained</b> condition keeps the RVE from expanding, so heating compresses everything.</td>
+      <td>This is the stress of "a layer held tightly by its surroundings and heated". To see <b>only the mismatch</b> between particles and matrix,
+          calculate with the <span class="ui">free</span> condition — the mean stress becomes 0 and only stresses of opposite sign in particles and matrix remain.</td></tr>
+</table>
+
+<div class="note">
+<b>The meaning of the sign</b> — the matrix α (epoxy, about 60 ppm/K) exceeds the filler's (AlN, 4.5 ppm/K), so on <b>heating</b> the matrix pulls on the
+particles and puts them in tension, and on <b>cooling</b> (from the cure temperature to room temperature, say) the particles are compressed. Changing
+the sign of ΔT changes the sign of the stresses. In processing the critical step is usually the cooling from cure to room temperature, so try a negative ΔT.
+</div>
+</div>

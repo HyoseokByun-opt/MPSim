@@ -1,0 +1,116 @@
+<div class="sec">
+<h2>16. Filtration efficiency</h2>
+<p class="src">Open-source basis: <b>Lagrangian particle tracking</b> in the Stokes velocity field solved by PuMA</p>
+
+<p class="lead">How well a filter catches particles of each size. The <b>flow field of the previous chapter is reused</b>: particles are
+released one by one and followed through it.</p>
+
+<h3>16.1 How it is measured</h3>
+
+<p>Particles are <b>counted upstream and downstream</b> of the filter. A monodisperse aerosol (usually DEHS, PSL latex or NaCl) is passed
+through the filter and an optical particle counter (OPC) or condensation particle counter (CPC) measures the concentrations on both sides:</p>
+
+<div class="eq">Efficiency E = 1 − (downstream count / upstream count)</div>
+
+<p>Repeating this at different sizes gives the <b>fractional efficiency curve</b>. The HEPA classes (EN 1822) are defined by the minimum of this curve.</p>
+
+<h3>16.2 Why a "most penetrating size" exists</h3>
+
+<p>A fact that surprises at first: <b>small particles are caught more easily.</b> The capture mechanisms depend on size.</p>
+
+<table>
+  <tr><th>Mechanism</th><th>How it works</th><th>Sizes it catches</th></tr>
+  <tr><td class="q">Diffusion (Brownian)</td>
+      <td>Very small particles are knocked about by gas molecules until they touch a wall and stick.</td>
+      <td>below ~0.1 µm</td></tr>
+  <tr><td class="q">Interception</td>
+      <td>Even following a streamline, a particle touches the wall <b>one radius</b> early.</td>
+      <td>above ~0.5 µm</td></tr>
+  <tr><td class="q">Inertial impaction</td>
+      <td>Heavy or fast particles cannot follow a bending streamline, go straight on and hit.</td>
+      <td>above ~1 µm</td></tr>
+</table>
+
+<p>Diffusion weakens with size while interception and impaction strengthen, so somewhere in between lies <b>the size that is caught least</b>:
+the <b>MPPS (most penetrating particle size)</b>. <b>A filter's performance is specified at this point.</b></p>
+
+<h3>16.3 How the simulator calculates it</h3>
+
+<p>It does in the computer what the experiment does.</p>
+
+<ol>
+  <li>The velocity field of the permeability analysis is scaled to the specified <b>face velocity</b>.</li>
+  <li>Particles are released at the inlet, more where the flow is larger (they arrive with the air).</li>
+  <li>The motion of each particle is integrated — drag by the fluid, inertia (how far it fails to follow) and the random walk of Brownian motion act together.</li>
+  <li>A particle whose <b>surface</b> touches a wall (centre within one radius) is captured.</li>
+  <li>One leaving through the opposite face counts as penetrating.</li>
+  <li>Repeating over sizes gives the curve.</li>
+</ol>
+
+<h3>16.4 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/b_filtration_tiles.png">
+  <figcaption>Summary tiles. In example B the efficiency is lowest, 70 %, at 0.143 µm.</figcaption>
+</figure>
+
+<figure>
+  <img src="figures/b_filtration_box1.png">
+  <figcaption>Fractional efficiency curve. A U shape — high at both ends, low in the middle — is normal.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Most penetrating size</td>
+      <td>The size caught least — <b>the value that sets the filter class</b>; 0.143 µm in example B.</td></tr>
+  <tr><td class="q">Efficiency at that size</td>
+      <td>The efficiency at that size; 70 % in example B, a coarse filter far from HEPA (99.97 %).</td></tr>
+  <tr><td class="q">Pressure drop</td>
+      <td>The pressure loss from the permeability found before — <b>the cost paid for the efficiency</b>.</td></tr>
+  <tr><td class="q">Quality factor</td>
+      <td>−ln(penetration) / pressure drop — <b>efficiency and pressure loss in one figure</b>, the fairest value for comparing filters. Larger is better.</td></tr>
+  <tr><td class="q">Stokes number</td>
+      <td>Measure of inertia. Much below 1, the particles follow the streamlines well (no impaction).</td></tr>
+  <tr><td class="q">Péclet number</td>
+      <td>Ratio of convection to diffusion. The smaller, the more Brownian motion dominates.</td></tr>
+  <tr><td class="q">Returned to the inlet</td>
+      <td>Particles that <b>diffused back out</b> through the inlet. They did not pass the filter and are excluded from the efficiency; the number grows at the smallest sizes.</td></tr>
+</table>
+
+<h3>16.5 Seeing the particle tracks</h3>
+
+<p><span class="ui">Show the particle tracks</span> shows in 3D the paths the particles actually took. The tracks of <b>the most penetrating
+size</b> open, so one can see directly how those particles get through the structure.</p>
+
+<div class="note">
+The tracks of very small particles (0.01 µm and the like) are hardly visible: Brownian motion is so strong that they stick to a nearby wall
+right after entering — <b>which is exactly what "caught well" means</b>.
+</div>
+
+<h3>16.6 Assumptions and limits</h3>
+
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">No electrostatic capture</td>
+      <td><b>The largest difference.</b> Real nonwoven filters are charged to raise the efficiency strongly (electrets). Without this effect the calculated value is lower than the real one.</td></tr>
+  <tr><td class="q">Every touch sticks</td>
+      <td>Large particles hitting fast can bounce off (rebound); then the calculation overestimates.</td></tr>
+  <tr><td class="q">The structure does not change</td>
+      <td>No clogging by deposited particles (loading). Only <b>the initial performance of a clean filter</b> is calculated; in use the efficiency and the pressure drop of a real filter both rise.</td></tr>
+  <tr><td class="q">Gravity neglected</td>
+      <td>Negligible in the sub-micron range that decides filter performance.</td></tr>
+  <tr><td class="q">Spherical particles</td>
+      <td>Fibrous or agglomerated particles behave differently.</td></tr>
+</table>
+
+<div class="warn">
+This analysis is therefore <b>not for judging an absolute class</b> but for comparing how efficiency and pressure loss trade off when the
+structure changes. <b>Comparing the quality factor</b> while varying the pore size, porosity and thickness is the most useful way to use it.
+</div>
+<!-- render-section -->
+<h3>16.7 Reading the rendering — where the particles are caught</h3>
+<figure><img src="figures/r_b_filt3d.png" class="half"><figcaption>Tracks (orange) of particles of one size class in example B, following the flow in the pores until caught on a wall. Pore surface translucent.</figcaption></figure>
+<p>The paths of the filtration analysis are the tracks of particles carried by the flow field of the permeability analysis. Large particles are
+<b>intercepted</b> at narrow throats; very small ones <b>diffuse</b> to a wall by Brownian motion. Sizes whose tracks end early are caught well; the size
+with the most tracks passing all the way through is <b>the most penetrating particle size (MPPS)</b> of the result graph.</p>
+</div>

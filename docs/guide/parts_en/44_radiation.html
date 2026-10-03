@@ -1,0 +1,90 @@
+<div class="sec">
+<h2>19. Radiative heat transfer</h2>
+<p class="src">Open-source solver: <b>NASA PuMA</b> ray casting — counts how far light travels in the pores before it is stopped</p>
+
+<p class="lead">When a porous material <b>gets hot</b>, radiation across the pores carries a large share of the heat. It is the main reason
+insulators lose performance at high temperature, and this analysis calculates that share separately.</p>
+
+<h3>19.1 Why insulators get worse at high temperature</h3>
+
+<p>Radiative transfer is proportional to the <b>fourth power of temperature</b>; expressed as an equivalent conductivity it grows with the
+<b>cube</b> of temperature.</p>
+
+<div class="eq">k<sub>rad</sub> = 16 σ n² T³ / (3 β)</div>
+
+<p>σ is the Stefan–Boltzmann constant, n the refractive index and β the <b>extinction coefficient</b>. Negligible at room temperature, it can no
+longer be neglected at 500 °C and may exceed solid conduction above 1000 °C.</p>
+
+<div class="note">
+The formula shows that <b>a larger β means less radiation.</b> β is "how quickly light is blocked", so finer pores or opaque particles
+(opacifiers) block radiation — why TiO₂ or SiC powders are added to aerogels and insulating bricks.
+</div>
+
+<h3>19.2 How it is measured</h3>
+
+<table>
+  <tr><th>Method</th><th>Description</th></tr>
+  <tr><td class="q">High-temperature conductivity</td>
+      <td>Guarded hot plate or laser flash at rising temperatures; the part that bends up with T³ is the radiative share. <b>Radiation is not measured directly but separated from the total.</b></td></tr>
+  <tr><td class="q">FT-IR transmission and reflection</td>
+      <td>Infrared transmittance through thin slices; the attenuation with thickness gives <b>β directly</b> — the measurement most directly comparable with this analysis.</td></tr>
+  <tr><td class="q">Emissivity measurement</td>
+      <td>Measures the surface emissivity for the radiation at boundaries.</td></tr>
+</table>
+
+<h3>19.3 How the simulator calculates it</h3>
+
+<p>It <b>casts a great many rays</b> through the structure.</p>
+
+<ol>
+  <li>Rays start from random points in the pores in random directions.</li>
+  <li>The distance <b>each travels</b> before hitting the solid is recorded.</li>
+  <li>Tens of thousands of rays give the distribution of distances.</li>
+  <li>Its mean is the <b>mean free path</b>; its inverse is the extinction coefficient β.</li>
+  <li>The formula above gives the radiative equivalent conductivity at each temperature.</li>
+</ol>
+
+<h3>19.4 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/b_radiation_box1.png">
+  <figcaption>Radiation result of example B (porous Al₂O₃).</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Extinction coefficient β (1/m)</td>
+      <td>How quickly light is blocked. <b>The larger, the less radiation passes.</b> Comparable with FT-IR measurements.</td></tr>
+  <tr><td class="q">Mean free path</td>
+      <td>Mean distance a ray travels before being blocked; the inverse of β. <b>A value close to the pore size is normal.</b> A much larger one means open channels through which radiation passes easily.</td></tr>
+  <tr><td class="q">Radiative conductivity k<sub>rad</sub></td>
+      <td>Radiation expressed as a conductivity, <b>shown per temperature</b>; it grows with T³.</td></tr>
+  <tr><td class="q">k<sub>solid</sub> + k<sub>rad</sub> (total)</td>
+      <td>Solid conduction (chapter 7) plus radiation — <b>the value that would actually be measured</b>. Compare high-temperature conductivity measurements with this line.</td></tr>
+</table>
+
+<figure>
+  <img src="figures/b_radiation_box2.png">
+  <figcaption>Radiative share against temperature: at a glance, from which temperature radiation dominates.</figcaption>
+</figure>
+
+<div class="warn">
+An insulator must be judged by <b>the total at its service temperature</b>. A good value obtained by lowering solid conduction at room temperature
+means nothing if radiation grows at high temperature. This table supports that judgement.
+</div>
+
+<h3>19.5 Assumptions behind the calculation</h3>
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">Grey body</td>
+      <td>Absorption is taken as independent of wavelength. Real materials are wavelength-selective, and opacifiers exploit exactly that.</td></tr>
+  <tr><td class="q">Rosseland approximation<br>(optically thick)</td>
+      <td>The formula holds when the specimen is <b>thick enough</b> for radiation to behave like diffusion. For thin specimens or small β it does not, and the value is overestimated.</td></tr>
+  <tr><td class="q">Opaque solid</td>
+      <td>The solid phase passes no light; not valid for glasses and transparent ceramics.</td></tr>
+  <tr><td class="q">Simplified scattering</td>
+      <td>A hit counts as blocked. In reality scattering redirects the light onwards, and the real β is smaller.</td></tr>
+  <tr><td class="q">Transparent gas</td>
+      <td>The gas in the pores absorbs no radiation — valid for air.</td></tr>
+</table>
+</div>

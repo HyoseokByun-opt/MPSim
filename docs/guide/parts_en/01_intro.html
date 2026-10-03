@@ -1,0 +1,122 @@
+<div class="sec">
+<h2>1. What the program calculates</h2>
+
+<p class="lead">In one sentence: it <b>builds the inside of a material in the computer and solves the real
+physical equations in it</b> to obtain the material's properties.</p>
+
+<div class="key">
+<b>New in v4</b>
+<ul>
+  <li><b>Interfacial thermal resistance</b> — the filler–matrix R<sub>int</sub> and the filler–filler contact R<sub>c</sub> are placed
+      directly on the voxel faces, verified against the analytical solution of Hasselman–Johnson (section 5.7, chapters 7 and 31).</li>
+  <li><b>More shapes</b> — cube, cuboid, rounded box (superellipsoid), polyhedron (regular and irregular grains) and helix
+      (coiled fibre); every shape supports rotation, orientation, size distributions and shells (section 5.1).</li>
+  <li><b>Pores are a material</b> — a phase of any shape whose material is Air is a pore. A network can also be a solid, and
+      the matrix itself can be Air (section 5.2).</li>
+  <li><b>Dense packing</b> — when the target content is not reached, rigid clump relaxation (the multi-sphere method of DEM)
+      moves and rotates the particles until it is. Particles are <b>moved</b>, never trimmed, and kept apart wherever the
+      loading allows (section 5.5).</li>
+  <li><b>A more accurate method</b> — thermal and electrical conduction, permittivity and permeability are solved once with
+      a periodic finite-volume (FV) method that came 2–3× closer to known answers. The early stop of PuMA's FE iteration on
+      large grids was fixed (section 7.2).</li>
+  <li><b>Multi-core solving</b> — one PuMA FE solve uses several cores (about 4× on 14 threads). How the cores are split
+      between independent solves and the threads inside each solve is chosen automatically, by whichever finishes first.
+      A 64³ thermal + dielectric + thermal-expansion run went from 708 s to 120 s (4 cores) and 73 s (12 cores) (section 3.7).</li>
+  <li><b>TIFF export</b> — structure.tif with a different grey value per material, a material ID map and a legend CSV.
+      Appendix C.3 describes how to compare with another analysis program.</li>
+  <li><b>Default grid limit 500³</b> (section 6.7), <b>default cores = ¼ of the PC</b> (section 3.7).</li>
+</ul>
+</div>
+
+<h3>1.1 Why this is needed</h3>
+
+<p>Consider a heat-spreading material made of epoxy with 40 vol% AlN filler. What is its thermal conductivity? To answer
+by experiment, the material must <b>actually be mixed, cured, machined into specimens and measured</b> — days for a single
+condition. Yet the questions that matter in practice are usually these:</p>
+
+<ul>
+  <li>How much better does it get at 45 vol% filler?</li>
+  <li>At the same content, are 3 µm or 10 µm particles better?</li>
+  <li>When the thermal conductivity rises, how much does the thermal expansion fall?</li>
+  <li>How much is lost when the filler agglomerates?</li>
+</ul>
+
+<p>With dozens of combinations, not all of them can be made. This program <b>builds the structures in the calculation</b>,
+answers first, and leaves the experiments for the few promising candidates.</p>
+
+<h3>1.2 How it differs from a rule of mixtures</h3>
+
+<p><b>Rules of mixtures</b> ("40 % filler, so the conductivity is about this") and approximations such as the Maxwell model are
+widely used. They are simple and fast.</p>
+
+<p>But these formulas <b>do not know the structure.</b> Whether the particles are round or platelets, lie in one direction,
+touch to form paths or cluster changes the real property a great deal, and a formula has no place for that information.
+The higher the content and the more anisotropic the filler, the further the approximation drifts from reality.</p>
+
+<p>This program uses no approximation: it <b>builds the structure and solves the equations.</b> It also <b>shows the
+approximations and the theoretical bounds alongside</b>, so that every result can be checked for physical sense
+(chapter 31).</p>
+
+<h3>1.3 The RVE — the unit of calculation</h3>
+
+<p>A whole material cannot be calculated. Instead, <b>one small piece that represents the material</b> is built and
+calculated. This piece is called the <b>RVE (representative volume element)</b>.</p>
+
+<p>An RVE has to satisfy two conditions at once.</p>
+<ul>
+  <li><b>Large enough</b> — with only a few particles the value swings with whatever arrangement happened to be drawn.</li>
+  <li><b>Small enough</b> — calculation time and memory grow steeply with size.</li>
+</ul>
+
+<p>This balance is at the heart of every analysis, so the program checks automatically whether the RVE is adequate and
+reports passed, warning or failed (chapters 6 and 31).</p>
+
+<h3>1.4 What homogenisation means</h3>
+
+<p>Inside the RVE the temperature differs from place to place, and the heat flux in the filler differs from that in the
+matrix. The answer we want, however, is "one thermal conductivity for this material". Finding <b>the value that makes a
+material that is non-uniform inside look like one uniform material from outside</b> is called homogenisation.</p>
+
+<p>The idea is that of the experiment. A <b>gradient is applied</b> from one side to the other (temperature, voltage or
+pressure difference), <b>what flows</b> is measured (heat flux, current, flow rate), and the property is defined by their ratio
+— what is done to a specimen in the laboratory is done inside the calculation.</p>
+
+<div class="note">
+The results of this program are therefore <b>directly comparable with measured values</b>. The calculation, however,
+contains none of the defects of a real specimen (interface debonding, voids, agglomerates, contact resistance of the
+instrument), so a calculated value usually comes out slightly better than the measured one. It is far more accurate for
+<b>comparing conditions</b> than for matching absolute values.
+</div>
+
+<h3>1.5 What can be calculated</h3>
+
+<table>
+  <tr><th>Group</th><th>Analyses</th><th>Typical use</th></tr>
+  <tr><td class="q">Conduction</td><td>Thermal and electrical conductivity</td><td>Heat-spreading materials, conductive pastes</td></tr>
+  <tr><td class="q">Electromagnetics</td><td>Permittivity and loss, permeability, EMI shielding</td><td>Substrates, low-loss insulation, shielding</td></tr>
+  <tr><td class="q">Mechanics</td><td>Elastic moduli, thermal expansion, thermal stress</td><td>Package reliability, CTE matching</td></tr>
+  <tr><td class="q">Flow</td><td>Viscosity, permeability, filtration efficiency</td><td>Underfills, porous filters, membranes</td></tr>
+  <tr><td class="q">Diffusion, acoustics, radiation</td><td>Tortuosity, sound absorption, extinction coefficient</td><td>Electrodes, absorbers, insulation</td></tr>
+  <tr><td class="q">Structure</td><td>Porosity, pore sizes, percolation paths, particle statistics</td><td>Quantifying the structure itself</td></tr>
+</table>
+
+<p>Several analyses can be <b>switched on together and run on the same structure</b>. Coming from one structure, their values
+are consistent with one another.</p>
+
+<h3>1.6 Which open-source codes are used</h3>
+
+<p>The physics is not reinvented: it is solved with <b>validated open-source codes</b> and methods from the literature.
+Every analysis chapter states which code solves what.</p>
+
+<table>
+  <tr><th>Code</th><th>Role</th></tr>
+  <tr><td class="q">NASA PuMA</td><td>Conduction (thermal, electrical, dielectric, magnetic) as the FE alternative, elasticity, Stokes flow, diffusion, radiative ray casting</td></tr>
+  <tr><td class="q">PoreSpy</td><td>Pore-size distributions, mercury-intrusion simulation, pore-network extraction</td></tr>
+  <tr><td class="q">scikit-rf</td><td>Transmission-line calculation of EMI shielding</td></tr>
+  <tr><td class="q">scikit-image / SciPy</td><td>Distance transforms, connected components, geodesic distances</td></tr>
+  <tr><td class="q">scikit-learn</td><td>Surrogate model of the Optimization tab</td></tr>
+  <tr><td class="q">PyVista / VTK</td><td>3D view and high-resolution figures</td></tr>
+</table>
+
+<p>The report records, for every number, the method and the version that produced it.</p>
+</div>

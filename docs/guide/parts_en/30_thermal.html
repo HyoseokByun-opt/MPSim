@@ -1,0 +1,240 @@
+<div class="sec">
+<h2>7. Thermal conductivity</h2>
+<p class="src">Default: <b>periodic finite volume (FV)</b>, solved once · optional: <b>NASA PuMA</b> periodic finite elements (FE), comparison of the two</p>
+
+<p class="lead">The quantity most looked at for heat-spreading materials. This chapter explains not just <b>k</b> but
+<b>every number</b> that appears in this section of the Result Viewer.</p>
+
+<h3>7.1 First, how thermal conductivity is measured</h3>
+
+<p>A simulated value is easiest to understand once it is clear what the experiment measures. The laboratory obtains the thermal
+conductivity in two ways.</p>
+
+<h4>(1) Measured directly — steady-state methods</h4>
+<p>A temperature difference across the specimen drives a <b>constant flow of heat</b>, which is measured, and Fourier's law</p>
+<div class="eq">q = −k · (ΔT / L) &nbsp;&nbsp;→&nbsp;&nbsp; k = q · L / ΔT</div>
+<p>gives k. The guarded hot plate (ASTM C177) and <b>ASTM D5470</b>, common for TIMs, belong here. The difficulty is the
+<b>contact resistance</b>: the fine gaps between instrument and specimen add their resistance to the specimen's own, so the
+specimen is measured at several thicknesses and its resistance is taken from the slope.</p>
+
+<h4>(2) Obtained indirectly — transient methods (laser flash)</h4>
+<p>The more common route in practice. The front of the specimen is heated by a short pulse and the <b>rate</b> at which the back
+warms up gives the <b>thermal diffusivity α</b> (ASTM E1461). The conductivity is not measured but <b>calculated</b> as</p>
+<div class="eq">k = α · ρ · c<sub>p</sub></div>
+<p>so obtaining k by laser flash requires the density ρ and the specific heat c<sub>p</sub> separately. The <b>Thermal diffusivity</b>
+and <b>Volumetric heat capacity</b> described below correspond to this relation.</p>
+
+<div class="note">
+In short — <b>steady-state methods measure k directly, transient methods measure α</b> and calculate k. The simulator solves a
+steady-state problem for k directly and shows α calculated back from k. When comparing with laser flash, <b>compare α with α</b>:
+fewer assumptions are mixed in.
+</div>
+
+<h3>7.2 How the simulator calculates it</h3>
+
+<p>It repeats in the calculation what the experiment does.</p>
+<ol>
+  <li><b>Every voxel gets the conductivity of its region</b>: filler voxels the k of the filler, matrix voxels that of the matrix.</li>
+  <li>A <b>unit temperature gradient</b> is applied in one direction (for example ΔT = 1 K along x), and the steady heat equation
+      ∇·(k∇T) = 0 is solved, one voxel per computational cell.</li>
+  <li>The solution gives the heat flux q in every voxel. The ratio of <b>the volume average of q</b> to the applied mean gradient is
+      the effective conductivity in that direction.</li>
+  <li>Repeating for x, y and z fills the <b>3×3 tensor</b>.</li>
+</ol>
+
+<h4>Boundary conditions: periodic</h4>
+<p>An experiment cuts a specimen and holds its two faces; the calculation <b>joins the opposite faces of the RVE</b> — it looks at one
+piece of an endlessly repeated material. This removes the artificial effect of cut faces, and even a small RVE converges quickly to
+<b>the value inside the material</b>. PuMA's own finite-volume calculation fixes the temperatures of two faces and is therefore not the
+default (it remains a Solver option).</p>
+
+<h4>Two discretisations — FV (default) and FE</h4>
+<p>The same voxel grid can be solved two ways. The <b>periodic finite volume (FV)</b> method keeps one temperature per voxel, and heat
+passes only where a voxel <b>shares a face</b> with its neighbour (harmonic mean of the two conductivities). NASA PuMA's <b>periodic
+finite elements (FE)</b> keep a temperature at every voxel corner; a corner on a boundary belongs to filler and matrix alike, so heat
+also crosses <b>between voxels that touch only at an edge or a corner</b>. FE therefore crosses narrow gaps and contacts easily, as if
+the filler were half a voxel larger, and comes out higher the coarser the grid.</p>
+<p>Which is right was checked on problems with known answers. A simple cubic array (one sphere per periodic cell) has a small cell
+and can be solved with up to 256 voxels per diameter; at that resolution FE and FV extrapolate to the same value within 0.1 %. With
+that as the reference, the errors at ordinary resolutions were measured.</p>
+<table>
+  <tr><th>Simple cubic array</th><th>Reference</th><th>24 voxels per cell<br>FE / FV</th><th>64 voxels<br>FE / FV</th><th>128 voxels<br>FE / FV</th></tr>
+  <tr><td class="q">45 %, contrast 150, gap = 5 % of the cell</td><td class="n">3.90</td><td class="n">+6.4 % / −1.4 %</td><td class="n">+4.0 % / +0.7 %</td><td class="n">+2.8 % / +1.1 %</td></tr>
+  <tr><td class="q">45 %, contrast 10, same gap</td><td class="n">2.681</td><td class="n">+1.9 % / −1.8 %</td><td class="n">+1.2 % / −0.3 %</td><td class="n">+0.8 % / +0.03 %</td></tr>
+  <tr><td class="q">59 %, contrast 150, overlapping particles joined by necks</td><td class="n">41.6</td><td class="n">+22 % / +14 %</td><td class="n">+8.5 % / +5.1 %</td><td class="n">+4.0 % / +2.3 %</td></tr>
+</table>
+<p>In all three cases <b>FV is 2–3× closer to the reference than FE</b>. On a random 50 vol% structure (Al₂O₃/epoxy, 16 voxels per
+diameter) the difference is larger: against the value converged by redrawing the same structure ever finer (about 0.86 W/m·K), FV was
++3.5 % and FE +130 %. Since v4, thermal and electrical conduction, permittivity and permeability are therefore solved <b>once, with
+FV</b>. PuMA FE can be chosen under <span class="ui">Conduction</span> in the Simulation tab.</p>
+
+<h4>Comparing the two methods (optional)</h4>
+<p><span class="ui">Also solve with the other method and compare</span> solves the same problem once more with the other method and
+shows both. As in the table above, the true value often lies between them, so <b>their difference is the size of the discretisation
+error</b>. It roughly doubles the conduction time and is off by default. When the two differ by more than 5 % the check list warns;
+usually the gaps or contacts between particles are drawn with only one or two voxels (5.5).</p>
+
+<h4>Resolution check (automatic)</h4>
+<p>When gaps between particles are not fully drawn and <b>particles touch on the grid</b>, the same particles are drawn again on a grid
+1.5× finer after the analysis and the first direction is solved once more (positions, sizes and orientations are stored as continuous
+coordinates, so the structure is unchanged). The result shows both values, the change, and a value extrapolated assuming an error
+proportional to the voxel size; a change above 3 % raises a warning. FV is fast, so this usually costs a few seconds.</p>
+<table>
+  <tr><th>Example: Al₂O₃ 50 vol%, 16 voxels per diameter</th><th>64³</th><th>96³ (check)</th><th>Extrapolated</th><th>Converged from three grids (64·128·192³)</th></tr>
+  <tr><td class="q">Thermal conductivity (W/m·K)</td><td class="n">0.891</td><td class="n">0.882 (−1.05 %)</td><td class="n">0.863</td><td class="n">about 0.861</td></tr>
+</table>
+<p><span class="ui">Resolution check</span> in the Simulation tab makes it always run (on) or never (off). Structures with a network phase
+cannot be drawn on another grid and are not checked.</p>
+
+<h4>The convergence test of the iteration</h4>
+<p>The original stopping test of the MINRES that PuMA uses (‖r‖ / (‖A‖·‖x‖)) loosens as the grid grows. On a 50 vol% structure with the
+default tolerance it stopped at values +0.4 % high on 64³, +7.5 % on 128³ and +32 % on 192³. Since v4 the test is the <b>relative residual
+‖r‖ / ‖b‖</b>, independent of grid and units, and a diagonal (Jacobi) preconditioner reduces the iterations (192³: 1418 → 468, same value).
+The self-test checks this on two grids (chapter 31).</p>
+
+<h3>7.3 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/a_thermal_box1.png">
+  <figcaption>The first box of the Thermal conductivity section: the tensor and the derived quantities.</figcaption>
+</figure>
+
+<h4>k tensor (W/m·K)</h4>
+<p>xx, yy and zz are the effective conductivities for heat flowing along x, y and z. <b>Similar values mean isotropy</b>; one larger
+value means the filler is aligned, or a connected path has formed, in that direction. The <b>Isotropic mean</b> below is the mean of
+the three, to compare with a measurement that does not distinguish directions.</p>
+
+<h4>Thermal resistivity (m·K/W)</h4>
+<p>The reciprocal of the conductivity, for when it is easier to think in resistances (series stacks, for example).</p>
+
+<h4>Area-specific thermal resistance (mm²·K/W)</h4>
+<p><b>The value TIM specifications actually use</b> — the thermal resistance per area of a layer of thickness L,</p>
+<div class="eq">R″ = L / k</div>
+<p>It takes the thickness entered in <span class="ui">Layer thickness</span>, so <b>it changes with that thickness.</b> This is what
+ASTM D5470 yields — except that the measured value includes contact resistance, while <b>this value is the resistance of the material
+alone</b>. That is the most common reason why the calculation comes out lower than the measurement.</p>
+
+<h4>Thermal diffusivity (mm²/s)</h4>
+<p>It says <b>how fast heat spreads</b>. By definition</p>
+<div class="eq">α = k / (ρ · c<sub>p</sub>)</div>
+<p>calculated from the k just solved and ρ·c<sub>p</sub> as the <b>volume-weighted mean</b> of the densities and specific heats of the
+phases. Where the conductivity says "how well heat passes in the steady state", the diffusivity says "how fast a change of temperature
+travels". A material can pass heat well (large k) and still respond slowly, if it stores much heat (large ρc<sub>p</sub>). It is
+<b>directly comparable</b> with α measured by laser flash.</p>
+
+<h4>Volumetric heat capacity (MJ/m³·K)</h4>
+<p>ρ·c<sub>p</sub> — the denominator of the relation above: the heat needed to warm a unit volume by 1 K.</p>
+
+<h4>Anisotropy (xx+yy)/2 : zz</h4>
+<p>The ratio of the in-plane mean to the through-thickness value. Above 1, heat flows better in-plane. Platelet fillers (h-BN, graphite)
+raise it strongly — a drawback when heat must cross the thickness.</p>
+
+<h4>Field-line tortuosity / Field lines that cross the sample</h4>
+<p>The result of actually tracing the field lines of the heat flux. The mean length of the lines <b>that cross the specimen</b> over the
+straight distance is the tortuosity; close to 1, heat flows straight. Few crossing lines mean the heat is channelled through a few paths.</p>
+
+<h3>7.4 Checking that the value makes sense</h3>
+
+<figure>
+  <img src="figures/a_thermal_box2.png">
+  <figcaption>Bounds and mean-field models: whether the calculated value (blue dot) lies inside the theoretical bounds.</figcaption>
+</figure>
+
+<p>Chapter 25 explains this chart in detail. In brief — <b>Wiener</b> and <b>Hashin–Shtrikman</b> are bounds no physical material can
+cross, so a calculated value outside them is an error. A difference from approximate models such as <b>Maxwell-Garnett</b> or
+<b>Bruggeman</b> is not an error but <b>the effect of the microstructure</b>: the models know nothing of orientation or contacts.</p>
+
+<h3>7.5 Assumptions behind the calculation</h3>
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">Interfaces are perfectly bonded (default)</td>
+      <td>Without R<sub>int</sub> and R<sub>c</sub>, the thermal resistance between filler and matrix (Kapitza) is zero. In reality the
+      temperature jumps at the interface, the more so the smaller the filler — enter them per phase as in 7.6.</td></tr>
+  <tr><td class="q">Properties do not depend on temperature</td>
+      <td>Room-temperature properties are used. For materials whose k changes at high temperature, enter the properties at that temperature.</td></tr>
+  <tr><td class="q">Steady state</td>
+      <td>Changes in time are not solved; the transient response is judged by α.</td></tr>
+  <tr><td class="q">The structure repeats periodically</td>
+      <td>Near the surface a real specimen may differ; this is the bulk point of view.</td></tr>
+  <tr><td class="q">Shapes are approximated by voxels</td>
+      <td>Curved surfaces become staircases. Fewer than 6 voxels across the thinnest part raise a warning in the Verification.</td></tr>
+</table>
+
+<div class="warn">
+Rather than expecting an immediate match with measurements, use the results to <b>compare conditions</b>. Interfacial resistance,
+pores and agglomerates — things only real specimens have — all lower the measured value.
+</div>
+
+<h3>7.6 Interfacial thermal resistance (R<sub>int</sub>, R<sub>c</sub>)</h3>
+
+<p>Between filler and matrix, and between two touching fillers, phonons crossing the interface meet a resistance (Kapitza resistance,
+m²K/W). It is entered in the phase editor of the Structure tab (section 5.7).</p>
+
+<table>
+  <tr><th>Input</th><th>Meaning</th><th>Typical values</th></tr>
+  <tr><td class="q">R<sub>int</sub> filler–matrix</td><td>The whole surface of the filler (or its shell)</td><td>10⁻⁹–10⁻⁷ m²K/W (boundary conductance 10⁹–10⁷ W/m²K)</td></tr>
+  <tr><td class="q">R<sub>c</sub> filler–filler</td><td>Faces where two particles touch — between different fillers per pair (5.7)</td><td>Often taken larger than the interface (point contacts, surface oxides)</td></tr>
+</table>
+<p>When the values are unknown, the Calibration tab (chapter 30) shows the R<sub>int</sub> of a perfect interface by the acoustic and
+diffuse mismatch theories (a lower bound) and finds R<sub>int</sub> from measured conductivities.</p>
+
+<h4>How it is calculated</h4>
+<p>The resistance sits directly on the voxel faces. A face between different materials a and b has the conductance
+<span class="ui">1/k<sub>face</sub> = 1/(2k<sub>a</sub>) + 1/(2k<sub>b</sub>) + R/h</span> (h the voxel size), and R<sub>c</sub>/h is
+added on faces where particles touch. It needs faces, so with any resistance present the conduction is solved by the <b>built-in
+periodic finite-volume solver</b> (shown as <span class="ui">fv-interface</span> in the Solver record of the Result Viewer). The staircase
+surface of the grid is larger than the real surface (about 1.5× for a sphere), so R is multiplied by the ratio of real to grid area,
+keeping the total interface conductance A<sub>true</sub>/R. The share of the thermal energy dissipated at the interfaces appears
+separately under energy share in the Result Viewer.</p>
+
+<h4>Verification</h4>
+<p>A dilute dispersion of spheres (diameter 20 voxels, 3.8 vol%, k<sub>p</sub>/k<sub>m</sub> = 20) was compared with the analytical
+solution of Hasselman–Johnson. For Biot numbers α = R<sub>int</sub>k<sub>m</sub>/a = 0, 0.5 and 2 they agree <b>within 0.26 %</b> (area
+correction 1.51 — the theoretical value for a sphere is 1.5). R<sub>c</sub> on touching faces equals the series law to numerical
+accuracy. Both checks are in the self-test (chapter 31).</p>
+
+<div class="eq">Hasselman–Johnson: &nbsp; k/k<sub>m</sub> = [k<sub>p</sub>(1+2α) + 2k<sub>m</sub> + 2φ(k<sub>p</sub>(1−α) − k<sub>m</sub>)] / [k<sub>p</sub>(1+2α) + 2k<sub>m</sub> − φ(k<sub>p</sub>(1−α) − k<sub>m</sub>)], &nbsp; α = R<sub>int</sub>k<sub>m</sub>/a</div>
+
+<div class="note">
+<b>The critical radius a<sub>c</sub> = R<sub>int</sub> k<sub>m</sub>.</b> At α = 1 (with k<sub>p</sub> ≫ k<sub>m</sub>) the filler looks
+as if it had the conductivity of the matrix; below this size, adding filler lowers the conductivity. The analysis handles particle
+sizes directly, so the effect can be seen by varying the diameter at constant content.
+</div>
+<!-- render-section -->
+<h3>7.7 Reading the renderings</h3>
+<p>The results of example A (epoxy + AlN 40 vol%, RVE 20 µm, temperature difference of 1 K along z). The conduction analysis keeps
+<b>the temperature field T</b> and <b>the heat flux q</b> for every direction; the 3D and 2D views and the report figures show the first
+direction (z).</p>
+
+<figure><div class="g2"><div><img src="figures/r_a_thermal_q3d.png"><span>Heat-flux magnitude |q| — particle surfaces</span></div><div><img src="figures/r_a_thermal_q2d.png"><span>|q| section (y = 10 µm) with arrows</span></div></div><figcaption>Heat flux. The mean flux is k·ΔT/L = 0.641 × 1 K / 20 µm ≈ 3.2 × 10⁴ W/m²; the colours give the local value against it.</figcaption></figure>
+
+<table>
+  <tr><th>What is seen</th><th>Meaning</th><th>Interpretation</th></tr>
+  <tr><td class="q">|q| inside the particles 2–3× the mean (orange, red)</td><td>Heat crowds into the conductive AlN.</td>
+      <td>Shows <b>how strongly the filler draws heat in</b>. If |q| in the filler is about that of the matrix, the filler hardly works.</td></tr>
+  <tr><td class="q">Red spots in narrow gaps and contacts</td><td>Heat crossing between two particles concentrates in a short matrix bridge.</td>
+      <td><b>The bottlenecks of the conduction path.</b> These spots decide k and are sensitive to the interfacial resistances
+      R<sub>c</sub>, R<sub>int</sub> (7.6). The more red spots, the more k falls when a contact resistance is added.</td></tr>
+  <tr><td class="q">Matrix (blue)</td><td>Where heat passes through the matrix.</td>
+      <td>Where particles are not lined up along the flow (z), the matrix must carry the heat, slowly.</td></tr>
+  <tr><td class="q">Arrows</td><td>In-plane direction of the heat flow (hot top → cold bottom).</td>
+      <td>Arrows bending into the particles show the particles "pulling in" the heat. Their length follows the square root of the magnitude (26.2).</td></tr>
+</table>
+
+<figure><div class="g2"><div><img src="figures/r_a_thermal_T2d.png"><span>Temperature section (y = 10 µm)</span></div><div><img src="figures/r_a_thermal_lines3d.png"><span>Heat-flux field lines — particles translucent</span></div></div><figcaption>Temperature field and field lines.</figcaption></figure>
+
+<ul>
+  <li><b>Temperature section</b> — inside a particle the colour hardly changes (isothermal), and <b>the temperature changes in the matrix
+      between particles</b>. How much the colour bands bend near the particles is the effect of the filler; straight horizontal bands
+      mean the filler contributes nothing to the conduction.</li>
+  <li><b>Field lines</b> — the paths the heat actually takes from the top face to the bottom face. How far they swerve to find particles
+      is the <span class="ui">Field-line tortuosity</span> of the results (mean path length ÷ thickness). Lines crowding along certain
+      paths mean those paths (particle chains) carry most of the heat; straight, even lines mean the matrix carries it.</li>
+</ul>
+
+<div class="note">
+<b>What to look at first</b> — ① where and how many red spots (bottlenecks) there are, ② where in the matrix the temperature drops,
+③ whether the field lines crowd along particle chains. The three together answer "why this k". When the directions differ, choose the
+field of that direction in <span class="ui">Displayed quantity</span> and compare.
+</div>
+</div>

@@ -1,0 +1,130 @@
+<div class="sec">
+<h2>17. Diffusion and tortuosity</h2>
+<p class="src">Open-source solver: <b>NASA PuMA</b> continuum tortuosity — the steady diffusion equation in the pores</p>
+
+<p class="lead">How much <b>more slowly</b> a substance (ions, gases, moisture) passes through a porous structure. A key value in the design
+of battery electrodes, fuel-cell gas-diffusion layers, catalyst supports and moisture barriers.</p>
+
+<h3>17.1 What tortuosity is</h3>
+
+<p>Even through open pores a substance <b>cannot go straight.</b> It must detour and squeeze through narrow throats, so the apparent diffusion
+is slower than in free space. Two things cause the slowdown:</p>
+
+<ul>
+  <li><b>Porosity ε</b> — the cross-section open to passage is smaller to begin with.</li>
+  <li><b>Tortuosity τ</b> — within it the path winds.</li>
+</ul>
+
+<div class="eq">D<sub>eff</sub> / D<sub>bulk</sub> = ε / τ</div>
+
+<div class="warn">
+<b>Tortuosity is defined differently from source to source.</b> Some call the τ of the formula above the tortuosity, some τ², and some use the
+ratio of path lengths (L<sub>actual</sub>/L<sub>straight</sub>). This program shows <b>the τ of the formula above (tortuosity factor)</b>.
+Match the definition before comparing with other data — the values differ by a square.
+</div>
+
+<h3>17.2 How it is measured</h3>
+
+<table>
+  <tr><th>Method</th><th>Description</th></tr>
+  <tr><td class="q">Diffusion cell<br>(Wicke–Kallenbach)</td>
+      <td>A tracer gas flows on one side of the specimen and a carrier gas on the other; the concentration that crosses over is measured. The steady flux gives D<sub>eff</sub> directly.</td></tr>
+  <tr><td class="q">Time lag</td>
+      <td>A concentration is suddenly applied on one side and the time until it appears on the other is measured; the lag is set by the diffusivity and the thickness.</td></tr>
+  <tr><td class="q">Conductivity method<br>(formation factor)</td>
+      <td><b>The most widely used.</b> The specimen is filled with an electrolyte and its resistance measured. Ionic diffusion and conduction follow the same equation, so the resistance ratio F = σ<sub>electrolyte</sub>/σ<sub>specimen</sub> equals τ/ε — the standard method for battery electrodes.</td></tr>
+  <tr><td class="q">NMR, tracer methods</td>
+      <td>Observe the actual displacement of molecules directly.</td></tr>
+</table>
+
+<div class="note">
+The reason the conductivity method works is also the basis of this analysis — <b>diffusion, electrical conduction and heat conduction are
+mathematically the same equation</b>, so the same solver solves all three.
+</div>
+
+<h3>17.3 How the simulator calculates it</h3>
+
+<ol>
+  <li>Only the <b>connected pores</b> are kept; a substance cannot enter isolated pores.</li>
+  <li>The steady diffusion (Laplace) equation is solved in them, with a concentration difference across two faces and periodic side faces.</li>
+  <li>On the solid walls <b>nothing passes</b> (zero flux).</li>
+  <li>The total flux gives D<sub>eff</sub>; the formula above gives τ back.</li>
+  <li>This is repeated in three directions.</li>
+</ol>
+
+<h3>17.4 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/b_tortuosity_box1.png">
+  <figcaption>Tortuosity result. Example B (Al₂O₃, 45 % open pores) gives τ = 2.078.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Tortuosity factor τ (x / y / z)</td>
+      <td>Tortuosity per direction. <b>1 is a straight channel</b>; larger means more detour. Example B's 2.078 is ordinary for a porous ceramic; above 5 the structure is very winding.</td></tr>
+  <tr><td class="q">Open porosity ε</td>
+      <td>Counts only the pores that actually carry diffusion; may be smaller than the total porosity.</td></tr>
+  <tr><td class="q">D<sub>eff</sub> / D<sub>bulk</sub></td>
+      <td>By how much diffusion is reduced against free space; equal to ε/τ. <b>A dimensionless value to use directly in other calculations.</b></td></tr>
+  <tr><td class="q">Formation factor F</td>
+      <td>τ/ε — <b>directly comparable</b> with the conductivity method. If a measurement exists, compare it with this line.</td></tr>
+  <tr><td class="q">MacMullin number</td>
+      <td>How many times the resistance of the electrolyte-filled porous body exceeds that of the pure electrolyte — used in battery separator and electrode specifications; equal to F.</td></tr>
+</table>
+
+<h4>Very small pores — the Knudsen regime</h4>
+
+<figure>
+  <img src="figures/b_tortuosity_box2.png">
+  <figcaption>Knudsen correction. When the pores approach the mean free path of the gas molecules, the mode of diffusion changes.</figcaption>
+</figure>
+
+<p>Gas molecules normally spread by colliding with one another. When the pores are smaller than the <b>mean free path (about 68 nm in air at room
+temperature and pressure)</b>, molecules <b>hit the walls before each other</b>. The diffusivity then becomes proportional to the pore size —
+Knudsen diffusion.</p>
+
+<table>
+  <tr><th>Item</th><th>Meaning</th></tr>
+  <tr><td class="q">Knudsen number Kn</td>
+      <td>Mean free path / pore size. <b>Kn &lt; 0.01</b>: ordinary diffusion; <b>Kn &gt; 10</b>: Knudsen diffusion; in between, the transition regime.</td></tr>
+  <tr><td class="q">Knudsen diffusivity</td>
+      <td>The diffusivity set by wall collisions alone.</td></tr>
+  <tr><td class="q">Combined (Bosanquet)</td>
+      <td>Both mechanisms together: 1/D = 1/D<sub>molecular</sub> + 1/D<sub>Knudsen</sub>. <b>The slower one dominates.</b></td></tr>
+</table>
+
+<div class="note">
+This correction is a <b>correlation</b>, not a separate solve. It is computed from the pore size and the gas conditions; for nanopores read it as
+an indicator, and use a molecular-level analysis when a precise value is needed.
+</div>
+
+<h3>17.5 Assumptions behind the calculation</h3>
+<table>
+  <tr><th>Assumption</th><th>Where reality may differ</th></tr>
+  <tr><td class="q">Pure diffusion</td>
+      <td>No flow driven by a pressure difference (convection). When both occur, consider the permeability (chapter 15) separately.</td></tr>
+  <tr><td class="q">No sticking to walls</td>
+      <td>No adsorption or surface diffusion, which can make a large difference in real catalyst supports.</td></tr>
+  <tr><td class="q">The solid blocks completely</td>
+      <td>Diffusion through the solid phase (e.g. moisture in a polymer membrane) is not considered here.</td></tr>
+  <tr><td class="q">Dilute solution, ideal gas</td>
+      <td>Diffusivities that change with concentration are not handled.</td></tr>
+  <tr><td class="q">Steady state</td>
+      <td>The steady value, not transient diffusion.</td></tr>
+</table>
+
+<div class="note">
+Tortuosity is <b>a property of the structure alone</b>: once found, it applies to ions, gases or moisture alike — multiply the free-space
+diffusivity of the substance by ε/τ. That is the main reason to compute it.
+</div>
+<!-- render-section -->
+<h3>17.6 Reading the rendering — how the concentration spreads</h3>
+<figure><img src="figures/r_b_tort_C2d.png" class="half"><figcaption>Concentration section of example B (along z, top 1 → bottom 0). The concentration is defined only in the pores; the solid shows as 0 (blue).</figcaption></figure>
+<ul>
+  <li>The concentration falls from top to bottom along the connected pores. <b>Narrow throats where the colour changes abruptly</b> are where diffusion is limited.</li>
+  <li>A pore that looks isolated in the section but has a single colour is connected outside the section; diffusion follows the 3D connections, not the section.</li>
+  <li>The effective diffusivity D<sub>eff</sub>/D₀ = 0.22 is smaller than the porosity (0.45); that ratio is the tortuosity factor
+      τ = ε / (D<sub>eff</sub>/D₀) ≈ 2.1. It is <b>the constriction of narrow throats</b>, more than the winding length, that raises τ.</li>
+</ul>
+</div>

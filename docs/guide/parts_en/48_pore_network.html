@@ -1,0 +1,107 @@
+<div class="sec">
+<h2>23. Pore network</h2>
+<p class="src">Open-source code: <b>PoreSpy</b> SNOW2 algorithm — divides the pore space into pores and throats</p>
+
+<p class="lead">Simplifies a complex pore space into a network of <b>"pores" (chambers) and the "throats" connecting them</b>. Its purpose is to show the
+<b>connectivity</b> that the pore-size distribution of chapter 22 cannot.</p>
+
+<div class="note">
+This analysis <b>does not need OpenPNM.</b> The network is extracted by PoreSpy's SNOW2 alone, so the feature works even when OpenPNM is missing from
+the offline package.
+</div>
+
+<h3>23.1 What the analysis does</h3>
+
+<p>A pore space is usually <b>wide chambers linked by narrow throats</b>. As a graph it tells:</p>
+
+<ul>
+  <li>how many chambers there are and with how many neighbours each connects — <b>connectivity</b>;</li>
+  <li>how much narrower the throats are than the chambers — <b>the degree of bottlenecking</b>;</li>
+  <li>how many dead ends and isolated chambers there are — <b>useless pores</b>.</li>
+</ul>
+
+<p>The extracted network is the input of <b>pore-network modelling (PNM)</b>. Phenomena too heavy for voxel solves — two-phase flow (water and air
+together), drying, capillary invasion — can be solved far faster on the network.</p>
+
+<h3>23.2 Relation to experiments</h3>
+
+<p>No experiment measures the pore network itself. <b>It is an interpretation, not an observation.</b> Each element has a corresponding measurement, though.</p>
+
+<table>
+  <tr><th>Element</th><th>Corresponding measurement</th></tr>
+  <tr><td class="q">Throat size</td><td>What mercury intrusion (chapter 22) and the bubble point (chapter 21) measure is exactly the throats.</td></tr>
+  <tr><td class="q">Pore size</td><td>Estimated by gas adsorption or X-ray CT image analysis.</td></tr>
+  <tr><td class="q">Coordination number</td><td>Hard to measure directly; usually obtained <b>from CT images by the same method as this analysis</b>.</td></tr>
+</table>
+
+<h3>23.3 How the simulator calculates it</h3>
+
+<ol>
+  <li>The <b>distance transform</b> of the pore space (distance to the wall) is computed.</li>
+  <li>Local maxima of the distance are taken as <b>pore centres</b>.</li>
+  <li>A <b>watershed segmentation</b> divides the pore space into pores.</li>
+  <li>The narrowest cross-section between two touching pores is defined as a <b>throat</b>.</li>
+  <li>A network is built with pores as nodes and throats as links.</li>
+</ol>
+
+<h3>23.4 Reading the numbers</h3>
+
+<figure>
+  <img src="figures/b_pore_network.png">
+  <figcaption>The whole pore-network analysis of example B (porous Al₂O₃, 45 % open pores).</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item on screen</th><th>Example B</th><th>Meaning and use</th></tr>
+  <tr><td class="q">Pores</td><td>90</td>
+      <td>Number of pores in the RVE — <b>the basis of statistical representativeness</b>. With only a few dozen, enlarge the RVE.</td></tr>
+  <tr><td class="q">Throats</td><td>194</td>
+      <td>Number of throats connecting pores.</td></tr>
+  <tr><td class="q">Mean coordination</td><td>4.311</td>
+      <td><b>The most important value.</b> With how many neighbours a pore connects on average. The larger, the more alternative routes and the better the transport. <b>Below 2, dead ends abound</b> and transport is poor. 4.3 is a well-connected structure.</td></tr>
+  <tr><td class="q">Isolated pores</td><td>2</td>
+      <td>Pores connected to nothing — <b>they contribute nothing to transport</b>. Many of them widen the gap between open and total porosity (chapter 20).</td></tr>
+  <tr><td class="q">Pore density</td><td>1.54e7 1/mm³</td>
+      <td>Pores per unit volume: how finely the structure is divided.</td></tr>
+  <tr><td class="q">Mean throat length</td><td>4.965 µm</td>
+      <td>Mean distance between pore centres; with the tortuosity (chapter 17), a measure of the length of transport paths.</td></tr>
+</table>
+
+<h4>The three distributions</h4>
+
+<table>
+  <tr><th>Plot</th><th>How to read it</th></tr>
+  <tr><td class="q">Pore sizes<br>(inscribed diameter)</td>
+      <td>Where the pore sizes gather. Example B spreads widely over 1–3.5 µm. Two or more peaks mean two families of pores of different size.</td></tr>
+  <tr><td class="q">Throat sizes<br>(inscribed diameter)</td>
+      <td><b>Shifted towards smaller sizes than the pores, as it should be.</b> In example B too the throat distribution lies left of the pores'. This difference is the <b>ink-bottle structure</b> of chapter 22 — why mercury intrusion reports pores smaller than they are.</td></tr>
+  <tr><td class="q">Coordination numbers</td>
+      <td>Distribution of coordination numbers. Example B gathers at 3–5 with a tail to 12. <b>The bar at 0</b> is isolated pores, <b>the bar at 1</b> dead ends; many of either mean poor transport for the porosity.</td></tr>
+</table>
+
+<div class="note">
+<span class="ui">Show network</span> shows the network in 3D as <b>balls and sticks</b>: ball size is the pore size, stick thickness the throat size.
+Making the structure surface translucent shows how the network sits in the pores (chapter 26).
+</div>
+
+<h3>23.5 Assumptions and limits</h3>
+<table>
+  <tr><th>Item</th><th>Description</th></tr>
+  <tr><td class="q">Pores and throats <b>do not exist as such</b></td>
+      <td>A pore space has no boundary saying "the chamber ends here". They are <b>partitions defined by the calculation</b>, and their number changes with the algorithm settings. Do not treat them as absolute.</td></tr>
+  <tr><td class="q">Over-segmentation</td>
+      <td>One elongated or irregular pore may be split into several. SNOW2 is designed to reduce, not eliminate, this. Suspect an abnormally high pore count.</td></tr>
+  <tr><td class="q">Voxel resolution</td>
+      <td>Throats narrower than two or three voxels are not caught at all, so two connected pores may look disconnected — a common cause of low coordination numbers.</td></tr>
+  <tr><td class="q">Pores on the boundary</td>
+      <td>Pores cut by the RVE faces are recorded smaller than they are; the smaller the RVE, the larger the effect.</td></tr>
+  <tr><td class="q">Geometry only</td>
+      <td>The network itself carries no flow information. The actual permeability comes from the Stokes solve of chapter 15.</td></tr>
+</table>
+<!-- render-section -->
+<h3>23.6 Reading the rendering — balls and sticks</h3>
+<figure><img src="figures/r_b_network3d.png" class="half"><figcaption>Pore network of example B: balls are pores (size and colour by diameter), sticks the throats joining them. Pore surface translucent.</figcaption></figure>
+<p>Regions where many large balls connect are the main channels of flow and diffusion; a ball with a single stick is a dead-end pore. The lower the
+coordination number (sticks per pore), the more easily the flow is cut when a pore clogs. The network can be exported as input to larger-scale
+pore-network models (flow and adsorption simulations).</p>
+</div>

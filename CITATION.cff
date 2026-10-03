@@ -1,0 +1,65 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it as below, together with the
+  open-source solvers that produced the results (see the README).
+type: software
+title: "MPSim: Material Property Simulation"
+abstract: >-
+  MPSim (Material Property Simulation) is a browser-based simulator for
+  the effective properties of a single
+  material layer - filled composites, porous media and thin films for
+  semiconductor packaging, devices and process equipment - computed on a
+  voxel representative volume element (RVE). It generates the
+  microstructure, checks that the RVE is representative, solves thermal,
+  electrical, dielectric, magnetic, mechanical, rheological, moisture,
+  flow and electromagnetic-shielding problems with validated open-source
+  solvers, and shows the fields in an interactive 3D view.
+authors:
+  - family-names: Byun
+    given-names: Hyoseok
+version: 5.0.1
+repository-code: "https://github.com/HyoseokByun-opt/MPSim"
+url: "https://github.com/HyoseokByun-opt/MPSim"
+date-released: "2026-10-03"
+license: MIT
+keywords:
+  - MPSim
+  - representative volume element
+  - homogenization
+  - microstructure
+  - composites
+  - porous media
+  - semiconductor packaging
+  - thermal conductivity
+  - finite volume
+  - FFT
+  - digital materials
+references:
+  - type: article
+    title: "PuMA: the Porous Microstructure Analysis software"
+    authors:
+      - family-names: Ferguson
+        given-names: Joseph C.
+      - family-names: Panerai
+        given-names: Francesco
+      - family-names: Borner
+        given-names: Arnaud
+      - family-names: Mansour
+        given-names: Nagi N.
+    journal: SoftwareX
+    volume: 7
+    start: 81
+    end: 87
+    year: 2018
+    doi: 10.1016/j.softx.2018.03.008
+  - type: article
+    title: "PoreSpy: A Python toolkit for quantitative analysis of porous media images"
+    authors:
+      - family-names: Gostick
+        given-names: Jeff T.
+    journal: Journal of Open Source Software
+    volume: 4
+    issue: 37
+    start: 1296
+    year: 2019
+    doi: 10.21105/joss.01296
