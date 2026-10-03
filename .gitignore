@@ -12,6 +12,8 @@ __pycache__/
 /tools/openEMS/
 /Download/
 /GitHub/
+/Release/
+/docs/*.pdf
 
 # results and local settings
 /workspace/

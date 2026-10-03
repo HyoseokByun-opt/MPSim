@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
   <img src="https://img.shields.io/badge/self--test-54%20checks-2da44e" alt="54 self-test checks">
-  <img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean">
+  <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
   <a href="#analyses">Analyses</a> ·
   <a href="#verification">Verification</a> ·
   <a href="#installation">Installation</a> ·
-  <a href="docs/USER_GUIDE_EN.pdf">User guide</a> ·
+  <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide</a> ·
   <a href="#citing">Citing</a>
 </p>
 
@@ -163,8 +163,11 @@ failed, with the reason. Chapter 31 of the user guide explains how to read them.
 
 | | PDF | HTML |
 |---|---|---|
-| User guide, English (162 pages) | [docs/USER_GUIDE_EN.pdf](docs/USER_GUIDE_EN.pdf) | [docs/guide/user_guide_en.html](docs/guide/user_guide_en.html) |
-| User guide, Korean (151 pages) | [docs/USER_GUIDE_KO.pdf](docs/USER_GUIDE_KO.pdf) | [docs/guide/user_guide_ko.html](docs/guide/user_guide_ko.html) |
+| User guide, English (162 pages) | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) | [docs/guide/user_guide_en.html](docs/guide/user_guide_en.html) |
+| User guide, Korean (151 pages) | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) | [docs/guide/user_guide_ko.html](docs/guide/user_guide_ko.html) |
+
+The PDFs are attached to every [release](https://github.com/HyoseokByun-opt/MPSim/releases) (the links above
+always open the latest) and are included in the offline package; they are not kept in the repository itself.
 
 Every simulation chapter explains how the property is measured in the laboratory, how the program computes it, how to
 read each number and rendering, and the assumptions behind it; chapter 32 works through two semiconductor-material
