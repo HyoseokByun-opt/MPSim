@@ -17,6 +17,7 @@ abstract: >-
 authors:
   - family-names: Byun
     given-names: Hyoseok
+    website: "https://www.linkedin.com/in/hyoseok-byun-72992120a"
 version: 5.0.1
 doi: 10.5281/zenodo.23120194
 repository-code: "https://github.com/HyoseokByun-opt/MPSim"

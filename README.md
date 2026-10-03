@@ -355,7 +355,8 @@ self-test passing and add a check for any new solver or analysis.
 
 ## Authors
 
-**Hyoseok Byun** ([@HyoseokByun-opt](https://github.com/HyoseokByun-opt)) — concept, design, direction and validation.
+**Hyoseok Byun** ([GitHub](https://github.com/HyoseokByun-opt) · [LinkedIn](https://www.linkedin.com/in/hyoseok-byun-72992120a)) — concept, design, direction and
+validation.
 
 **Declaration of AI assistance.** The code, the verification tests and the user guides were written with the assistance
 of Claude (Anthropic; Claude Code with Claude Opus 5.5), an AI assistant, working under the author's direction. The
