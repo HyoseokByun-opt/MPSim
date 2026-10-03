@@ -161,18 +161,15 @@ failed, with the reason. Chapter 31 of the user guide explains how to read them.
 
 ## Documentation
 
-| | PDF | HTML |
-|---|---|---|
-| User guide, English (162 pages) | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) | [docs/guide/user_guide_en.html](docs/guide/user_guide_en.html) |
-| User guide, Korean (151 pages) | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) | [docs/guide/user_guide_ko.html](docs/guide/user_guide_ko.html) |
-
-The PDFs are attached to every [release](https://github.com/HyoseokByun-opt/MPSim/releases) (the links above
-always open the latest) and are included in the offline package; they are not kept in the repository itself.
+| User guide | PDF |
+|---|---|
+| English, 162 pages | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) |
+| Korean, 151 pages | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) |
 
 Every simulation chapter explains how the property is measured in the laboratory, how the program computes it, how to
 read each number and rendering, and the assumptions behind it; chapter 32 works through two semiconductor-material
-problems from start to finish. The chapters are plain HTML in `docs/guide/parts_en` and `docs/guide/parts_ko`;
-`docs/guide/build.py` assembles them and `docs/guide/make_pdf.js` prints the PDFs.
+problems from start to finish. The guides are attached to every [release](https://github.com/HyoseokByun-opt/MPSim/releases) (the links above always open the
+latest) and are included, together with an HTML version, in the offline package.
 
 ## System requirements
 
@@ -292,7 +289,7 @@ app/
     data/                materials.json (52 materials), presets.json (16 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
-docs/                    user guides (PDF and HTML, English and Korean), chapter sources, README images
+docs/images/             the README's images (the user guides are attached to the releases)
 tools/                   build_offline.py, check_imports.py, make_download.py
 runtime/, wheels/        Python runtime, openEMS and wheels (offline package only, not in the repository)
 workspace/               results, kept across restarts (created at the first start)
