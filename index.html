@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPSim — Material Property Simulation · effective properties from the microstructure</title>
+<meta name="description" content="MPSim (Material Property Simulation) is an open-source tool that computes thermal, electrical, dielectric, mechanical, rheological and moisture properties of semiconductor materials from their 3D microstructure on voxel RVEs.">
+<meta name="keywords" content="MPSim, Material Property Simulation, RVE, representative volume element, homogenization, microstructure, digital materials, semiconductor packaging, thermal conductivity, moulding compound, underfill, thermal interface material, porous media">
+<meta name="author" content="Hyoseok Byun">
+<link rel="canonical" href="https://hyoseokbyun-opt.github.io/MPSim/">
+<!-- google-site-verification -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MPSim">
+<meta property="og:title" content="MPSim — Material Property Simulation">
+<meta property="og:description" content="Effective properties of semiconductor materials from their microstructure: generated, solved and visualised in the browser. Open source, MIT License.">
+<meta property="og:url" content="https://hyoseokbyun-opt.github.io/MPSim/">
+<meta property="og:image" content="https://hyoseokbyun-opt.github.io/MPSim/assets/social_preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "MPSim",
+  "alternateName": "Material Property Simulation",
+  "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
+  "applicationCategory": "ScientificApplication",
+  "operatingSystem": "Windows 10, Windows 11",
+  "softwareVersion": "5.0.1",
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://hyoseokbyun-opt.github.io/MPSim/",
+  "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
+  "codeRepository": "https://github.com/HyoseokByun-opt/MPSim",
+  "identifier": "https://doi.org/10.5281/zenodo.23120194",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+  "author": {"@type": "Person", "name": "Hyoseok Byun",
+             "sameAs": ["https://github.com/HyoseokByun-opt", "https://www.linkedin.com/in/hyoseok-byun-72992120a"]}
+}
+</script>
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f6f8fa; --card: #ffffff; --ink: #1f2328; --ink2: #57606a; --line: #d0d7de;
+    --accent: #0b62c4; --accent2: #0a53a8; --chip: #ddf4ff; --chipink: #0a3069; --code: #f6f8fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --bg2: #161b22; --card: #0d1117; --ink: #e6edf3; --ink2: #9198a1; --line: #30363d;
+            --accent: #4493f8; --accent2: #6aa8fa; --chip: #12263f; --chipink: #9ecbff; --code: #161b22; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.6;
+         font: 16px/1.6 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+  header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent);
+               backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  header.top .wrap { display: flex; align-items: center; gap: 18px; height: 60px; }
+  header.top img { height: 34px; display: block; }
+  nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; }
+  nav a { color: var(--ink2); }
+  nav a.gh { color: var(--ink); font-weight: 600; }
+  .hero { padding: 56px 0 28px; text-align: center; }
+  .hero h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.5px; }
+  .hero h1 span { color: var(--accent); }
+  .hero p.lead { font-size: clamp(17px, 2.2vw, 20px); color: var(--ink2); max-width: 760px; margin: 0 auto 26px; }
+  .btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 11px 20px; border-radius: 8px; font-weight: 600; border: 1px solid var(--line);
+         color: var(--ink); background: var(--bg2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:hover { text-decoration: none; filter: brightness(1.05); }
+  .meta { margin-top: 18px; color: var(--ink2); font-size: 14px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  figure { margin: 0; }
+  .banner { margin: 18px auto 0; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #fff; }
+  .banner img, .shot img { width: 100%; height: auto; display: block; }
+  section { padding: 56px 0 8px; }
+  section h2 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.3px; }
+  section p.sub { color: var(--ink2); margin: 0 0 24px; max-width: 820px; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .step, .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .step .n { display: inline-block; width: 28px; height: 28px; border-radius: 50%; background: var(--chip); color: var(--chipink);
+             font-weight: 700; text-align: center; line-height: 28px; margin-bottom: 8px; }
+  .step h3, .card h3 { margin: 0 0 6px; font-size: 18px; }
+  .step p, .card p { margin: 0; color: var(--ink2); font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card ul { margin: 8px 0 0; padding-left: 18px; color: var(--ink2); font-size: 15px; }
+  .card .tag { display: inline-block; font-size: 12px; font-weight: 600; color: var(--chipink); background: var(--chip);
+               border-radius: 999px; padding: 2px 10px; margin-bottom: 8px; }
+  .shot { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 8px; }
+  .stat { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; background: var(--bg2); }
+  .stat b { display: block; font-size: 26px; color: var(--accent); line-height: 1.2; }
+  .stat span { color: var(--ink2); font-size: 14px; }
+  .presets { columns: 2; column-gap: 32px; padding-left: 18px; color: var(--ink2); }
+  .presets li { break-inside: avoid; margin-bottom: 4px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .two > *, .grid > *, .steps > *, .stats > * { min-width: 0; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto;
+        font: 13.5px/1.5 Consolas, "SFMono-Regular", Menlo, monospace; margin: 10px 0 0; }
+  code { font-family: Consolas, "SFMono-Regular", Menlo, monospace; font-size: 0.92em; background: var(--code);
+         border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+  pre code { border: 0; padding: 0; background: none; }
+  .note { color: var(--ink2); font-size: 14px; }
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--ink2); font-size: 14px; }
+  footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; justify-content: space-between; }
+  @media (max-width: 860px) {
+    .steps, .grid, .two { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .presets { columns: 1; }
+    nav { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a href="#top" aria-label="MPSim home">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/logo_dark.png">
+        <img src="assets/logo_light.png" alt="MPSim — Material Property Simulation" width="113" height="34">
+      </picture>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#analyses">Analyses</a>
+      <a href="#verification">Verification</a>
+      <a href="#download">Download</a>
+      <a href="#cite">Cite</a>
+      <a class="gh" href="https://github.com/HyoseokByun-opt/MPSim">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <h1>MPSim <span>· Material Property Simulation</span></h1>
+    <p class="lead">Effective properties of semiconductor materials computed from their microstructure — the 3D structure is
+      generated, the physics is solved inside it, and you see where heat, current, stress and resin flow actually go.</p>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest">Download</a>
+      <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
+      <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
+    </div>
+    <div class="meta"><b>Version 5.0.1</b> · MIT License · Windows 10 / 11 ·
+      <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
+    <figure class="banner">
+      <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
+           alt="Eight renderings made with MPSim: a blend of spheres, platelets and fibres; heat flux in an AlN thermal interface material; current through percolating silver flakes; thermal stress in a silica moulding compound; field enhancement around BaTiO3; Stokes flow through porous alumina; its pore network; moisture flux in a moulding compound">
+    </figure>
+  </div>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="sub">MPSim puts the whole workflow of a digital-material study in one browser workspace. It runs on one PC, or on a
+        server that the rest of the network opens in a browser; no data leaves the machine.</p>
+      <div class="steps">
+        <div class="step"><span class="n">1</span><h3>Build the microstructure</h3>
+          <p>Fillers of any shape, size distribution and orientation, pores, coatings, hollow particles, multi-filler blends and
+          thin films, on a voxel representative volume element (RVE) whose size is checked against measured criteria.</p></div>
+        <div class="step"><span class="n">2</span><h3>Solve the physics</h3>
+          <p>Validated open-source solvers — periodic finite volume, FFT-accelerated voxel finite elements, NASA PuMA, PoreSpy and
+          openEMS — compute the effective tensors, with rigorous bounds alongside.</p></div>
+        <div class="step"><span class="n">3</span><h3>See inside</h3>
+          <p>Interactive 3D and 2D views of every field, animated field lines, publication figures, a single-file HTML report and
+          every number traceable to the method that produced it.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="analyses">
+    <div class="wrap">
+      <h2>Analyses</h2>
+      <p class="sub">Written for the materials of semiconductor packaging, devices and process equipment — moulding compounds,
+        underfills, thermal interface materials, conductive adhesives, dielectrics, EMI absorbers, porous ceramics and filters.</p>
+      <div class="grid">
+        <div class="card"><span class="tag">Conduction</span><h3>Thermal and electrical</h3>
+          <ul><li>Conductivity tensors, interfacial and contact resistance</li><li>Percolation of conductive fillers</li></ul></div>
+        <div class="card"><span class="tag">Electromagnetics</span><h3>Dielectric, magnetic, EMI</h3>
+          <ul><li>Dk, Df, field enhancement, permeability</li><li>Shielding effectiveness with a full-wave check</li></ul></div>
+        <div class="card"><span class="tag">Mechanics</span><h3>Elasticity and CTE</h3>
+          <ul><li>Stiffness, engineering constants, CTE tensor</li><li>Thermal stress; α1 / α2 above Tg</li></ul></div>
+        <div class="card"><span class="tag">Rheology</span><h3>Viscosity and flowability</h3>
+          <ul><li>Viscosity of uncured compounds, flow curves</li><li>Maximum packing, underfill filling time, settling</li></ul></div>
+        <div class="card"><span class="tag">Reliability</span><h3>Moisture</h3>
+          <ul><li>Moisture diffusivity and saturated uptake</li><li>Uptake curve of a part, hygroscopic swelling (CME)</li></ul></div>
+        <div class="card"><span class="tag">Porous media</span><h3>Flow, filtration, acoustics</h3>
+          <ul><li>Permeability, filtration efficiency, tortuosity</li><li>Acoustic absorption, radiative extinction</li></ul></div>
+        <div class="card"><span class="tag">Structure</span><h3>Morphology</h3>
+          <ul><li>Porosity, size distributions, porosimetry</li><li>Pore networks, grain statistics, percolation paths</li></ul></div>
+        <div class="card"><span class="tag">Inverse problems</span><h3>Calibration</h3>
+          <ul><li>Unknown material values from measurements</li><li>Credible intervals, identifiability, next measurement</li></ul></div>
+        <div class="card"><span class="tag">Studies</span><h3>DOE and optimisation</h3>
+          <ul><li>Factorial and Latin-hypercube studies</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="workspace">
+    <div class="wrap">
+      <h2>The workspace</h2>
+      <p class="sub">A ribbon that follows the order of a study, the inputs on the left, the 3D view, Result Viewer or report in the
+        centre, and what is drawn on the right.</p>
+      <figure class="shot"><img src="assets/screenshot.webp" width="2000" height="1167" loading="lazy"
+           alt="The MPSim workspace showing the heat flux on the particle surfaces of an AlN thermal interface material"></figure>
+    </div>
+  </section>
+
+  <section id="verification">
+    <div class="wrap">
+      <h2>Verification</h2>
+      <p class="sub">The engine is checked against problems whose answers are known, and every run reports its own checks —
+        RVE size, resolution, particle count, convergence and rigorous bounds — as passed, warning or failed, with the reason.</p>
+      <div class="stats">
+        <div class="stat"><b>54</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
+        <div class="stat"><b>16</b><span>ready-to-run presets for semiconductor materials</span></div>
+        <div class="stat"><b>52</b><span>materials in the library, all editable</span></div>
+      </div>
+      <h3 style="margin:30px 0 8px">Presets</h3>
+      <ul class="presets">
+        <li>EMC · epoxy + fused silica</li><li>Underfill · epoxy + silica</li><li>TIM · silicone + Al₂O₃ with interfacial resistance</li>
+        <li>TIM · epoxy + AlN</li>
+        <li>Thermal sheet · h-BN platelets</li><li>Conductive adhesive · Ag flakes</li>
+        <li>Sintered silver die attach</li><li>EMI shielding · Ni rods</li>
+        <li>Low-Dk · hollow silica</li><li>High-k · BaTiO₃</li><li>Low CTE · ZrW₂O₈</li><li>Porous low-k film</li>
+        <li>Porous ceramic · Al₂O₃</li><li>UPW membrane · PTFE</li><li>Sintered gas filter · SUS316L</li>
+        <li>Fibrous insulation · E-glass</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <h2>Download and install</h2>
+      <div class="two">
+        <div class="card"><h3>PC without internet</h3>
+          <p>Download <code>MPSim-…-offline-win64.zip</code> from the
+          <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest">latest release</a>. It carries the official Python
+          runtime, every wheel including NASA PuMA, and openEMS. Unzip to a short path such as <code>C:\MPSim</code>, run
+          <code>1_INSTALL_OFFLINE.bat</code>, then <code>2_RUN_LOCAL.bat</code>.</p></div>
+        <div class="card"><h3>PC with internet and conda</h3>
+          <pre><code>git clone https://github.com/HyoseokByun-opt/MPSim.git C:\MPSim
+cd C:\MPSim
+1_INSTALL.bat
+2_RUN_LOCAL.bat</code></pre></div>
+      </div>
+      <p class="note" style="margin-top:14px">User guides, 162 pages in English and 151 in Korean:
+        <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">English (PDF)</a> ·
+        <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf">Korean (PDF)</a>.
+        Every simulation chapter explains how the property is measured, how MPSim computes it and how to read the results.</p>
+    </div>
+  </section>
+
+  <section id="cite">
+    <div class="wrap">
+      <h2>Cite</h2>
+      <p class="sub">If you use MPSim in published work, please cite it together with the solvers that produced the results
+        (listed in the README).</p>
+      <pre><code>@software{byun_mpsim,
+  author    = {Byun, Hyoseok},
+  title     = {{MPSim: Material Property Simulation}},
+  version   = {5.0.1},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.23120194},
+  url       = {https://github.com/HyoseokByun-opt/MPSim}
+}</code></pre>
+      <h3 style="margin:30px 0 6px">Author</h3>
+      <p><b>Hyoseok Byun</b> — <a href="https://github.com/HyoseokByun-opt">GitHub</a> ·
+        <a href="https://www.linkedin.com/in/hyoseok-byun-72992120a">LinkedIn</a></p>
+      <p class="note"><b>Declaration of AI assistance.</b> The code, the verification tests and the user guides were written with the
+        assistance of Claude (Anthropic), an AI assistant, under the author's direction. The author reviewed and edited the output
+        and takes full responsibility for the content.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>MPSim · Material Property Simulation · MIT License</span>
+    <span>Built on NASA PuMA, PoreSpy, openEMS, scikit-rf, VTK / PyVista, NumPy and SciPy</span>
+  </div>
+</footer>
+</body>
+</html>
