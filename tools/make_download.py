@@ -22,7 +22,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "Download")
 TOP = [f for f in os.listdir(ROOT)
        if f.lower().endswith((".bat", ".md", ".txt", ".yml")) or f in ("LICENSE", "CITATION.cff")]
-SKIP_DIRS = {"__pycache__", ".pytest_cache", ".ipynb_checkpoints"}
+# app/logs: the solver logs a run started from app/ writes (run_cli.py)
+SKIP_DIRS = {"__pycache__", ".pytest_cache", ".ipynb_checkpoints", "logs"}
 SKIP_EXT = (".pyc", ".pyo", ".nbi", ".nbc")
 
 

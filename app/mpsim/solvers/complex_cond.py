@@ -304,16 +304,21 @@ def cap_contrast(labels, kap, direction, cap=1e6, cache=None):
     return kap, "dispersed"
 
 
-def spectrum(labels, table, freqs, directions=(0, 1), bc="periodic", tol=1e-7, should_stop=None, log=None):
+def spectrum(labels, table, freqs, directions=(0, 1), bc="periodic", tol=1e-7, should_stop=None, log=None,
+             pre=None):
     """kappa_eff(f) averaged over the given directions, at every frequency.
-    Returns (kappa array, list of per-frequency records)."""
+    Returns (kappa array, list of per-frequency records). pre: {(frequency
+    index, direction): result} solved beforehand in the job's pool."""
     out, recs = [], []
     cache = {}
-    for f in freqs:
+    pre = pre or {}
+    for i, f in enumerate(freqs):
         vals, pols, its = [], [], []
         for d in directions:
             kap, pol = cap_contrast(labels, admittivity(table, f), d, cache=cache)
-            r = solve(labels, kap, d, bc=bc, tol=tol, should_stop=should_stop)
+            r = pre.get((i, d))
+            if r is None:
+                r = solve(labels, kap, d, bc=bc, tol=tol, should_stop=should_stop)
             vals.append(r["kappa"])
             pols.append(pol)
             its.append(r["iterations"])

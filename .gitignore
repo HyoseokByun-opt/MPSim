@@ -15,8 +15,9 @@ __pycache__/
 /Release/
 /docs/*.pdf
 
-# results and local settings
+# results, solver logs and local settings
 /workspace/
+logs/
 settings.json
 .session_secret
 

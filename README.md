@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.0.1-0b62c4" alt="version 5.0.1">
+  <img src="https://img.shields.io/badge/version-5.1.0-0b62c4" alt="version 5.1.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -82,6 +82,10 @@ Its capabilities include:
   surrogate with credible intervals, and the next measurement that would add the most information.
 - **Studies.** DOE (full factorial, one factor at a time, Latin hypercube), Gaussian-process surrogates, Sobol sensitivity
   indices, single-objective optima and NSGA-II trade-off fronts.
+- **All cores in use.** Every solve that does not need another one — each property and direction, each Stokes and
+  diffusion direction, each EMI frequency, the structure analyses — runs side by side on the cores given to a run, within
+  the free memory, and several runs share the PC at once (a porous RVE with permeability, diffusion and the structure
+  analyses: 1231 s one after another, 693 s side by side on 8 cores).
 - **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as the solver's voxels, fields on
   the RVE faces and on XYZ sections, arrows, animated field lines and pore networks; publication figures rendered on the
   server (PyVista); a single-file HTML report for every run.
@@ -287,7 +291,7 @@ app/
     doe.py, optimise.py, calibrate.py        studies, surrogate models, calibration
     visual.py, report.py viewer data, publication figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (52 materials), presets.json (16 presets)
+    data/                materials.json (52 materials), presets.json (21 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README's images (the user guides are attached to the releases)
@@ -326,7 +330,7 @@ More cases are listed in appendix D of the user guide.
 If you use MPSim in published work, please cite the software (GitHub shows the citation under
 **Cite this repository**, from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.0.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.1.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

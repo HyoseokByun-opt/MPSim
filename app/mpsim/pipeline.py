@@ -382,8 +382,31 @@ def crank_plate(D, L, t):
     return np.clip(out, 0.0, 1.0)
 
 
+def _phase_groups(table, void_labels):
+    """(key, name, label ids) of the pore space and of every filler phase
+    (core with its shells), as the size and percolation analyses take them."""
+    groups = []
+    if void_labels:
+        groups.append(("pores", "Pores", list(void_labels)))
+    for li, t in enumerate(table):
+        if t["kind"] == "core" and li not in void_labels:
+            groups.append((f"phase{li}", t["name"],
+                           [li] + [j for j, u in enumerate(table) if u["kind"] == "shell" and u["phase"] == t["phase"]]))
+    return groups
+
+
+def _moisture_values(table):
+    """Density [kg/m3], D_w [m2/s], saturated concentration [kg/m3], CME and
+    the permeability P = D_w c_sat of every label."""
+    rho = np.array(S.label_values(table, "rho"), float) * 1e3
+    Dw = np.array([float(t["props"].get("D_w") or 0.0) for t in table])
+    cs = np.array([float(t["props"].get("c_sat") or 0.0) for t in table]) / 100.0 * rho
+    cme = np.array([float(t["props"].get("cme") or 0.0) for t in table])
+    return rho, Dw, cs, cme, Dw * cs
+
+
 def _moisture_solve(labels, table, spec, h_um, vf_labels, prog, log, event, should_stop, viewer, first,
-                    C_known=None):
+                    C_known=None, pre=None):
     """Water in the composite moves by the gradient of its activity a = c/c_sat,
     which is continuous across an interface even where the two materials
     take up different amounts. The conduction analogue therefore carries the
@@ -393,11 +416,7 @@ def _moisture_solve(labels, table, spec, h_um, vf_labels, prog, log, event, shou
     moisture mass fraction at saturation; the effective strain follows from
     the same thermo-elastic solve as the CTE with that eigenstrain."""
     from .solvers import fans as FA
-    rho = np.array(S.label_values(table, "rho"), float) * 1e3
-    Dw = np.array([float(t["props"].get("D_w") or 0.0) for t in table])
-    cs = np.array([float(t["props"].get("c_sat") or 0.0) for t in table]) / 100.0 * rho
-    cme = np.array([float(t["props"].get("cme") or 0.0) for t in table])
-    P = Dw * cs
+    rho, Dw, cs, cme, P = _moisture_values(table)
     if not P.max() > 0:
         raise ValueError("no region takes up water (D_w and c_sat are not set)")
     opts = spec["options"]
@@ -408,13 +427,16 @@ def _moisture_solve(labels, table, spec, h_um, vf_labels, prog, log, event, shou
     for d in dirs:
         di = "xyz".index(d)
         v_used, policy = CD.contrast_policy(labels, P / P.max(), di, opts["contrast_cap"], cache)
-        prog.stage(f"Moisture diffusion · {d} direction", f"periodic FV · contrast policy {policy}", units=0.5)
+        prog.stage(f"Moisture diffusion · {d} direction", f"periodic FV · contrast policy {policy}",
+                   units=0.0 if ("moisture", d) in (pre or {}) else 0.5)
         keep = first and viewer is not None and d == dirs[0]
 
         def cb(it, res, d=d):
             event("solver", name=f"Moisture {d}", it=it, res=res, target=opts["tol"], progress=None)
-        r = CD.solve_direction(labels, v_used, di, tol=opts["tol"], callback=cb, should_stop=should_stop,
-                               flux_h=(h_um * 1e-6) if keep else None, film=film)
+        r = (pre or {}).get(("moisture", d))
+        if r is None:
+            r = CD.solve_direction(labels, v_used, di, tol=opts["tol"], callback=cb, should_stop=should_stop,
+                                   flux_h=(h_um * 1e-6) if keep else None, film=film)
         Pd[di] = float(r["column"][di]) * P.max()
         stats.append({"direction": d, "policy": policy, **{k: r.get(k) for k in ("iterations", "residual",
                                                                                "converged", "seconds")}})
@@ -932,7 +954,8 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
         how = {"fv": "periodic FV", "fe": "PuMA periodic FE", "puma_fv": "PuMA FV"}[primary]
         if check:
             how += " + " + {"fv": "FV", "fe": "PuMA FE"}[check] + " check"
-        prog.stage(f"{info['title']} · {d} direction", f"{how} · contrast policy {policy}", units=1.0)
+        prog.stage(f"{info['title']} · {d} direction", f"{how} · contrast policy {policy}",
+                   units=0.0 if (key, d) in (pre or {}) else 1.0)
 
         def cb(tag, it, res, tgt, frac, d=d):
             event("solver", name=f"{info['title']} {d}", it=it, res=res, target=tgt,
@@ -1017,8 +1040,24 @@ def _grid(N, nz=None):
 EXTRAP_MAX = 0.10          # largest change on the finer grid that is extrapolated
 
 
+def _fine_grid(spec, ginfo, gen_phases, N, h, n_max):
+    """The same particles drawn on a 1.5x finer grid: {labels, N, h, nz}, or
+    the reason it cannot be drawn."""
+    Nf = int(round(1.5 * N / 2.0)) * 2
+    if n_max and Nf > n_max:
+        return f"the finer grid ({Nf}³) would exceed the grid limit {n_max}³"
+    hf = h * N / Nf
+    film = bool(ginfo.get("film"))
+    nzf = max(2, int(round(ginfo["T_um"] / hf))) if film else None
+    gen_f = GEN.rasterize(Nf, hf, ginfo, gen_phases, nz=nzf)
+    if gen_f is None:
+        return "a network phase cannot be redrawn on another grid"
+    labels_f, _, _ = build_labels(spec, gen_f, ginfo, hf)
+    return {"labels": labels_f, "N": Nf, "h": hf, "nz": nzf}
+
+
 def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_ratio, results, backend, log,
-                      should_stop, n_max):
+                      should_stop, n_max, pre=None, fine=None):
     """The conduction-type properties once more, on the same particles drawn on
     a 1.5x finer grid (first direction, same method). Returns
     {key: {direction, N, N_fine, base, fine, change, extrapolated}} or a
@@ -1034,18 +1073,13 @@ def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_rati
     further apart on the finer grid and lose contacts: 55 vol% of 250 nm
     spheres changed by -38 %, a different structure rather than a
     discretisation error, and the formula gave a negative conductivity."""
-    Nf = int(round(1.5 * N / 2.0)) * 2
-    if n_max and Nf > n_max:
-        return f"the finer grid ({Nf}³) would exceed the grid limit {n_max}³"
-    hf = h * N / Nf
+    fine = fine if fine is not None else _fine_grid(spec, ginfo, gen_phases, N, h, n_max)
+    if isinstance(fine, str):
+        return fine
+    labels_f, Nf, hf, nzf = fine["labels"], fine["N"], fine["h"], fine["nz"]
     film = bool(ginfo.get("film"))
     nz = ginfo.get("nz") if film else None
-    nzf = max(2, int(round(ginfo["T_um"] / hf))) if film else None
-    gen_f = GEN.rasterize(Nf, hf, ginfo, gen_phases, nz=nzf)
-    if gen_f is None:
-        return "a network phase cannot be redrawn on another grid"
-    labels_f, _, _ = build_labels(spec, gen_f, ginfo, hf)
-    del gen_f
+    pre = pre or {}
     d = spec["options"]["directions"][0]
     di = "xyz".index(d)
     primary = cond_backend(spec, backend).partition("+")[0]
@@ -1065,7 +1099,9 @@ def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_rati
             vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
         v_used, _ = CD.contrast_policy(labels_f, vals, di, spec["options"]["contrast_cap"], {})
         t0 = time.time()
-        if primary == "fv" or rpair is not None:
+        if ("res:" + key, d) in pre:
+            kf = pre[("res:" + key, d)]["k_eff"]
+        elif primary == "fv" or rpair is not None:
             kf = CD.solve_direction(labels_f, v_used, di, tol=spec["options"]["tol"], rpair=rpair,
                                     should_stop=should_stop, film=film)["k_eff"]
         else:
@@ -1173,16 +1209,26 @@ def _cond_fields(key, viewer, labels, table, vals, pot, flux, d, h_um, with_vect
 # thermo-elasticity
 # =========================================================================
 def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio, contact_mask, first,
-              log, should_stop, log_dir, event=None):
+              log, should_stop, log_dir, event=None, flow=None, prog=None, struct=None, rcheck=None):
     """Run the independent solves of this realisation side by side.
 
-    Conduction-type properties x directions and the seven elastic load cases do
-    not depend on each other. They are dispatched together to a process pool
-    and the results handed to the unchanged sequential post-processing, which
-    then finds every solve already done. Returns ({(key, d): result},
-    {load: (Ceff, s, t, stats)}); empty when parallel solves are off, when
-    there is only one problem or when only one worker fits in memory.
+    Everything that does not depend on another solve goes into one pool: the
+    conduction-type properties x directions, PuMA's seven elastic load cases,
+    the moisture diffusion of each direction, the Stokes and the diffusion
+    solve of each direction in the open pores, the EMI admittivity at each
+    frequency and direction, and the ray casting. A heavy solve that keeps
+    one core busy (a Stokes direction) and light ones (FV conduction) run at
+    once on the cores of the job; each starts when its memory fits beside the
+    ones running. The stages that follow then find their solves done.
+    Returns ({key: result}, {load: (Ceff, s, t, stats)}); empty when parallel
+    solves are off, when there is only one problem or when only one worker
+    fits in memory - the stages then solve in turn.
+    flow: {"labels", "void", "open"} of the open pore space, or None.
+    struct: {"ginfo", "void"} for the structure analyses of the first
+    realisation, or None. rcheck: {"fine": the finer grid} when the
+    resolution check runs, or None.
     """
+    from .solvers import complex_cond as CC
     opts = spec["options"]
     if opts.get("parallel_solves", "auto") == "off":
         return {}, {}
@@ -1191,7 +1237,28 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
     except ValueError:
         threads = 0
     threads = threads or max(1, (os.cpu_count() or 4) // 4)
+    dirs = opts["directions"]
+    n_vox = int(labels.size)
+    mem_est = R.memory_estimate(labels.shape[0], set(need) | {"thermal"}, nz=labels.shape[2])
+    # memory of one solve of each kind, GB: rve.memory_estimate per voxel,
+    # Stokes from a measurement (PuMA's matrix-free solve held 0.64 GB on an
+    # 80^3 RVE, ~1.25 kB per voxel; the planner's 2.3 kB is its upper bound)
+    mem_of = {"fv": mem_est.get("conduction", n_vox * 230 / 1e9), "fe": mem_est.get("conduction", n_vox * 230 / 1e9),
+              "elastic": n_vox * (3 * 24 * 8 * 4 + 240) / 1e9, "stokes": n_vox * 1300 / 1e9,
+              "tort": n_vox * 230 / 1e9, "emi": n_vox * 2 * 230 / 1e9, "radiation": n_vox * 16 / 1e9}
+    for k in ("morph", "perc", "poros", "network", "grains"):
+        mem_of[k] = n_vox * 100 / 1e9
+    # the progress units the stages after the batch would have used for the
+    # same work (they find it done and take none)
+    units_of = {"fv": 1.0, "fe": 1.0, "elastic": 0.0, "stokes": 2.0, "tort": 0.5, "emi": 0.0, "radiation": 0.5,
+                "morph": 1.0, "perc": 1.0, "poros": 1.0, "network": 1.0, "grains": 1.0}
     tasks = []
+
+    def add(fn, kind, t, units=None):
+        t["_kind"] = kind
+        t["mem_gb"] = mem_of[kind]
+        t["_units"] = units_of[kind] if units is None else units
+        tasks.append((fn, t))
     for key in COND:
         if key not in need:
             continue
@@ -1204,63 +1271,197 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
         be = "fv" if (rpair is not None or rcpair is not None) else cond_backend(spec, backend)
         film_run = bool(spec["rve"].get("film"))
         cache = {}
-        for d in opts["directions"]:
+        for d in dirs:
             v_used, _ = CD.contrast_policy(labels, vals, "xyz".index(d), opts["contrast_cap"], cache)
-            tasks.append((PAR.cond_task, {"key": key, "d": d, "kind": COND[key]["kind"], "backend": be,
-                                          "name": f"{COND[key]['title']} {d}",
-                                          "vals": np.asarray(v_used, float), "voxel_m": h * 1e-6, "tol": opts["tol"],
-                                          "fields": bool(first), "rpair": rpair, "rcpair": rcpair,
-                                          "cmask": "use" if (rcpair is not None and contact_mask is not None) else None,
-                                          "film": film_run}))
+            add(PAR.cond_task, "fe" if "fe" in be.split("+") else "fv",
+                {"key": key, "d": d, "kind": COND[key]["kind"], "backend": be,
+                 "name": f"{COND[key]['title']} {d}",
+                 "vals": np.asarray(v_used, float), "voxel_m": h * 1e-6, "tol": opts["tol"],
+                 "fields": bool(first), "rpair": rpair, "rcpair": rcpair,
+                 "cmask": "use" if (rcpair is not None and contact_mask is not None) else None,
+                 "film": film_run})
     if "cte" in need and backend in ("puma", "puma_fv") and opts.get("elastic_method", "fans") == "puma":
         keep = ("free" if opts.get("thermal_bc") == "free" else "th") if first else None
         tol = 1e-5 if spec["rve"]["quality"] == "fast" else 1e-6
         for load in ("x", "y", "z", "yz", "xz", "xy", "th"):
-            tasks.append((PAR.elastic_task, {"load": load, "E": S.label_values(table, "E"),
-                                             "name": f"Elastic load {load}",
-                                             "nu": S.label_values(table, "nu"), "alpha": S.label_values(table, "alpha"),
-                                             "voxel_m": h * 1e-6, "tol": tol,
-                                             "fields": keep == "free" or (keep == "th" and load == "th")}))
+            add(PAR.elastic_task, "elastic",
+                {"load": load, "E": S.label_values(table, "E"), "name": f"Elastic load {load}",
+                 "nu": S.label_values(table, "nu"), "alpha": S.label_values(table, "alpha"),
+                 "voxel_m": h * 1e-6, "tol": tol,
+                 "fields": keep == "free" or (keep == "th" and load == "th")})
+    # moisture: the activity of each direction, solved as conduction
+    if "moisture" in need:
+        P = _moisture_values(table)[4]
+        if P.max() > 0:
+            cache = {}
+            for d in dirs:
+                v_used, _ = CD.contrast_policy(labels, P / P.max(), "xyz".index(d), opts["contrast_cap"], cache)
+                add(PAR.cond_task, "fv",
+                    {"key": "moisture", "d": d, "kind": "thermal", "backend": "fv", "name": f"Moisture {d}",
+                     "vals": np.asarray(v_used, float), "voxel_m": h * 1e-6, "tol": opts["tol"],
+                     "fields": bool(first) and d == dirs[0], "rpair": None, "rcpair": None, "cmask": None,
+                     "film": bool(spec["rve"].get("film"))}, units=0.5)
+    # the open pore space: Stokes and diffusion of each direction
+    if flow is not None and flow.get("labels") is not None:
+        wr = CD.wrapping_axes(flow["open"])
+        for d in dirs:
+            if not wr["xyz".index(d)]:
+                continue
+            if "permeability" in need:
+                add(PAR.stokes_task, "stokes", {"d": d, "void": flow["void"], "voxel_m": h * 1e-6, "tol": opts["tol"],
+                                                "name": f"Stokes flow {d}", "_flow": True})
+            if "tortuosity" in need:
+                add(PAR.tort_task, "tort", {"d": d, "void": flow["void"], "voxel_m": h * 1e-6, "tol": opts["tol"],
+                                            "name": f"Diffusion {d}", "fields": bool(first), "_flow": True})
+    # EMI: the complex admittivity at every frequency and in-plane direction
+    emi_pol = {}
+    if first and "emi" in need and opts["emi"].get("method", "complex") == "complex":
+        eo = opts["emi"]
+        freqs = np.logspace(math.log10(eo["f_min_hz"]), math.log10(eo["f_max_hz"]), int(eo["n_freq"]))
+        ebc = "film" if spec["rve"].get("film") else "periodic"
+        cache = {}
+        for i, fq in enumerate(freqs):
+            for d in (0, 1):
+                kap, pol = CC.cap_contrast(labels, CC.admittivity(table, fq), d, cache=cache)
+                emi_pol[(i, d)] = pol
+                add(PAR.emi_task, "emi", {"i": i, "d": d, "kap": kap, "bc": ebc, "tol": min(opts["tol"], 1e-7),
+                                          "name": f"EMI {fq:.3g} Hz {'xyz'[d]}"}, units=1.0 / (2 * len(freqs)))
+    # the structure analyses of the first realisation
+    if first and struct is not None:
+        void = list(struct.get("void") or [])
+        groups = _phase_groups(table, void)
+        if "morphology" in need:
+            for gkey, gname, ids in groups:
+                add(PAR.struct_task, "morph", {"what": "morph", "gkey": gkey, "ids": ids, "h": h, "fields": True,
+                                               "name": f"Size distributions {gname}"})
+        if "percolation" in need:
+            for gkey, gname, ids in groups:
+                add(PAR.struct_task, "perc", {"what": "perc", "gkey": gkey, "ids": ids, "h": h, "dirs": dirs,
+                                              "full": gkey != "pores", "fields": True,
+                                              "name": f"Percolation {gname}"})
+        if "porosimetry" in need and void:
+            po = opts["porosimetry"]
+            add(PAR.struct_task, "poros", {"what": "poros", "void": void, "h": h, "gamma": po["surface_tension_N_m"],
+                                           "theta": po["contact_angle_deg"], "steps": po["steps"], "dirs": dirs,
+                                           "name": "Porosimetry"})
+        if "pore_network" in need and void:
+            add(PAR.struct_task, "network", {"what": "network", "void": void, "h": h, "name": "Pore network"})
+        if "grains" in need:
+            add(PAR.struct_task, "grains", {"what": "grains", "h": h, "spec": spec, "ginfo": struct["ginfo"],
+                                            "table": table, "name": "Grain statistics"})
+    # the resolution check: the first direction of each conduction property
+    # on the finer grid
+    if rcheck is not None and isinstance(rcheck.get("fine"), dict):
+        fine = rcheck["fine"]
+        d0 = dirs[0]
+        primary = cond_backend(spec, backend).partition("+")[0]
+        for key in COND:
+            if key not in need:
+                continue
+            rpair = rcpair = None
+            if key == "thermal":
+                vals = thermal_values(spec, gas_factor)
+                rpair, rcpair = thermal_interfaces(spec, fine["h"], area_ratio)
+                if rcpair is not None:
+                    continue
+            else:
+                vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
+            v_used, _ = CD.contrast_policy(fine["labels"], vals, "xyz".index(d0), opts["contrast_cap"], {})
+            be = "fv" if (primary == "fv" or rpair is not None) else primary
+            add(PAR.cond_task, "fe" if be == "fe" else "fv",
+                {"key": "res:" + key, "d": d0, "kind": COND[key]["kind"], "backend": be,
+                 "name": f"Resolution check {COND[key]['title']} {d0}",
+                 "vals": np.asarray(v_used, float), "voxel_m": fine["h"] * 1e-6, "tol": opts["tol"],
+                 "fields": False, "rpair": rpair, "rcpair": None, "cmask": None,
+                 "film": bool(spec["rve"].get("film")), "_fine": True},
+                units=1.0 / max(1, sum(1 for k in COND if k in need)))
+            tasks[-1][1]["mem_gb"] = mem_of["fv"] * fine["labels"].size / max(n_vox, 1)
+    if first and "radiation" in need and flow is not None and flow.get("void"):
+        ro = opts["radiation"]
+        add(PAR.radiation_task, "radiation", {"void": flow["void"], "voxel_m": h * 1e-6,
+                                              "sources": ro["sources"], "rays": ro["rays"], "name": "Ray casting"})
     if len(tasks) < 2:
         return {}, {}
-    # longest first: an elastic load case costs several conduction solves, and
-    # a pool that takes them last finishes on one busy worker
-    tasks.sort(key=lambda t: 0 if t[0] is PAR.elastic_task else 1)
-    mem = R.memory_estimate(labels.shape[0], set(need), nz=labels.shape[2])
-    per = max([v for k, v in mem.items() if k.startswith(("conduction", "thermo"))] or [0.1])
-    w_mem = PAR.plan_workers(threads, len(tasks), per)
-    costs = [PAR.TASK_COST["elastic"] if fn is PAR.elastic_task else
-             sum(PAR.TASK_COST["fe" if m == "fe" else "fv"] for m in t.get("backend", "fv").split("+"))
-             for fn, t in tasks]
-    workers, th_each = PAR.plan_split(threads, costs, w_mem)
+    # longest first: a Stokes direction or an elastic load case costs many
+    # conduction solves, and a pool that takes them last finishes on one
+    # busy worker
+    tasks.sort(key=lambda t: -PAR.TASK_COST[t[1]["_kind"]])
+    costs = [PAR.TASK_COST[t["_kind"]] for _, t in tasks]
+    pars = [PAR.TASK_PAR[t["_kind"]] for _, t in tasks]
+    # as many workers as the lightest solve allows; the admission below keeps
+    # the heavy ones within the free memory
+    w_mem = PAR.plan_workers(threads, len(tasks), min(t["mem_gb"] for _, t in tasks))
+    workers, th_each = PAR.plan_split(threads, costs, w_mem, pars)
     if workers < 2:
-        why = (f"only one worker fits in memory (~{per:.2f} GB per solve)" if w_mem < 2 else
+        heavy = max(t["mem_gb"] for _, t in tasks)
+        why = (f"only one worker fits in memory (~{heavy:.2f} GB for the largest solve)" if w_mem < 2 else
                f"one solve at a time on all {threads} cores finishes first")
         log(f"    parallel solves: {why}; solving in turn")
         return {}, {}
+    # the solves running at once must fit in the memory free now; the idle
+    # workers' own memory (~0.1-0.2 GB each, measured) is already counted in
+    # what the system reports once the pool is up
+    try:
+        import psutil
+        budget = 0.9 * psutil.virtual_memory().available / 2 ** 30
+    except Exception:                                                  # noqa: BLE001
+        budget = None
     pool = box.get("pool")
     if pool is None or pool.workers != workers or pool.threads_each != th_each:
         if pool is not None:
             pool.close()
         pool = box["pool"] = PAR.SolvePool(workers, th_each, log_dir)
     lab_path = pool.share(labels)
+    flow_path = pool.share(flow["labels"], "flow") if any(t.get("_flow") for _, t in tasks) else None
+    fine_path = pool.share(rcheck["fine"]["labels"], "fine") if any(t.get("_fine") for _, t in tasks) else None
     cm_path = pool.share(contact_mask.astype(np.uint8), "cmask") if contact_mask is not None else None
     for _, t in tasks:
-        t["labels"], t["tmp"] = lab_path, pool.tmp
-        t["cmask"] = cm_path if t.get("cmask") == "use" else None
-    log(f"    parallel solves: {len(tasks)} independent problems on {workers} workers × {th_each} thread(s)"
+        t["labels"] = flow_path if t.get("_flow") else fine_path if t.get("_fine") else lab_path
+        t["tmp"] = pool.tmp
+        if "cmask" in t:
+            t["cmask"] = cm_path if t.get("cmask") == "use" else None
+    kinds = {}
+    for _, t in tasks:
+        kinds[t["_kind"]] = kinds.get(t["_kind"], 0) + 1
+    names = {"fv": "FV", "fe": "FE", "elastic": "elastic loads", "stokes": "Stokes", "tort": "diffusion",
+             "emi": "EMI", "radiation": "ray casting", "morph": "size distributions", "perc": "percolation",
+             "poros": "porosimetry", "network": "pore network", "grains": "grain statistics"}
+    log(f"    parallel solves: {len(tasks)} independent problems ("
+        + ", ".join(f"{n} {names[k]}" for k, n in kinds.items()) + f") on {workers} workers × {th_each} thread(s)"
         + (f" (memory allows {w_mem})" if w_mem < min(threads, len(tasks)) else ""))
     t0 = time.time()
+    batch_units = sum(t["_units"] for _, t in tasks)
+    units_done = [0.0]
+    stage_name = "Independent solves side by side"
+    stage_detail = f"{len(tasks)} problems on {workers} workers × {th_each} thread(s)"
+    if prog is not None:
+        prog.stage(stage_name, stage_detail, units=batch_units)
 
     def done(res, i, n):
-        what = f"{res['key']} {res['d']}" if "key" in res else f"elastic load {res['load']}"
-        sec = res.get("r", {}).get("worker_seconds") or (res.get("stats") or {}).get("seconds") or 0.0
+        units_done[0] += res.pop("_units", 0.0)
+        if prog is not None and event is not None:
+            event("stage", name=stage_name, detail=f"{stage_detail} · {i}/{n} done",
+                  progress=prog.sub(units_done[0] / batch_units if batch_units else 1.0))
+        if "failed" in res:
+            log(f"      {i}/{n} {res.get('name') or 'a solve'} failed in the batch ({res['failed']}); "
+                f"its stage solves it again")
+            return
+        kind = res.get("kind")
+        what = (f"{res['key']} {res['d']}" if "key" in res else f"elastic load {res['load']}" if "load" in res
+                else f"Stokes {res['d']}" if kind == "stokes" else f"diffusion {res['d']}" if kind == "tort"
+                else f"EMI {res['i']}/{'xyz'[res['d']]}" if kind == "emi"
+                else f"{res['what']} {res.get('gkey') or ''}".strip() if kind == "struct" else str(kind))
+        sec = (res.get("r", {}).get("worker_seconds") or res.get("r", {}).get("seconds")
+               or (res.get("stats") or {}).get("seconds") or 0.0)
         log(f"      {i}/{n} {what} ({sec:.1f} s)")
+
     def progressed(name, it, res, tgt):
         if event is not None:
             event("solver", name=name, it=it, res=res, target=tgt)
-    out = pool.run(tasks, should_stop=should_stop, on_done=done, on_progress=progressed)
+    out = pool.run(tasks, should_stop=should_stop, on_done=done, on_progress=progressed, budget_gb=budget)
     log(f"    parallel solves finished in {time.time() - t0:.1f} s")
+    if prog is not None:
+        prog.end()
 
     def take(path):
         if not path:
@@ -1271,18 +1472,51 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
         except OSError:
             pass
         return a
-    pre_cond, pre_el = {}, {}
+    pre, pre_el = {}, {}
     for res in out:
+        if res is None or "failed" in res:
+            continue
+        kind = res.get("kind")
         if "key" in res:
             r = res["r"]
             for k, pk in (("T", "T_path"), ("q", "q_path"), ("u", "u_path")):
                 a = take(res.get(pk))
                 if a is not None:
                     r[k] = a
-            pre_cond[(res["key"], res["d"])] = r
-        else:
+            pre[(res["key"], res["d"])] = r
+        elif "load" in res:
             pre_el[res["load"]] = (res["Ceff"], take(res.get("s_path")), take(res.get("t_path")), res["stats"])
-    return pre_cond, pre_el
+        elif kind == "stokes":
+            pre[("stokes", res["d"])] = {"K": res["K"], "stats": res["stats"],
+                                         "u": [take(p) for p in res["u_paths"]]}
+        elif kind == "tort":
+            r = dict(res["r"])
+            r["C"] = take(res.get("C_path"))
+            pre[("tort", res["d"])] = r
+        elif kind == "emi":
+            pre[("emi", res["i"], res["d"])] = {**res["r"], "policy": emi_pol.get((res["i"], res["d"]))}
+        elif kind == "radiation":
+            pre[("radiation",)] = res["r"]
+        elif kind == "struct":
+            for line in res.get("lines") or []:
+                log(line)
+            r = {"res": res["res"]}
+            for k in ("lt_path", "field_path"):
+                if res.get(k):
+                    r[k[:-5]] = take(res[k])
+            if res.get("field_paths"):
+                r["fields"] = {k: take(p) for k, p in res["field_paths"].items()}
+            if "view" in res:
+                r["view"] = res["view"]
+            pre[(res["what"], res.get("gkey"))] = r
+    # the workers keep their imports and allocator pools; the stages after the
+    # batch (FANS elasticity on all the job's cores) need that memory back. A
+    # later realisation starts a new pool (a few seconds).
+    try:
+        pool.close()
+    finally:
+        box.pop("pool", None)
+    return pre, pre_el
 
 
 def _elastic_solve(labels, table, spec, h_um, backend, prog, log, event, should_stop, viewer, first,
@@ -2090,10 +2324,32 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             log(f"    Knudsen: pore diameter {d_pore*1e6:.4g} µm, Kn = {kn['knudsen_number']:.3g}, "
                 f"gas conductivity × {gas_factor:.3f}")
 
+        # ---- flow and diffusion use the open porosity only ---------------
+        flow_labels = None
+        if need & {"permeability", "tortuosity", "acoustics"}:
+            flow_labels = labels.copy()
+            flow_labels[void_mask & ~open_mask] = 0
+        pore_open = open_mask
+
+        # ---- the resolution check's finer grid, drawn once, before the batch
+        rc_fine = None
+        rc_mode = opts.get("resolution_check", "auto")
+        if first and any(k in need for k in COND) and (
+                rc_mode == "on" or (rc_mode == "auto" and ginfo.get("touching_pairs", 0) > 0)):
+            try:
+                rc_fine = _fine_grid(spec, ginfo, gen_phases, N, h,
+                                     int((limits or {}).get("N_max", R.DEFAULT_LIMITS["N_max"]) or 0))
+            except Exception as e:                                       # noqa: BLE001
+                rc_fine = f"the finer grid could not be drawn: {e}"
+
         # ---- independent solves, side by side ----------------------------
         pre_cond, pre_el = _prefetch(pool_box, need, labels, table, spec, h, backend, gas_factor, area_ratio,
                                      contact_mask, first, log, should_stop, os.path.join(out_dir, "logs"),
-                                     event=event)
+                                     event=event,
+                                     flow={"labels": flow_labels, "void": void_labels, "open": pore_open}
+                                     if void_labels else None,
+                                     prog=prog, struct={"ginfo": ginfo, "void": void_labels} if first else None,
+                                     rcheck={"fine": rc_fine} if isinstance(rc_fine, dict) else None)
 
         # ---- conduction-type properties ----------------------------------
         for key in COND:
@@ -2127,10 +2383,12 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             edirs = (0, 1)
             ebc = "film" if film else "periodic"
             prog.stage("EMI · complex admittivity",
-                       f"{len(freqs)} frequencies × {len(edirs)} in-plane direction(s), sigma + j w eps", units=1.0)
+                       f"{len(freqs)} frequencies × {len(edirs)} in-plane direction(s), sigma + j w eps",
+                       units=0.0 if any(k[0] == "emi" for k in pre_cond) else 1.0)
             log(f"    EMI: the RVE solved with complex admittivity at {len(freqs)} frequencies (x and y, {ebc})")
             kap, recs = CC.spectrum(labels, table, freqs, directions=edirs, bc=ebc, tol=min(opts["tol"], 1e-7),
-                                    should_stop=should_stop, log=log)
+                                    should_stop=should_stop, log=log,
+                                    pre={k[1:]: v for k, v in pre_cond.items() if k[0] == "emi"})
             res_r["emi_complex"] = {"freq_hz": freqs.tolist(), "kappa_re": kap.real.tolist(),
                                     "kappa_im": kap.imag.tolist(), "records": recs,
                                     "directions": ["xyz"[d] for d in edirs], "bc": ebc}
@@ -2157,9 +2415,12 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         cond_keys = [k for k in COND if k in need and k in res_r]
         if first and cond_keys and (rc_mode == "on" or (rc_mode == "auto" and ginfo.get("touching_pairs", 0) > 0)):
             why = "particles touch at voxel level" if rc_mode == "auto" else "requested"
-            prog.stage("Resolution check", f"the same structure on a 1.5× finer grid ({why})", units=1.0)
+            prog.stage("Resolution check", f"the same structure on a 1.5× finer grid ({why})",
+                       units=0.0 if any(str(k[0]).startswith("res:") for k in pre_cond) else 1.0)
             rc = _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_ratio, res_r, backend,
-                                   log, should_stop, int((limits or {}).get("N_max", R.DEFAULT_LIMITS["N_max"]) or 0))
+                                   log, should_stop, int((limits or {}).get("N_max", R.DEFAULT_LIMITS["N_max"]) or 0),
+                                   pre=pre_cond, fine=rc_fine)
+            rc_fine = None
             prog.end()
             if isinstance(rc, str):
                 log(f"    resolution check not run: {rc}")
@@ -2267,16 +2528,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if "moisture" in need:
             res_r["moisture"] = _moisture_solve(labels, table, spec, h, vf_labels, prog, log, event, should_stop,
                                                 viewer if first else None, first,
-                                                C_known=(res_r.get("cte") or {}).get("C"))
+                                                C_known=(res_r.get("cte") or {}).get("C"), pre=pre_cond)
             event("partial", key="moisture", value=_clean([res_r["moisture"]["wt_pct"]]))
             live("moisture")
-
-        # ---- flow and diffusion use the open porosity only ---------------
-        flow_labels = None
-        if need & {"permeability", "tortuosity", "acoustics"}:
-            flow_labels = labels.copy()
-            flow_labels[void_mask & ~open_mask] = 0
-        pore_open = open_mask
 
         if "permeability" in need:
             wr = CD.wrapping_axes(pore_open)
@@ -2285,7 +2539,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             u_filt = None
             for d in dirs:
                 di = "xyz".index(d)
-                prog.stage(f"Permeability · {d} direction", "NASA PuMA Stokes FE", units=2.0)
+                prog.stage(f"Permeability · {d} direction", "NASA PuMA Stokes FE",
+                           units=0.0 if ("stokes", d) in pre_cond else 2.0)
                 if not wr[di]:
                     log(f"    no connected pore path along {d}: permeability = 0")
                     prog.end()
@@ -2293,13 +2548,20 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
 
                 def cbp(tag, it, res, tgt, frac, d=d):
                     event("solver", name=f"Stokes flow {d}", it=it, res=res, target=tgt, progress=prog.sub(frac))
-                pr = PB.permeability(flow_labels, void_labels, h_m, d, tol=opts["tol"],
-                                     progress=cbp, should_stop=should_stop)
-                Kt[:, di] = pr["K"][:, di] if pr["K"].ndim == 2 else pr["K"]
-                comps = [np.asarray(c, float) for c in pr["u"] if c is not None]
-                if comps and comps[0].ndim == 4:
-                    comps = [comps[0][..., k] for k in range(comps[0].shape[-1])]
-                st = {"seconds": pr["seconds"], "iterations": pr["iterations"], "converged": pr["converged"]}
+                pre_s = pre_cond.get(("stokes", d))
+                if pre_s is not None:
+                    # solved in the pool, side by side with the other directions
+                    Kmat, comps, st = pre_s["K"], [c for c in pre_s["u"] if c is not None], dict(pre_s["stats"])
+                else:
+                    pr = PB.permeability(flow_labels, void_labels, h_m, d, tol=opts["tol"],
+                                         progress=cbp, should_stop=should_stop)
+                    Kmat = pr["K"]
+                    comps = [np.asarray(c, float) for c in pr["u"] if c is not None]
+                    if comps and comps[0].ndim == 4:
+                        comps = [comps[0][..., k] for k in range(comps[0].shape[-1])]
+                    st = {"seconds": pr["seconds"], "iterations": pr["iterations"], "converged": pr["converged"]}
+                    del pr
+                Kt[:, di] = Kmat[:, di] if Kmat.ndim == 2 else Kmat
                 if len(comps) == 3 and comps[0].shape == labels.shape:
                     speed = np.sqrt(comps[0] ** 2 + comps[1] ** 2 + comps[2] ** 2)
                     u_d = float(comps[di][pore_open].mean())
@@ -2319,7 +2581,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                     if first and d == dirs[0] and "filtration" in need:
                         u_filt = np.stack(comps, axis=-1)   # carried into the filtration stage
                     del speed
-                del comps, pr
+                del comps
                 flow_stats[d] = st
                 log(f"    permeability {d}: {Kt[di, di]:.4g} m² ({st['seconds']:.1f} s)")
                 prog.end()
@@ -2380,12 +2642,15 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if "tortuosity" in need:
             tt = {}
             for d in dirs:
-                prog.stage(f"Diffusion · {d} direction", "NASA PuMA continuum tortuosity", units=0.5)
+                prog.stage(f"Diffusion · {d} direction", "NASA PuMA continuum tortuosity",
+                           units=0.0 if ("tort", d) in pre_cond else 0.5)
 
                 def cbt(tag, it, res, tgt, frac, d=d):
                     event("solver", name=f"Diffusion {d}", it=it, res=res, target=tgt, progress=prog.sub(frac))
-                tr = PB.tortuosity(flow_labels, void_labels, h_m, d, tol=opts["tol"],
-                                   progress=cbt, should_stop=should_stop)
+                tr = pre_cond.get(("tort", d))
+                if tr is None:
+                    tr = PB.tortuosity(flow_labels, void_labels, h_m, d, tol=opts["tol"],
+                                       progress=cbt, should_stop=should_stop)
                 tt[d] = {k: tr[k] for k in ("tortuosity", "d_eff", "porosity", "seconds", "converged")}
                 tt[d]["formation_factor"] = 1.0 / tr["d_eff"] if tr["d_eff"] > 0 else None
                 if first and viewer is not None:
@@ -2442,9 +2707,11 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             live("acoustics")
         if first and "radiation" in need:
             ro = opts["radiation"]
-            prog.stage("Radiative extinction", f"NASA PuMA ray casting · {ro['sources']} sources × {ro['rays']} rays", units=0.5)
+            prog.stage("Radiative extinction", f"NASA PuMA ray casting · {ro['sources']} sources × {ro['rays']} rays",
+                       units=0.0 if ("radiation",) in pre_cond else 0.5)
             try:
-                rr = PB.radiation(labels, void_labels, h_m, ro["sources"], ro["rays"], should_stop)
+                rr = pre_cond.get(("radiation",)) or PB.radiation(labels, void_labels, h_m, ro["sources"], ro["rays"],
+                                                                   should_stop)
                 beta = float(np.mean(rr["beta_1pm"]))
                 area, sv = PB.surface_area(labels, void_labels, h_m)
                 phi_v = float(void_mask.mean())
@@ -2476,26 +2743,26 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if first and "radiation" in need:
             live("radiation")
         if first and "morphology" in need:
-            prog.stage("Porosity and size distributions", "PoreSpy · NASA PuMA", units=1.0)
+            groups = _phase_groups(table, void_labels)
+            prog.stage("Porosity and size distributions", "PoreSpy · NASA PuMA",
+                       units=0.0 if any(("morph", g[0]) in pre_cond for g in groups) else 1.0)
             morph = {}
-            groups = []
-            if void_labels:
-                groups.append(("pores", "Pores", void_labels))
-            for li, t in enumerate(table):
-                if t["kind"] == "core" and li not in void_labels:
-                    groups.append((f"phase{li}", t["name"], [li] + [j for j, u in enumerate(table)
-                                                                  if u["kind"] == "shell" and u["phase"] == t["phase"]]))
             for gkey, gname, ids in groups:
                 if should_stop is not None and should_stop():
                     raise InterruptedError
                 try:
-                    mres, lt = MO.analyse_phase(labels, ids, h)
-                    try:
-                        area, sv = PB.surface_area(labels, ids, h_m)
-                        mres["surface_area_m2"], mres["specific_surface_1pm"] = area, sv
-                        mres["mean_intercept_length_um"] = [v * 1e6 for v in PB.mean_intercept_length(labels, ids, h_m)]
-                    except Exception as e:                           # noqa: BLE001
-                        mres["surface_error"] = str(e)
+                    pm_ = pre_cond.get(("morph", gkey))
+                    if pm_ is not None:
+                        mres, lt = pm_["res"], pm_.get("lt")
+                    else:
+                        mres, lt = MO.analyse_phase(labels, ids, h)
+                        try:
+                            area, sv = PB.surface_area(labels, ids, h_m)
+                            mres["surface_area_m2"], mres["specific_surface_1pm"] = area, sv
+                            mres["mean_intercept_length_um"] = [v * 1e6 for v in
+                                                                PB.mean_intercept_length(labels, ids, h_m)]
+                        except Exception as e:                       # noqa: BLE001
+                            mres["surface_error"] = str(e)
                     if lt is not None and viewer is not None:
                         viewer.add_field(f"lt_{gkey}", lt * h, f"Local thickness ({gname})", "µm", "Structure")
                     morph[gkey] = {"name": gname, **mres}
@@ -2513,24 +2780,23 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             live("morphology")
         if first and "percolation" in need:
             from . import percolation as PC
-            prog.stage("Percolation paths", "connected clusters · geodesic shortest paths", units=1.0)
+            groups = [(k, n, ids, k != "pores") for k, n, ids in _phase_groups(table, void_labels)]
+            prog.stage("Percolation paths", "connected clusters · geodesic shortest paths",
+                       units=0.0 if any(("perc", g[0]) in pre_cond for g in groups) else 1.0)
             perc = {}
-            groups = []
-            if void_labels:
-                groups.append(("pores", "Pores", void_labels, False))
-            for li, t in enumerate(table):
-                if t["kind"] == "core" and li not in void_labels:
-                    ids = [li] + [j for j, u in enumerate(table) if u["kind"] == "shell" and u["phase"] == t["phase"]]
-                    groups.append((f"phase{li}", t["name"], ids, True))
             for gkey, gname, ids, full in groups:
                 if should_stop is not None and should_stop():
                     raise InterruptedError
                 try:
-                    m = np.isin(labels, ids)
-                    # which particle can pass is a question about the pore
-                    # space; a solid phase conducts, it does not let spheres through
-                    pres, pfields = PC.analyse(m, h, dirs, full_connectivity=full,
-                                               want_fields=viewer is not None, want_paths=not full)
+                    pp_ = pre_cond.get(("perc", gkey))
+                    if pp_ is not None:
+                        m, pres, pfields = None, pp_["res"], pp_.get("fields") or {}
+                    else:
+                        m = np.isin(labels, ids)
+                        # which particle can pass is a question about the pore
+                        # space; a solid phase conducts, it does not let spheres through
+                        pres, pfields = PC.analyse(m, h, dirs, full_connectivity=full,
+                                                   want_fields=viewer is not None, want_paths=not full)
                     perc[gkey] = {"name": gname, **pres}
                     d0 = dirs[0]
                     if viewer is not None and not full:
@@ -2572,10 +2838,15 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             live("percolation")
         if first and "porosimetry" in need:
             po = opts["porosimetry"]
-            prog.stage("Porosimetry and capillary pressure", f"PoreSpy morphological drainage · {po['fluid']}", units=1.0)
+            pp_ = pre_cond.get(("poros", None))
+            prog.stage("Porosimetry and capillary pressure", f"PoreSpy morphological drainage · {po['fluid']}",
+                       units=0.0 if pp_ is not None else 1.0)
             try:
-                pres, pfield = PO.porosimetry(void_mask, h, po["surface_tension_N_m"], po["contact_angle_deg"],
-                                              po["steps"], dirs, log=log)
+                if pp_ is not None:
+                    pres, pfield = pp_["res"], pp_.get("field")
+                else:
+                    pres, pfield = PO.porosimetry(void_mask, h, po["surface_tension_N_m"], po["contact_angle_deg"],
+                                                  po["steps"], dirs, log=log)
                 pres["fluid"] = po["fluid"]
                 if pfield is not None and viewer is not None:
                     viewer.add_field("mip_d", pfield, f"Pore-entry diameter ({po['fluid']} intrusion)", "µm", "Porosimetry")
@@ -2588,9 +2859,13 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if first and "porosimetry" in need:
             live("porosimetry")
         if first and "pore_network" in need:
-            prog.stage("Pore network extraction", "PoreSpy SNOW2", units=1.0)
+            pn_ = pre_cond.get(("network", None))
+            prog.stage("Pore network extraction", "PoreSpy SNOW2", units=0.0 if pn_ is not None else 1.0)
             try:
-                nres, nview = PO.pore_network(void_mask, h, log=log)
+                if pn_ is not None:
+                    nres, nview = pn_["res"], pn_["view"]
+                else:
+                    nres, nview = PO.pore_network(void_mask, h, log=log)
                 if viewer is not None:
                     viewer.add_network(nview)
                 res_r["pore_network"] = nres
@@ -2602,10 +2877,15 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if first and "pore_network" in need:
             live("pore_network")
         if first and "grains" in need:
-            prog.stage("Grain and filler analysis", "particle list · PoreSpy · NASA PuMA", units=1.0)
+            pg_ = pre_cond.get(("grains", None))
+            prog.stage("Grain and filler analysis", "particle list · PoreSpy · NASA PuMA",
+                       units=0.0 if pg_ is not None else 1.0)
             try:
                 from . import grains as GR
-                gres, glt = GR.analyse(spec, ginfo, labels, table, h, log=log)
+                if pg_ is not None:
+                    gres, glt = pg_["res"], pg_.get("lt")
+                else:
+                    gres, glt = GR.analyse(spec, ginfo, labels, table, h, log=log)
                 if glt is not None and viewer is not None:
                     viewer.add_field("grain_matrix_lt", glt * h, "Matrix ligament thickness between particles",
                                      "µm", "Grains", in_matrix=True)

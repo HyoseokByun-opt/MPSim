@@ -13,6 +13,21 @@ first on workers of cores // workers threads, using the measured speed-up of
 one solve, and keeps the split that finishes first. Elastic load cases are
 dispatched first so the longest solves do not finish last on one worker.
 
+Since v5.1 every independent solve of a run goes into the same pool, not
+only conduction and PuMA's elastic loads: the Stokes and diffusion solves
+of each direction, the EMI admittivity at each frequency and direction, the
+moisture diffusion of each direction, the ray casting, the structure
+analyses of the first realisation (size distributions, percolation,
+porosimetry, pore network, grain statistics) and the conduction solves of
+the resolution check on the finer grid. A permeability
+solve keeps one core busy for minutes (PuMA's matrix-free MINRES); three of
+them and the diffusion solves now run at once on the cores the job was
+given, instead of one after another (v5.0.1 solved 3 x 340 s in turn on an
+80^3 porous RVE). Each kind has its own cost and its own gain from threads
+(TASK_COST, TASK_PAR), and a solve starts only when its memory fits beside
+the solves already running, so a heavy Stokes solve and many light FV
+solves share the pool without overcommitting the memory.
+
 The pool is started once per job. The structure is written once to a .npy
 file that every worker memory-maps; each worker returns its small numbers and
 writes its fields (temperature, flux, stress) to .npy files the main process
@@ -31,6 +46,9 @@ import numpy as np
 
 
 # --------------------------------------------------------------- worker side
+_LIMITS = None
+
+
 def _init(threads, log_dir):
     # NUMBA_NUM_THREADS is not changed here: a worker whose main module
     # imported numba before this initializer has already launched its pool,
@@ -44,6 +62,16 @@ def _init(threads, log_dir):
     os.environ["MPSIM_WORKER_LOG_DIR"] = log_dir or ""
     import numba
     numba.set_num_threads(max(1, min(int(threads), numba.config.NUMBA_NUM_THREADS)))
+    # numpy (and with it MKL / OpenBLAS) was loaded before this initializer,
+    # with the job's thread count in the environment: eight workers of one
+    # thread each then multiplied vectors on eight threads apiece (an EMI batch
+    # kept 10.5 cores busy on 8). threadpoolctl caps the pools already loaded.
+    global _LIMITS
+    try:
+        from threadpoolctl import threadpool_limits
+        _LIMITS = threadpool_limits(limits=max(1, int(threads)))
+    except Exception:                                                  # noqa: BLE001
+        _LIMITS = None
     import warnings
     warnings.filterwarnings("ignore")
 
@@ -80,6 +108,99 @@ def _save(tmp, tag, arr):
     p = os.path.join(tmp, f"{tag}.npy")
     np.save(p, np.asarray(arr))
     return p
+
+
+def _worker_labels(t, PB):
+    labels = np.ascontiguousarray(np.load(t["labels"], mmap_mode="r"))
+    if os.environ.get("MPSIM_WORKER_LOG_DIR"):
+        PB.set_log_dir(os.path.join(os.environ["MPSIM_WORKER_LOG_DIR"], f"w{os.getpid()}"))
+    return labels
+
+
+def stokes_task(t):
+    """One permeability direction: PuMA's periodic Stokes solve in the open
+    pores. The velocity components go back as files (the viewer, the
+    hydraulic tortuosity and the filtration stage read them)."""
+    from .solvers import puma_backend as PB
+    labels = _worker_labels(t, PB)
+    rep = _Reporter(t.get("q"), t.get("name") or f"Stokes flow {t['d']}", t["tol"])
+    pr = PB.permeability(labels, t["void"], t["voxel_m"], t["d"], tol=t["tol"], progress=rep, should_stop=None)
+    comps = [np.asarray(c, float) for c in pr["u"] if c is not None]
+    if comps and comps[0].ndim == 4:
+        comps = [comps[0][..., k] for k in range(comps[0].shape[-1])]
+    tag = f"stokes_{t['d']}"
+    return {"kind": "stokes", "d": t["d"], "K": np.asarray(pr["K"], float),
+            "stats": {"seconds": pr["seconds"], "iterations": pr["iterations"], "converged": pr["converged"]},
+            "u_paths": [_save(t["tmp"], f"{tag}_u{k}", c) for k, c in enumerate(comps)]}
+
+
+def tort_task(t):
+    """One diffusion direction: PuMA's continuum tortuosity in the open pores."""
+    from .solvers import puma_backend as PB
+    labels = _worker_labels(t, PB)
+    rep = _Reporter(t.get("q"), t.get("name") or f"Diffusion {t['d']}", t["tol"])
+    tr = PB.tortuosity(labels, t["void"], t["voxel_m"], t["d"], tol=t["tol"], progress=rep, should_stop=None)
+    C = tr.pop("C", None)
+    return {"kind": "tort", "d": t["d"], "r": tr,
+            "C_path": _save(t["tmp"], f"tort_{t['d']}_C", C) if t["fields"] else None}
+
+
+def emi_task(t):
+    """The complex admittivity at one frequency along one direction."""
+    from .solvers import complex_cond as CC
+    labels = np.ascontiguousarray(np.load(t["labels"], mmap_mode="r"))
+    r = CC.solve(labels, t["kap"], t["d"], bc=t["bc"], tol=t["tol"], should_stop=None)
+    return {"kind": "emi", "i": t["i"], "d": t["d"],
+            "r": {"kappa": complex(r["kappa"]), "iterations": r["iterations"], "converged": bool(r["converged"])}}
+
+
+def radiation_task(t):
+    """Ray casting of the pore space (one task: PuMA's casting runs on one core)."""
+    from .solvers import puma_backend as PB
+    labels = _worker_labels(t, PB)
+    return {"kind": "radiation", "r": PB.radiation(labels, t["void"], t["voxel_m"], t["sources"], t["rays"], None)}
+
+
+def struct_task(t):
+    """One structure analysis of the first realisation: the size
+    distributions of a phase, its percolation, the porosimetry, the pore
+    network or the grain statistics. Its log lines come back with it."""
+    from .solvers import puma_backend as PB
+    labels = _worker_labels(t, PB)
+    what, h, lines = t["what"], t["h"], []
+    out = {"kind": "struct", "what": what, "gkey": t.get("gkey"), "lines": lines}
+
+    def save(tag, a):
+        return _save(t["tmp"], f"{what}_{t.get('gkey') or ''}_{tag}", a) if a is not None else None
+    if what == "morph":
+        from . import morphology as MO
+        mres, lt = MO.analyse_phase(labels, t["ids"], h)
+        try:
+            area, sv = PB.surface_area(labels, t["ids"], h * 1e-6)
+            mres["surface_area_m2"], mres["specific_surface_1pm"] = area, sv
+            mres["mean_intercept_length_um"] = [v * 1e6 for v in PB.mean_intercept_length(labels, t["ids"], h * 1e-6)]
+        except Exception as e:                                          # noqa: BLE001
+            mres["surface_error"] = str(e)
+        out["res"], out["lt_path"] = mres, save("lt", lt) if t["fields"] else None
+    elif what == "perc":
+        from . import percolation as PC
+        pres, pfields = PC.analyse(np.isin(labels, t["ids"]), h, t["dirs"], full_connectivity=t["full"],
+                                   want_fields=t["fields"], want_paths=not t["full"])
+        out["res"] = pres
+        out["field_paths"] = {k: save(k, v) for k, v in (pfields or {}).items()}
+    elif what == "poros":
+        from . import poro as PO
+        pres, pfield = PO.porosimetry(np.isin(labels, t["void"]), h, t["gamma"], t["theta"], t["steps"], t["dirs"],
+                                      log=lines.append)
+        out["res"], out["field_path"] = pres, save("mip", pfield)
+    elif what == "network":
+        from . import poro as PO
+        out["res"], out["view"] = PO.pore_network(np.isin(labels, t["void"]), h, log=lines.append)
+    elif what == "grains":
+        from . import grains as GR
+        gres, glt = GR.analyse(t["spec"], t["ginfo"], labels, t["table"], h, log=lines.append)
+        out["res"], out["lt_path"] = gres, save("glt", glt)
+    return out
 
 
 def cond_task(t):
@@ -171,14 +292,25 @@ class SolvePool:
         np.save(p, np.ascontiguousarray(labels))
         return p
 
-    def run(self, jobs, should_stop=None, on_done=None, on_progress=None):
-        """jobs: list of (function, task dict). Returns results in the same order.
-        on_progress(name, it, res, target) for every report of a worker."""
+    def run(self, jobs, should_stop=None, on_done=None, on_progress=None, budget_gb=None):
+        """jobs: list of (function, task dict), in the order they should start.
+        Returns results in the same order. on_progress(name, it, res, target)
+        for every report of a worker.
+
+        A job starts when a worker is free and, with a memory budget, when its
+        task's "mem_gb" fits beside the jobs already running (the first job
+        always starts); the next job that fits is taken, so light solves fill
+        the room a heavy one leaves.
+
+        A job that raises, or that a broken pool (a worker killed, e.g. out of
+        memory) cannot run, comes back as {"failed": message, "name": ...}:
+        the caller leaves it to the stage that solves it in turn."""
         for _, t in jobs:
             t["q"] = self.q if on_progress is not None else None
-        futs = {self.ex.submit(fn, t): i for i, (fn, t) in enumerate(jobs)}
         out = [None] * len(jobs)
-        pending = set(futs)
+        queue = list(range(len(jobs)))
+        running = {}
+        held = [0.0]
 
         def drain():
             while self.q is not None and on_progress is not None:
@@ -187,16 +319,52 @@ class SolvePool:
                 except Exception:                                      # noqa: BLE001
                     break
                 on_progress(*item)
-        while pending:
-            done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+
+        finished = [0]
+
+        def fail(i, e):
+            out[i] = {"failed": f"{type(e).__name__}: {e}", "name": jobs[i][1].get("name")}
+
+        def report(i):
+            if isinstance(out[i], dict) and "_units" in jobs[i][1]:
+                out[i]["_units"] = jobs[i][1]["_units"]
+            finished[0] += 1
+            if on_done is not None:
+                on_done(out[i], finished[0], len(jobs))
+
+        def start():
+            for i in list(queue):
+                if len(running) >= self.workers:
+                    break
+                m = float(jobs[i][1].get("mem_gb") or 0.0)
+                if running and budget_gb is not None and held[0] + m > budget_gb:
+                    continue
+                fn, t = jobs[i]
+                queue.remove(i)
+                try:
+                    running[self.ex.submit(fn, t)] = (i, m)
+                except Exception as e:                                 # noqa: BLE001
+                    # the pool is broken: nothing more starts here
+                    fail(i, e)
+                    report(i)
+                    continue
+                held[0] += m
+        start()
+        while running:
+            done, _ = wait(set(running), timeout=0.5, return_when=FIRST_COMPLETED)
             drain()
             for f in done:
-                out[futs[f]] = f.result()
-                if on_done is not None:
-                    on_done(out[futs[f]], len(jobs) - len(pending), len(jobs))
+                i, m = running.pop(f)
+                held[0] -= m
+                try:
+                    out[i] = f.result()
+                except Exception as e:                                 # noqa: BLE001
+                    fail(i, e)
+                report(i)
             if should_stop is not None and should_stop():
                 self.kill()
                 raise InterruptedError
+            start()
         return out
 
     def kill(self):
@@ -228,25 +396,38 @@ PAR_FRACTION = 0.85
 # conduction FE solve per voxel; the periodic FV solver with its FFT
 # preconditioner is ~20x faster than the conduction FE solve (112^3: 1.4 s
 # against 30.5 s on one thread).
-TASK_COST = {"elastic": 5.0, "fe": 1.0, "fv": 0.05}
+# Measured in v5.1 on 80-100^3 RVEs with 8 threads: a PuMA Stokes direction
+# ~30x a conduction FE solve and on one core whatever the threads (matrix-free
+# MINRES in NumPy); a PuMA diffusion direction ~1x on about two cores; one EMI
+# admittivity (one frequency, one direction) ~0.4 on about three; PuMA's ray
+# casting on one core.
+# The structure analyses, from the same runs: the size distributions of a
+# phase ~1x (on most cores), percolation ~1.2x and porosimetry ~1.4x (on two
+# or three), the pore network ~1x, the grain statistics ~3x (on most cores).
+TASK_COST = {"elastic": 5.0, "fe": 1.0, "fv": 0.05, "stokes": 30.0, "tort": 1.0, "emi": 0.4,
+             "radiation": 0.5, "morph": 1.0, "perc": 1.2, "poros": 1.4, "network": 1.0, "grains": 3.0}
+# Fraction of each kind that runs in parallel on a worker's threads.
+TASK_PAR = {"elastic": PAR_FRACTION, "fe": PAR_FRACTION, "fv": 0.6, "stokes": 0.1, "tort": 0.5, "emi": 0.6,
+            "radiation": 0.05, "morph": 0.8, "perc": 0.5, "poros": 0.6, "network": 0.6, "grains": 0.85}
 
 
 def speedup(t, p=PAR_FRACTION):
     return 1.0 / ((1.0 - p) + p / max(1, int(t)))
 
 
-def makespan(costs, workers, threads):
+def makespan(costs, workers, threads, pars=None):
     """Longest-processing-time-first schedule of `costs` on `workers` equal
-    workers of `threads` threads each; returns the finishing time."""
+    workers of `threads` threads each; returns the finishing time. pars: the
+    parallel fraction of each task (PAR_FRACTION when not given)."""
     load = [0.0] * workers
-    f = 1.0 / speedup(threads)
-    for c in sorted(costs, reverse=True):
+    pars = pars or [PAR_FRACTION] * len(costs)
+    for c, p in sorted(zip(costs, pars), reverse=True):
         i = load.index(min(load))
-        load[i] += c * f
+        load[i] += c / speedup(threads, p)
     return max(load)
 
 
-def plan_split(cores, costs, max_workers):
+def plan_split(cores, costs, max_workers, pars=None):
     """(workers, threads each) that finishes `costs` soonest on `cores` cores
     with at most `max_workers` workers (the memory cap). Every split from one
     worker with all the cores to one thread per worker is scored with the
@@ -258,7 +439,7 @@ def plan_split(cores, costs, max_workers):
     best = None
     for w in range(1, max(1, min(cores, len(costs), int(max_workers))) + 1):
         t = cores // w
-        m = makespan(costs, w, t)
+        m = makespan(costs, w, t, pars)
         if best is None or m < best[0] * (1 - 1e-9):
             best = (m, w, t)
     return best[1], best[2]
