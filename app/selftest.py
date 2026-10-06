@@ -1266,13 +1266,24 @@ def t_pipeline_live():
         expect(not os.path.exists(os.path.join(d, "result.partial.json")), "result.partial.json left behind")
         with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
             r = json.load(fh)
+        # the 3D view: the resin's shear rate is listed and read on the
+        # particle surfaces from the resin side (inside a filler it is zero)
+        with open(os.path.join(d, "view", "meta.json"), encoding="utf-8") as fh:
+            vm = json.load(fh)
+        vg = next((x for x in vm["fields"] if x["key"] == "visc_gd"), None)
+        expect(vg is not None and vg.get("in_matrix"), "visc_gd missing from the view or not a matrix field")
+        import numpy as np
+        med = [float(np.median(np.fromfile(os.path.join(d, "view", sf["fields"]["visc_gd"]), "<f4")))
+               for sf in vm["surfaces"] if "visc_gd" in sf["fields"]]
+        expect(med and min(med) > 0.3, f"shear rate on the particle surfaces {med} (read inside the fillers?)")
     v = r["properties"]["viscosity"]
     expect(seen["partial_result"] >= 2, f"{seen['partial_result']} provisional results")
     expect(len(seen["figure"]) >= 2, f"figures {seen['figure']}")
     expect(v["mu_r_rve"] >= 0.99 * v["refs"]["Hashin-Shtrikman lower bound"], f"mu_r {v['mu_r_rve']}")
     expect(v["mu_compound_ref"] > v["mu_resin_ref"], "compound not more viscous than the resin")
     return (f"μr {v['mu_r_rve']:.3f} (HS {v['refs']['Hashin-Shtrikman lower bound']:.3f}, KD {v['refs']['Krieger-Dougherty']:.3f}), "
-            f"{seen['partial_result']} provisional results, {len(seen['figure'])} live figures, {s['elapsed_s']:.0f} s")
+            f"{seen['partial_result']} provisional results, {len(seen['figure'])} live figures, "
+            f"surface shear rate {min(med):.2f}, {s['elapsed_s']:.0f} s")
 
 
 @check("Complete pipeline: thin film (x, y periodic, z the real thickness), z solved first", quick=False)

@@ -1512,11 +1512,22 @@
   };
   V.hideEmpty = function () { const el = document.getElementById("vEmpty"); if (el) { el.hidden = true; el.style.display = "none"; } };
 
+  // what a view offers; it changes while a run adds analyses to the same view
+  V.metaSig = (m) => (m ? [m.built || 0, (m.fields || []).map((f) => f.key).join(","),
+    (m.vectors || []).map((v) => v.key).join(","), (m.paths || []).map((p) => p.key).join(","),
+    (m.surfaces || []).length, m.network ? 1 : 0].join("|") : "");
+
   V.open = async function (jobId) {
-    if (S.jobId === jobId && S.meta) return S.meta;
+    // meta.json is read every time. A run opened here before it finished - a
+    // structure generated first and then continued with analyses, or a view
+    // opened while the run went on - writes it again with every analysis; the
+    // copy kept from the first opening left the later fields out of the list
+    // (the viscosity fields, the last analysis of a run, never appeared).
     const r = await fetch(`/api/jobs/${jobId}/view/meta.json`, { cache: "no-store" });
     if (!r.ok) throw new Error("This run has no visualisation data");
     const meta = await r.json();
+    if (S.jobId === jobId && S.meta && V.metaSig(S.meta) === V.metaSig(meta)) return S.meta;
+    const keep = S.jobId === jobId ? S.field : null;
     // load the labels before publishing the new meta: a refresh running in
     // between would otherwise pair the new grid with old (or no) labels
     const labels = new Uint8Array(await fetchBin(`/api/jobs/${jobId}/view/labels.u8?v=${meta.built || 0}`));
@@ -1528,12 +1539,16 @@
     meta.paths = meta.paths || [];
     S.slices = { x: Math.floor(meta.shape[0] / 2), y: Math.floor(meta.shape[1] / 2), z: Math.floor(meta.shape[2] / 2) };
     S.show = { x: false, y: false, z: false };
-    S.field = meta.fields.length ? meta.fields[0].key : "";
+    // the same run read again keeps what was on display (a field, or the
+    // phases alone)
+    const kf = keep ? meta.fields.find((f) => f.key === keep) : null;
+    const f0 = keep === "" ? null : (kf || meta.fields[0] || null);
+    S.field = f0 ? f0.key : "";
     // the structure reads better than a box of coloured faces: surfaces are on
     // by default and carry the field, and the faces stay off unless there is
     // no surface to show the field on at all
     S.faces = !(meta.surfaces || []).length && !!S.field;
-    S.log = meta.fields.length ? !!meta.fields[0].log : false;
+    S.log = f0 ? !!f0.log : false;
     S.range = "auto";
     S.volume = false;
     S.networkOn = !S.field && !!meta.network;

@@ -771,6 +771,9 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             abort(404, "No result is available yet")
         return send_file(p, mimetype="application/json", max_age=0)
 
+    import threading
+    _upgrade_lock, _upgraded = threading.Lock(), set()
+
     @app.get("/api/jobs/<jid>/view/<path:name>")
     def api_view(jid, name):
         job = job_or_404(jid)
@@ -779,6 +782,18 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         if not os.path.exists(p):
             abort(404)
         mt = "application/json" if name.endswith(".json") else "application/octet-stream"
+        if name == "meta.json" and job.state in ("done", "failed", "stopped") and jid not in _upgraded:
+            # an earlier run painted the particles with the resin's
+            # shear rate from inside the fillers (all zero): sampled again
+            # once from the resin side, out of the files the run kept
+            with _upgrade_lock:
+                if jid not in _upgraded:
+                    try:
+                        from mpsim import visual as VIS
+                        VIS.upgrade_matrix_fields(view)
+                    except Exception as e:                              # noqa: BLE001
+                        app.logger.warning("view of %s not upgraded: %s", jid, e)
+                    _upgraded.add(jid)
         if name.endswith(".gz"):
             # a gzip file is sent as such and the browser inflates it: the
             # voxel volume crosses the network at a fraction of its size

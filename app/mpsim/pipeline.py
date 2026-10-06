@@ -509,7 +509,8 @@ def _shear_flow_layer(viewer, vel, h_um, n_lines=36):
     speed = np.sqrt((v ** 2).sum(-1))
     grp = "Viscosity"
     viewer.add_field("visc_v", speed, "Resin speed |v| / wall speed (simple shear, xy)", "-", grp,
-                     note="Layers slide in x; the fillers deflect and squeeze the resin between them")
+                     note="Layers slide in x; the fillers deflect and squeeze the resin between them",
+                     in_matrix=True)
     viewer.add_vector("visc_v", v, "Resin velocity (simple shear, xy)", "-", grp, field="visc_v",
                       note="Arrow length and colour follow the local speed")
     Y = np.arange(ny)[None, :, None]
@@ -2476,8 +2477,12 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             vfield = vr.pop("field", None)
             vvel = vr.pop("velocity", None)
             if first and viewer is not None and vfield is not None:
+                # a quantity of the resin: the fillers are rigid and their
+                # inside is zero, so the particle surfaces read the resin
+                # beside them (read from inside, every particle came out the
+                # bottom colour of the scale)
                 viewer.add_field("visc_gd", vfield, "Local shear rate / applied shear rate (xy shear)", "-", "Viscosity",
-                                 note="Where the resin is sheared hardest between the fillers")
+                                 note="Where the resin is sheared hardest between the fillers", in_matrix=True)
             if first and viewer is not None and vvel is not None:
                 try:
                     vr["flow_lines"] = _shear_flow_layer(viewer, vvel, h)

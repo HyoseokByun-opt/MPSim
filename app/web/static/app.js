@@ -96,7 +96,7 @@
   const state = {
     lib: null, byId: {}, custom: {}, presets: [], form: null, plan: null, planErrors: [], wf: null, case: null,
     jobs: [], active: null, seq: 0, history: {}, partial: {}, activeState: null, activePreview: false,
-    result: null, resultJob: null, health: null, viewerJob: null,
+    result: null, resultJob: null, health: null, viewerJob: null, viewerSig: "",
     tab: "home", center: "vis", rtab: "display", dtab: "console", sel: 0,
     doeCat: [], doeList: [], doeId: null, doeData: null,
     doe: { name: "", design: "full", samples: 12, seed: 1, parameters: [] },
@@ -2773,8 +2773,12 @@
     try {
       const meta = await V.open(id);
       const S = V.state;
-      if (state.viewerJob !== id) {
+      // the lists are rebuilt when the run's view has gained fields too, not
+      // only for another run: a run continued with more analyses keeps its id
+      const sig = V.metaSig(meta);
+      if (state.viewerJob !== id || state.viewerSig !== sig) {
         state.viewerJob = id;
+        state.viewerSig = sig;
         const groups = {};
         meta.fields.forEach((f) => { (groups[f.group] = groups[f.group] || []).push(f); });
         $("#vField").innerHTML = `<option value="">Structure (phases)</option>` + Object.entries(groups).map(([g, fs]) => `<optgroup label="${esc(g)}">${fs.map((f) => `<option value="${f.key}">${esc(f.label)}</option>`).join("")}</optgroup>`).join("");

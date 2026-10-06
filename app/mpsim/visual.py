@@ -227,6 +227,7 @@ class ViewWriter:
         self.surf_owner = None
         self.surf_labels = labels if self.surf_stride == 1 else block_pick(labels, self.surf_stride)
         self._vox_cells = {}                     # label -> voxel behind each quad, solver grid
+        self._vox_out = {}                       # label -> voxel in front of each quad
         self._sides = {}                         # label -> voxels inside/outside each surface point
         self._built = False
         self._old = None                         # sampled files of an adopted view
@@ -386,6 +387,11 @@ class ViewWriter:
                     self._sample(sf, key, data, full=True)
                 vs = self.meta.get("voxel_style") or {}
                 for lab, cells in self._vox_cells.items():
+                    if in_matrix and lab in self._vox_out:
+                        # a quantity of the matrix (the resin's shear rate)
+                        # is zero inside a rigid filler: the face shows the
+                        # voxel in front of it, as the smooth surface does
+                        cells = self._vox_out[lab]
                     vf = f"vox_{lab}_{key}.f32"
                     data[cells[:, 0], cells[:, 1], cells[:, 2]].astype("<f4").tofile(os.path.join(self.dir, vf))
                     vs["files"][str(lab)]["fields"][key] = vf
@@ -749,25 +755,31 @@ class ViewWriter:
         self.meta["voxel_style"] = {"spacing_um": h, "stride": 1, "files": {}, "region_um": region,
                                     "n_faces_total": int(total)}
         self._vox_cells = {}
+        self._vox_out = {}
         drawn_quads = 0
         for lab, v, mask, _ in self._phase_masks(grid):
             p = np.pad(mask, 1)
-            corners, inside = [], []
+            corners, inside, front = [], [], []
             for ax in range(3):
                 a = np.moveaxis(p, ax, 0)
                 d = a[1:] != a[:-1]
                 i, j, k = np.nonzero(d)
-                ins = np.where(a[i + 1, j, k], i, i - 1)           # voxel of the phase behind the face
+                ph = a[i + 1, j, k]
+                ins = np.where(ph, i, i - 1)                        # voxel of the phase behind the face
+                out = np.clip(np.where(ph, i - 1, i), 0, a.shape[0] - 3)   # and the one in front of it
                 base = np.stack([i, j - 1, k - 1], axis=1)
                 q = np.stack([base, base + [0, 1, 0], base + [0, 1, 1], base + [0, 0, 1]], axis=1)
                 vox = np.stack([ins, j - 1, k - 1], axis=1)
+                vof = np.stack([out, j - 1, k - 1], axis=1)
                 inv_ax = np.argsort([ax] + [b for b in range(3) if b != ax])
                 corners.append(q[:, :, inv_ax])
                 inside.append(vox[:, inv_ax])
-                del d, i, j, k, ins, base, q, vox
+                front.append(vof[:, inv_ax])
+                del d, i, j, k, ph, ins, out, base, q, vox, vof
             q = np.concatenate(corners)
             vox = np.concatenate(inside).astype(np.int32)
-            del corners, inside, p
+            vof = np.concatenate(front).astype(np.int32)
+            del corners, inside, front, p
             if not len(q):
                 continue
             n1 = np.array(grid.shape) + 1
@@ -787,6 +799,7 @@ class ViewWriter:
             self.meta["voxel_style"]["files"][str(v)] = {"file": fname, "n_points": int(len(pts)),
                                                         "n_quads": int(len(quads)), "fields": {}}
             self._vox_cells[v] = vox
+            self._vox_out[v] = vof
             drawn_quads += len(quads)
         if log:
             log(f"    voxel faces: {drawn_quads:,}" + (f" in the corner region {' x '.join(f'{r:.3g}' for r in region)}"
@@ -931,6 +944,66 @@ def load_surface(view_dir, sf):
     return pts, nrm, tri
 
 
+# fields of the resin alone, zero inside the fillers; earlier runs sampled
+# them on the particle surfaces from inside, and every particle came out
+# the bottom colour of the scale
+MATRIX_FIELDS = ("visc_gd", "visc_v")
+
+
+def upgrade_matrix_fields(view_dir):
+    """Samples the resin fields of an older run on the particle surfaces again,
+    from the resin side, out of the solver-grid copy the run kept (nothing is
+    solved again), and marks them as matrix fields. Returns True when
+    meta.json was rewritten; False when there was nothing to do."""
+    p = os.path.join(view_dir, "meta.json")
+    with open(p, encoding="utf-8") as fh:
+        meta = json.load(fh)
+    vv = meta.get("voxel_volume") or {}
+    todo = [f for f in meta.get("fields") or []
+            if f["key"] in MATRIX_FIELDS and not f.get("in_matrix") and f.get("full")
+            and os.path.exists(os.path.join(view_dir, f["full"]["file"]))]
+    if not todo or not vv.get("labels") or not meta.get("surfaces"):
+        return False
+    import gzip
+    nx, ny, nz = (int(n) for n in vv["dims"])
+    h = float(vv["spacing_um"])
+    with gzip.open(os.path.join(view_dir, vv["labels"]), "rb") as fh:
+        grid = np.frombuffer(fh.read(), np.uint8).reshape((nx, ny, nz), order="F")
+    hi = np.array(grid.shape) - 1
+    fronts = {}
+    for sf in meta["surfaces"]:
+        pts, nrm, _ = load_surface(view_dir, sf)
+        pts, nrm = np.asarray(pts, np.float64), np.asarray(nrm, np.float64)
+        best = found = None
+        for d in (0.5, 1.0, 1.5):           # the first point off the particle
+            idx = np.clip(np.floor((pts + d * h * nrm) / h).astype(np.int64), 0, hi)
+            ok = grid[idx[:, 0], idx[:, 1], idx[:, 2]] != sf["label"]
+            if best is None:
+                best, found = idx, ok
+            else:
+                take = ok & ~found
+                best[take] = idx[take]
+                found |= ok
+        fronts[sf["label"]] = best
+    for f in todo:
+        q = _full_memmap(view_dir, meta, f["full"])      # [z, y, x]
+        for sf in meta["surfaces"]:
+            idx = fronts[sf["label"]]
+            vals = _decode(np.asarray(q[idx[:, 2], idx[:, 1], idx[:, 0]]), f["full"])
+            vals = np.nan_to_num(vals, nan=float(f.get("min") or 0.0)).astype("<f4")
+            fn = f"surf_{sf['label']}_{f['key']}.f32"
+            vals.tofile(os.path.join(view_dir, fn))
+            sf.setdefault("fields", {})[f["key"]] = fn
+        del q
+        f["in_matrix"] = True
+    # new file URLs, so the browser does not keep the old samples
+    meta["built"] = int(time.time() * 1000)
+    with open(p + ".part", "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, ensure_ascii=False, indent=1)
+    os.replace(p + ".part", p)
+    return True
+
+
 def _full_memmap(view_dir, meta, full):
     nx, ny, nz = meta["full_shape"]
     return np.memmap(os.path.join(view_dir, full["file"]), "<u2", "r", shape=(nz, ny, nx))
@@ -965,17 +1038,59 @@ def field_volume8(view_dir, meta, key):
     f = next((x for x in meta.get("fields") or [] if x["key"] == key), None)
     if not f or not f.get("full") or not os.path.exists(os.path.join(view_dir, f["full"]["file"])):
         return None
-    fn = f"vol8_{key}.u8.gz"
+    resin = None
+    if f.get("in_matrix"):
+        # a quantity of the matrix alone (the resin's shear rate) is zero in
+        # the fillers, and the voxels drawn are the fillers': each filler
+        # voxel beside the matrix shows the matrix beside it, as the smooth
+        # surfaces do; deeper voxels (a cut at the box) keep their own value
+        mat = [int(lb["value"]) for lb in meta.get("labels") or [] if lb.get("kind") == "matrix"]
+        vv = meta.get("voxel_volume") or {}
+        if mat and vv.get("labels") and os.path.exists(os.path.join(view_dir, vv["labels"])):
+            nx, ny, nz = (int(n) for n in vv["dims"])
+            with gzip.open(os.path.join(view_dir, vv["labels"]), "rb") as fh:
+                resin = np.isin(np.frombuffer(fh.read(), np.uint8).reshape((nz, ny, nx)), mat)
+    fn = f"vol8{'m' if resin is not None else ''}_{key}.u8.gz"
     p = os.path.join(view_dir, fn)
     if not os.path.exists(p):
         q = _full_memmap(view_dir, meta, f["full"])
         with gzip.open(p + ".part", "wb", compresslevel=1) as fh:
             for k0 in range(0, q.shape[0], 32):
                 s = np.asarray(q[k0:k0 + 32]).astype(np.uint32)
+                if resin is not None:
+                    s = _from_matrix(q, resin, k0, min(k0 + 32, q.shape[0]), s)
                 c = np.where(s == 0, 0, 1 + (s - 1) * 254 // 65534).astype(np.uint8)
                 fh.write(c.tobytes())
         os.replace(p + ".part", p)
     return fn
+
+
+def _from_matrix(q, resin, k0, k1, s):
+    """Slab k0:k1 of the 16-bit field [z, y, x] with every non-matrix voxel
+    that touches the matrix (6 neighbours) set to the mean of those matrix
+    neighbours."""
+    a0, a1 = max(k0 - 1, 0), min(k1 + 1, q.shape[0])
+    qv = np.asarray(q[a0:a1]).astype(np.uint32)
+    rm = resin[a0:a1]
+    v = np.where(rm, qv, 0)
+    tot = np.zeros(v.shape, np.uint32)
+    cnt = np.zeros(v.shape, np.uint8)
+    for ax in range(3):
+        for sh in (1, -1):
+            src = [slice(None)] * 3
+            dst = [slice(None)] * 3
+            if sh == 1:
+                src[ax], dst[ax] = slice(0, -1), slice(1, None)
+            else:
+                src[ax], dst[ax] = slice(1, None), slice(0, -1)
+            tot[tuple(dst)] += v[tuple(src)]
+            cnt[tuple(dst)] += rm[tuple(src)]
+    lo = k0 - a0
+    tot, cnt, rm = tot[lo:lo + (k1 - k0)], cnt[lo:lo + (k1 - k0)], rm[lo:lo + (k1 - k0)]
+    fill = ~rm & (cnt > 0)
+    out = s.copy()
+    out[fill] = tot[fill] // cnt[fill]
+    return out
 
 
 def label_slice(view_dir, axis, index):
