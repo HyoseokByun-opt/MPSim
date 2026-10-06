@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.0.1",
+  "softwareVersion": "5.1.0",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -145,7 +145,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.0.1</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.1.0</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -218,15 +218,16 @@
       <div class="stats">
         <div class="stat"><b>54</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
-        <div class="stat"><b>16</b><span>ready-to-run presets for semiconductor materials</span></div>
+        <div class="stat"><b>21</b><span>ready-to-run presets for semiconductor materials</span></div>
         <div class="stat"><b>52</b><span>materials in the library, all editable</span></div>
       </div>
       <h3 style="margin:30px 0 8px">Presets</h3>
       <ul class="presets">
-        <li>EMC · epoxy + fused silica</li><li>Underfill · epoxy + silica</li><li>TIM · silicone + Al₂O₃ with interfacial resistance</li>
-        <li>TIM · epoxy + AlN</li>
-        <li>Thermal sheet · h-BN platelets</li><li>Conductive adhesive · Ag flakes</li>
-        <li>Sintered silver die attach</li><li>EMI shielding · Ni rods</li>
+        <li>EMC · epoxy + fused silica</li><li>Underfill · epoxy + silica</li><li>MUF flowability · bimodal silica</li>
+        <li>EMC reliability · moisture, swelling, above Tg</li><li>TIM · silicone + Al₂O₃ with interfacial resistance</li>
+        <li>TIM · epoxy + AlN</li><li>Hybrid TIM · Al₂O₃ + AlN blend with contact resistance</li>
+        <li>Thermal sheet · h-BN platelets</li><li>Thin film · polyimide + h-BN</li><li>Conductive adhesive · Ag flakes</li>
+        <li>Sintered silver die attach</li><li>EMI shielding · Ni rods</li><li>Noise-suppression sheet · Sendust flakes</li>
         <li>Low-Dk · hollow silica</li><li>High-k · BaTiO₃</li><li>Low CTE · ZrW₂O₈</li><li>Porous low-k film</li>
         <li>Porous ceramic · Al₂O₃</li><li>UPW membrane · PTFE</li><li>Sintered gas filter · SUS316L</li>
         <li>Fibrous insulation · E-glass</li>
@@ -264,7 +265,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.0.1},
+  version   = {5.1.0},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
