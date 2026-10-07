@@ -411,7 +411,7 @@ def t_fans_scaling():
     return f"iterations {its[0]} on 24³, {its[1]} on 48³"
 
 
-@check("Viscosity: a dilute rigid sphere gives Einstein's 2.5, a free bubble -5/3, independent of the rigid contrast")
+@check("Viscosity: a dilute rigid sphere gives Einstein's 2.5 and moves with the resin (Jeffery spin), a free bubble -5/3")
 def t_visc_dilute():
     from mpsim.solvers import viscosity as VI
     lab = _sphere_lab(32, 6.0)
@@ -430,8 +430,28 @@ def t_visc_dilute():
     expect(abs(eta_b / (-5.0 / 3.0) - 1) < 0.15, f"bubble [eta] {eta_b:.3f} (free bubble -5/3)")
     expect(abs(r4["mu_r"] / r["mu_r"] - 1) < 0.01, f"contrast 1e3 {r['mu_r']:.5f} vs 1e4 {r4['mu_r']:.5f}")
     expect(r["mu_r"] >= 0.995 * VI.hs_lower(phi), f"mu_r {r['mu_r']:.5f} below HS {VI.hs_lower(phi):.5f}")
-    return (f"φ {phi:.4f}: rigid [η] {eta:.3f} (contrast ×10: {eta4:.3f}), bubble [η] {eta_b:.3f}, "
-            f"iterations {[st['iterations'] for st in r['stats'].values()]}")
+    # the filler is not held: a fluid 1000x the resin's viscosity with no
+    # force or torque on it. Off the centre line of simple shear it must
+    # translate with the resin at its centre and turn at half the shear rate
+    # (Jeffery 1922); a fixed filler would not move at all
+    n, c = 40, np.array([20.0, 30.0, 20.0])
+    g = np.indices((n, n, n)).transpose(1, 2, 3, 0) + 0.5
+    ins = ((g - c) ** 2).sum(-1) <= 25.0
+    m = VI.effective_viscosity(ins.astype(np.int32), [1.0, VI.RIGID_RATIO], tol=1e-7, keep_field=True,
+                               extension=False)
+    p, v = g[ins] - c, m["velocity"][ins]
+    a = np.zeros((3 * len(p), 6))
+    for k in range(3):
+        a[k::3, k] = 1.0
+    a[0::3, 4], a[0::3, 5] = p[:, 2], -p[:, 1]
+    a[1::3, 3], a[1::3, 5] = -p[:, 2], p[:, 0]
+    a[2::3, 3], a[2::3, 4] = p[:, 1], -p[:, 0]
+    rb, *_ = np.linalg.lstsq(a, v.reshape(-1), rcond=None)
+    u_res = c[1] - n / 2.0                      # the resin's velocity at the centre (unit shear rate)
+    expect(abs(rb[0] / u_res - 1) < 0.01, f"filler moves {rb[0]:.3f}, the resin there {u_res:.3f}")
+    expect(abs(rb[5] + 0.5) < 0.01, f"filler spins {rb[5]:.3f} (Jeffery -0.5)")
+    return (f"φ {phi:.4f}: rigid [η] {eta:.3f} (contrast ×10: {eta4:.3f}), bubble [η] {eta_b:.3f}; "
+            f"a filler off the centre moves {rb[0]:.3f} with the resin's {u_res:.3f} and spins {rb[5]:.3f}")
 
 
 @check("Viscosity closed forms: Krieger-Dougherty and Maron-Pierce limits, intrinsic viscosity of rods and discs")
