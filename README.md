@@ -72,8 +72,9 @@ Its capabilities include:
   filling time and settling; the resin flow is shown moving.
 - **Moisture.** Effective moisture diffusivity (solved on the water activity), saturated uptake, the uptake curve of a part
   and hygroscopic swelling.
-- **Electromagnetic shielding.** Frequency-resolved complex homogenisation feeding a transmission-line model, with an
-  optional full-wave check of the RVE slab in openEMS (FDTD).
+- **Electromagnetic shielding.** Frequency-resolved complex homogenisation feeding a transmission-line model, and a
+  full-wave simulation of the RVE slab in openEMS (FDTD, voxel by voxel) run with it by default to show that the
+  homogenisation holds.
 - **Porous media.** Permeability (Stokes), filtration efficiency by particle tracking, diffusion and tortuosity, acoustic
   absorption (Johnson–Champoux–Allard), radiative extinction, porosimetry, pore networks, percolation paths and grain
   statistics.
@@ -209,8 +210,9 @@ cd C:\MPSim
 1_INSTALL.bat
 ```
 
-`1_INSTALL.bat` creates a private environment in `env\` from `environment.yml` (conda-forge) and runs the quick
-self-test; by hand it is `conda env create -p .\env -f environment.yml`. Start the program with `2_RUN_LOCAL.bat`.
+`1_INSTALL.bat` creates a private environment in `env\` from `environment.yml` (conda-forge), downloads openEMS into
+`tools\openEMS` for the EMI full-wave simulation, and runs the quick self-test; by hand it is
+`conda env create -p .\env -f environment.yml`. Start the program with `2_RUN_LOCAL.bat`.
 Keep the folder on a short path such as `C:\MPSim` (see [Common errors](#common-errors)).
 
 NASA PuMA is distributed on conda-forge as the package `puma`. The PyPI project called `pumapy` is an unrelated

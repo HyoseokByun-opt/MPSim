@@ -21,7 +21,11 @@ Set-up (openEMS, GPL, https://openems.de, run as a separate program):
 * a soft Gaussian E_x source on a plane before the slab; voltage probes
   across the cell before and after it; a second run without the slab gives
   the incident wave, so S21 = u_out / u_out,ref and S11 = (u_in - u_in,ref)
-  / u_in,ref.
+  / u_in,ref. Without the slab the wave is uniform across the cell (a TEM
+  wave between the PEC and PMC walls), so that run uses a cell two voxels
+  wide on the same z mesh and its voltages are scaled by the width: the
+  same incident wave at a fraction of the cost (on the full cross-section
+  it took as long as the slab run - 25 minutes on an 80^3 RVE).
 Loss tangents are left out on both sides (openEMS takes a frequency-
 independent conductivity), so the comparison is like for like.
 
@@ -33,6 +37,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -83,9 +88,12 @@ def _runs(mask):
     return np.column_stack([s[:, 0], e[:, 0], s[:, 1], s[:, 2]])
 
 
-def write_model(path, labels, table, h_um, with_slab, f0, fc, gap_um, end_crit=1e-6):
-    """model.xml for one run. Coordinates in um; the slab is 0 <= z <= T."""
+def write_model(path, labels, table, h_um, with_slab, f0, fc, gap_um, end_crit=1e-6, narrow=False):
+    """model.xml for one run. Coordinates in um; the slab is 0 <= z <= T.
+    narrow: the cross-section two voxels wide (the run without the slab)."""
     n0, n1, n2 = labels.shape
+    if narrow:
+        n0 = n1 = 2
     L, W, T = n0 * h_um, n1 * h_um, n2 * h_um
     xs = np.arange(n0 + 1) * h_um
     ys = np.arange(n1 + 1) * h_um
@@ -137,16 +145,46 @@ def write_model(path, labels, table, h_um, with_slab, f0, fc, gap_um, end_crit=1
     return len(xs) * len(ys) * len(zl)
 
 
-def _run(exe, path, should_stop=None):
+_TS = re.compile(r"Timestep:\s*(\d+).*?Energy:\s*~?\s*([0-9.eE+-]+)\s*\(\s*-?\s*([0-9.]+)\s*dB\)")
+_EXC = re.compile(r"Excitation signal length is:\s*(\d+)\s*timesteps")
+
+
+def _run(exe, path, should_stop=None, progress=None):
+    """Runs openEMS on path/model.xml. progress(step, n_excitation, energy_db)
+    as its log reports them (every few seconds): the time step, the length
+    of the excitation pulse in steps and the field energy against its
+    maximum (0 dB while the pulse goes in, -60 dB at the end criterion)."""
     t0 = time.time()
-    with open(os.path.join(path, "openEMS.log"), "w", encoding="utf-8", errors="replace") as log:
+    lp = os.path.join(path, "openEMS.log")
+    with open(lp, "w", encoding="utf-8", errors="replace") as log:
         p = subprocess.Popen([exe, "model.xml", "--engine=fastest"], cwd=path, stdout=log, stderr=subprocess.STDOUT,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        pos, n_exc, last = 0, None, None
         while p.poll() is None:
             if should_stop is not None and should_stop():
                 p.kill()
                 raise InterruptedError
             time.sleep(0.5)
+            if progress is None:
+                continue
+            try:
+                with open(lp, encoding="utf-8", errors="replace") as fh:
+                    fh.seek(pos)
+                    new = fh.read()
+                    pos = fh.tell()
+            except OSError:
+                continue
+            m = _EXC.search(new)
+            if m:
+                n_exc = int(m.group(1))
+            for m in _TS.finditer(new):
+                last = (int(m.group(1)), -float(m.group(3)))
+            if last is not None:
+                try:
+                    progress(last[0], n_exc, last[1])
+                except Exception:                                      # noqa: BLE001
+                    pass
+                last = None
     if p.returncode != 0:
         with open(os.path.join(path, "openEMS.log"), encoding="utf-8", errors="replace") as fh:
             tail = fh.read()[-1500:]
@@ -162,8 +200,14 @@ def _dft(path, name, f):
 
 
 def check(labels, table, h_um, workdir, f_lo=10e9, f_hi=100e9, n_f=19, tol=1e-7, log=print, should_stop=None,
-          exe=None, max_cells=4_000_000, end_crit=1e-6):
+          exe=None, max_cells=40_000_000, end_crit=1e-6, progress=None):
     """Full-wave S21/S11 of the RVE slab against the homogenised slab.
+
+    progress(tag, step, n_excitation, energy_db) while openEMS runs ("ref",
+    then "slab"). max_cells guards against a model that would take days:
+    openEMS updates some 250 million cells a second on 8 cores, and 0.3 um
+    voxels need about 250,000 time steps (an 80^3 RVE, 1.6 million cells:
+    25 minutes).
 
     Returns freq_hz, se_fullwave_db, se_model_db, s11 both, the homogenised
     kappa and mu used, the largest SE difference (dB) and run times."""
@@ -177,18 +221,27 @@ def check(labels, table, h_um, workdir, f_lo=10e9, f_hi=100e9, n_f=19, tol=1e-7,
     gap = max(1.5 * max(n0, n1) * h_um, 30.0 * h_um)           # higher modes decay as exp(-pi z / L)
     res = {}
     cells = 0
+    # the slab model first: its size decides whether the run is affordable
+    full = write_model(os.path.join(workdir, "slab"), labels, table, h_um, True, f0, fc, gap, end_crit)
+    if full > max_cells:
+        raise ValueError(f"the full-wave model would have {full:,} cells (limit {max_cells:,}) - about "
+                         f"{full * 2.5e5 / 2.5e8 / 3600:.0f} h at 250 million cell updates a second; "
+                         f"a smaller RVE or a coarser voxel keeps it affordable")
     for tag, slab in (("ref", False), ("slab", True)):
         d = os.path.join(workdir, tag)
-        cells = write_model(d, labels, table, h_um, slab, f0, fc, gap, end_crit)
-        if cells > max_cells:
-            raise ValueError(f"the full-wave model would have {cells:,} cells (limit {max_cells:,}); "
-                             f"a smaller RVE or a coarser voxel keeps the check affordable")
-        log(f"    openEMS {tag}: {cells:,} cells ...")
-        sec = _run(exe, d, should_stop)
+        cells = full if slab else write_model(d, labels, table, h_um, False, f0, fc, gap, end_crit, narrow=True)
+        log(f"    openEMS {tag}: {cells:,} cells" + ("" if slab else " (the incident wave, two voxels wide)") + " ...")
+        cb = (lambda st, ne, edb, _t=tag: progress(_t, st, ne, edb)) if progress else None
+        sec = _run(exe, d, should_stop, cb)
         res[tag] = {"u_in": _dft(d, "u_in", f), "u_out": _dft(d, "u_out", f), "seconds": sec}
         log(f"    openEMS {tag}: {sec:.0f} s")
-    s21 = res["slab"]["u_out"] / res["ref"]["u_out"]
-    s11 = (res["slab"]["u_in"] - res["ref"]["u_in"]) / res["ref"]["u_in"]
+    # the reference cell is two voxels wide: its voltages across the cell
+    # (E_x uniform) scale with the width
+    wr = n0 / 2.0
+    ref_in, ref_out = res["ref"]["u_in"] * wr, res["ref"]["u_out"] * wr
+    s21 = res["slab"]["u_out"] / ref_out
+    s11 = (res["slab"]["u_in"] - ref_in) / ref_in
+    cells = full
     se_fw = -20.0 * np.log10(np.abs(s21))
 
     # the homogenised slab with the same walls (no loss tangents, as openEMS)

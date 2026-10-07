@@ -2102,6 +2102,10 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                         notes_fw.append(f"the skin depth of a conducting filler is smaller than the particle above "
                                         f"{f_skin:.3g} Hz; the homogenisation leaves out eddy currents there, the "
                                         f"full-wave run does not")
+                    for ts_ in fwr.get("thin_skin") or []:
+                        notes_fw.append(f"at 10 GHz the skin depth of {ts_['name']} ({ts_['skin_um']:.2g} µm) is below "
+                                        f"the voxel ({ts_['voxel_um']:.3g} µm): the FDTD does not resolve its eddy "
+                                        f"currents either, so neither result holds in this band")
                     if max(fwr["se_model_db"]) > 80.0:
                         notes_fw.append("the shielding exceeds about 80 dB, beyond what the FDTD run resolves "
                                         "(its signal ends at 1e-8 of the peak energy)")
@@ -2395,17 +2399,54 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                     "directions": ["xyz"[d] for d in edirs], "bc": ebc}
             prog.end()
             if eo.get("fullwave"):
-                prog.stage("EMI · full-wave check", "openEMS FDTD of the RVE slab, 10-100 GHz", units=1.0)
+                prog.stage("EMI · full-wave simulation", "openEMS FDTD of the RVE slab, voxel by voxel, 10-100 GHz",
+                           units=1.0)
+                fw_last = {"t": 0.0}
+
+                def fwcb(tag, step, n_exc, e_db):
+                    # the energy against its maximum falls to the end
+                    # criterion (1e-6) once the pulse has passed: drawn as
+                    # the residual of the run. The narrow reference run is
+                    # quick; the slab run is nearly all of the time, about
+                    # 1.25 pulse lengths
+                    now = time.time()
+                    if now - fw_last["t"] < 1.0:
+                        return
+                    fw_last["t"] = now
+                    frac = 0.02 if tag == "ref" else (0.03 + 0.96 * min(step / (1.25 * n_exc), 0.99) if n_exc else 0.03)
+                    event("solver", name=f"openEMS {'incident wave' if tag == 'ref' else 'RVE slab'} (energy)",
+                          it=int(step), res=10.0 ** (e_db / 10.0), target=1e-6, progress=prog.sub(frac))
+                # a conducting filler whose skin depth at the lowest
+                # full-wave frequency is below the voxel: the FDTD does not
+                # resolve its eddy currents, the homogenisation leaves them
+                # out, so the two can differ widely there
+                thin_skin = []
+                for t_ in table:
+                    sg_ = float(t_["props"].get("sigma", 0.0) or 0.0)
+                    if t_["kind"] != "matrix" and sg_ > 1e3:
+                        mr_ = max(float(t_["props"].get("mu_r", 1.0) or 1.0), 1.0)
+                        dl_ = 1.0 / math.sqrt(math.pi * 10e9 * 4e-7 * math.pi * mr_ * sg_)
+                        if dl_ < h * 1e-6:
+                            thin_skin.append((t_["name"], dl_ * 1e6))
+                for nm_, dl_ in thin_skin:
+                    log(f"    note: at 10 GHz the skin depth of {nm_} ({dl_:.2g} µm) is below the voxel ({h:.3g} µm); "
+                        f"the FDTD does not resolve its eddy currents and the homogenisation leaves them out, "
+                        f"so the two can differ widely")
                 try:
+                    if not FW.find_openems():
+                        raise FileNotFoundError("openEMS is not installed (tools\\openEMS; 1_INSTALL.bat downloads it, "
+                                                "the offline package contains it)")
                     res_r["emi_fullwave"] = FW.check(labels, table, h, os.path.join(out_dir, "fullwave"), log=log,
-                                                     should_stop=should_stop)
-                    log(f"    full-wave check: largest SE difference {res_r['emi_fullwave']['max_diff_db']:.2f} dB "
-                        f"({res_r['emi_fullwave']['seconds']:.0f} s)")
+                                                     should_stop=should_stop, progress=fwcb)
+                    res_r["emi_fullwave"]["thin_skin"] = [{"name": nm_, "skin_um": dl_, "voxel_um": h}
+                                                          for nm_, dl_ in thin_skin]
+                    log(f"    full-wave simulation: largest SE difference to the homogenised slab "
+                        f"{res_r['emi_fullwave']['max_diff_db']:.2f} dB ({res_r['emi_fullwave']['seconds']:.0f} s)")
                 except InterruptedError:
                     raise
                 except Exception as e:                               # noqa: BLE001
                     res_r["emi_fullwave"] = {"error": str(e)}
-                    log(f"    full-wave check not run: {e}")
+                    log(f"    full-wave simulation skipped: {e}")
                 prog.end()
 
         if "emi_complex" in res_r:

@@ -234,7 +234,7 @@
       analyses: { thermal: true },
       options: {
         directions: "xyz", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", contacts: "apart", parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: "auto", reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
-        emi: { thickness_mm: 1, f_min_hz: 1e6, f_max_hz: 1e10, method: "complex", n_freq: 10, fullwave: false },
+        emi: { thickness_mm: 1, f_min_hz: 1e6, f_max_hz: 1e10, method: "complex", n_freq: 10, fullwave: true },
         acoustics: { thickness_mm: 20, f_min_hz: 100, f_max_hz: 10000 },
         radiation: { temperature_K: 1000, refractive_index: 1, sources: 200, rays: 500 },
         porosimetry: { fluid: "mercury", surface_tension_N_m: 0.485, contact_angle_deg: 140, steps: 40 },
@@ -980,8 +980,8 @@
       anCard("emi", `<div class="g3">${num("options.emi.thickness_mm", "Thickness", "mm")}${num("options.emi.f_min_hz", "f min", "Hz")}${num("options.emi.f_max_hz", "f max", "Hz")}</div>
         <div class="g2"><div><label class="f">Method</label><select data-k="options.emi.method"><option value="complex">Frequency-resolved (σ + jωε on the RVE)</option><option value="static">Static σ and ε (earlier method)</option></select></div>${num("options.emi.n_freq", "Solved frequencies", "", "1")}</div>
         <div class="hint">Frequency-resolved: the RVE is solved with the complex admittivity of every region at each frequency, which captures the interfacial polarisation of conducting fillers and metal particles acting as conductors. Each frequency costs about one conduction solve per in-plane direction.</div>
-        <label class="chk"><span class="switch"><input type="checkbox" data-k="options.emi.fullwave"><span></span></span> Full-wave check with openEMS (10-100 GHz)</label>
-        <div class="hint">Simulates the RVE itself as a slab with Maxwell's equations (FDTD, voxel by voxel) and compares its shielding with the homogenised slab. Takes minutes. The two can only agree while conducting fillers are thinner than their skin depth (see Validity) and the shielding stays below about 80 dB.</div>`) +
+        <label class="chk"><span class="switch"><input type="checkbox" data-k="options.emi.fullwave"><span></span></span> Full-wave simulation with openEMS (10-100 GHz)</label>
+        <div class="hint">On by default. Simulates the RVE itself as a slab with Maxwell's equations (FDTD, voxel by voxel, no homogenisation) and compares its shielding with the homogenised slab. Takes minutes. The two can only agree while conducting fillers are thinner than their skin depth (see Validity) and the shielding stays below about 80 dB.</div>`) +
       anCard("cte", `${num("options.delta_T", "ΔT for thermal stresses", "K")}<label class="f">Stress maps</label><select data-k="options.thermal_bc"><option value="constrained">Constrained — zero mean strain (layer held rigidly)</option><option value="free">Free expansion — zero mean stress (phase mismatch only)</option></select><div class="hint">Constrained adds the stress of holding the whole composite still; free expansion leaves only what the phases do to each other, which is what a filler feels inside a free film. α and the stiffness do not depend on this choice.</div>
         <label class="chk"><span class="switch"><input type="checkbox" data-k="options.above_tg"><span></span></span> Also above Tg (rubbery resin: E above Tg, α2)</label>
         <div class="hint">Solves elasticity and CTE a second time with every material that has a glass transition in its rubbery state (optional properties E above Tg and CTE above Tg, ν 0.45, B-bar elements): the α2 and hot modulus of an EMC or underfill, which set warpage at reflow.</div>`) +
@@ -1535,8 +1535,8 @@
     if (fw && !fw.error) draws.push(() => CH.line($("#emiFw"), { xlabel: "Frequency (Hz)", ylabel: "SE (dB)", series: [
       { x: fw.freq_hz, y: fw.se_fullwave_db, color: "#d1242f", width: 2.4, label: "openEMS, voxel structure" },
       { x: fw.freq_hz, y: fw.se_model_db, color: "#0b62c4", dash: [6, 4], width: 2.0, label: "Homogenised slab" }] }));
-    const fwBox = !fw ? "" : fw.error ? `<div class="box" style="grid-column:1/-1"><div class="bt">Full-wave check</div><p class="hint">Not run: ${esc(fw.error)}</p></div>`
-      : `<div class="box" style="grid-column:1/-1"><div class="bt">Full-wave check <span class="hint">openEMS FDTD of the ${fmt(fw.thickness_um)} µm RVE slab, voxel by voxel, against the same slab homogenised · ${fw.cells.toLocaleString()} cells · ${fmt(fw.seconds)} s</span></div>${canvas("emiFw", 260)}
+    const fwBox = !fw ? "" : fw.error ? `<div class="box" style="grid-column:1/-1"><div class="bt">Full-wave simulation (openEMS)</div><p class="hint">Skipped: ${esc(fw.error)}</p></div>`
+      : `<div class="box" style="grid-column:1/-1"><div class="bt">Full-wave simulation <span class="hint">openEMS FDTD of the ${fmt(fw.thickness_um)} µm RVE slab, voxel by voxel, against the same slab homogenised · ${fw.cells.toLocaleString()} cells · ${fmt(fw.seconds)} s</span></div>${canvas("emiFw", 260)}
         <p>Largest difference <b class="mono">${fmt(fw.max_diff_db)} dB</b> (mean ${fmt(fw.mean_diff_db)} dB). |S11| at ${fmt(fw.freq_hz[0])} Hz: ${fmt(fw.s11_fullwave[0])} full-wave, ${fmt(fw.s11_model[0])} homogenised.</p>
         ${(fw.notes || []).map((n) => `<div class="note warn">${esc(n)}</div>`).join("")}</div>`;
     const cx = p.complex;
@@ -3248,7 +3248,15 @@
     loadCustom();
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem("mpsim.form") || "null"); } catch (e) { }
-    try { state.form = saved ? completeForm(saved) : completeForm(state.presets.find((p) => p.id === "porous_filter").form); }
+    // the openEMS full-wave run became the default; a case kept from before
+    // carries the old default (off) and is switched on once
+    try {
+      if (localStorage.getItem("mpsim.fullwave_on") !== "1") {
+        if (saved && saved.options && saved.options.emi) saved.options.emi.fullwave = true;
+        localStorage.setItem("mpsim.fullwave_on", "1");
+      }
+    } catch (e) { }
+    try { state.form = saved ? completeForm(saved) :completeForm(state.presets.find((p) => p.id === "porous_filter").form); }
     catch (e) { state.form = completeForm(state.presets[0].form); }
     // the dock starts collapsed so the viewport gets the height; a run opens it
     try { toggleDock(localStorage.getItem("mpsim.dock") !== "0"); } catch (e) { toggleDock(true); }

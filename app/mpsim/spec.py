@@ -345,9 +345,13 @@ def normalize(form):
                 # solved apart and combined (v1-v3)
                 "method": emi.get("method") if emi.get("method") in ("complex", "static") else "complex",
                 "n_freq": int(_num(emi.get("n_freq", 10), "number of EMI frequencies", 2, 40)),
-                # a full-wave openEMS run of the RVE slab against the
-                # homogenised slab (10-100 GHz); minutes, so off by default
-                "fullwave": bool(emi.get("fullwave", False))},
+                # a full-wave openEMS run of the RVE slab - Maxwell's
+                # equations on the voxels, no homogenisation - against the
+                # homogenised slab (10-100 GHz). On by default (user,
+                # 2026-10-07): a shielding analysis is expected to include
+                # the wave simulation; it is skipped with a note where
+                # openEMS is not installed
+                "fullwave": bool(emi.get("fullwave", True))},
         "acoustics": {"thickness_mm": _num(ac.get("thickness_mm", 20.0), "absorber thickness", 1e-3, 1e4),
                       "f_min_hz": _num(ac.get("f_min_hz", 100.0), "minimum acoustic frequency", 1.0, 1e6),
                       "f_max_hz": _num(ac.get("f_max_hz", 10000.0), "maximum acoustic frequency", 1.0, 1e6)},

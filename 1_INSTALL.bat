@@ -29,6 +29,22 @@ if exist "env\python.exe" (
     )
 )
 call "%~dp0_common.bat" || (pause & exit /b 1)
+
+REM openEMS (the full-wave simulation of the EMI analysis, on by default) is a
+REM program of its own: the official Windows build from its GitHub release,
+REM unpacked into tools\openEMS. Without it the EMI analysis still runs and
+REM says the full-wave simulation was skipped.
+if not exist "tools\openEMS\openEMS.exe" (
+    echo.
+    echo Downloading openEMS for the EMI full-wave simulation ...
+    curl -L --fail -s -o "%TEMP%\mpsim_openEMS.zip" "https://github.com/thliebig/openEMS-Project/releases/download/v0.37.0-rc3/openEMS_x64_v0.37.0-rc3_msvc.zip"
+    if exist "%TEMP%\mpsim_openEMS.zip" (
+        if not exist "tools" mkdir "tools"
+        tar -xf "%TEMP%\mpsim_openEMS.zip" -C tools
+        del "%TEMP%\mpsim_openEMS.zip" 2>nul
+    )
+    if not exist "tools\openEMS\openEMS.exe" echo   openEMS could not be installed; EMI runs without the full-wave simulation.
+)
 echo.
 echo Running the self-test (known answers) ...
 %MPY% "%~dp0app\selftest.py" --quick
