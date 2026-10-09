@@ -66,18 +66,29 @@ KN_FACTOR = 1000.0      # contact stiffness against the strongest attraction (se
 # 4.9 % between three packings each (the 8 blocks of one run said 1.4 and
 # 3.4 %), 150 spheres to a strain of 2 by 17 % and 32 % between five
 RUN_SCATTER = 2.5
-_TI = {"arch": None}
+# arch: the running Taichi backend; prefer: what it was started for;
+# cuda_failed: why a run on the GPU failed (the process then stays on the CPU)
+_TI = {"arch": None, "prefer": None, "cuda_failed": None}
 
 
 def init_backend(prefer="auto", log=None):
-    """Starts Taichi once per process: CUDA when an NVIDIA GPU answers (or is
-    asked for), else the CPU. Returns the backend name ('cuda' or 'x64')."""
+    """Starts Taichi for the particle dynamics: CUDA first - an NVIDIA GPU
+    when one answers - and the CPU otherwise ('cpu' asks for the CPU only).
+    Kept for the process; a later request changes it only when it asks for
+    the CPU on a GPU process, or for the GPU on a process that had been told
+    to use the CPU. Returns the backend name ('cuda' or 'x64')."""
     import taichi as ti
-    if _TI["arch"] is not None:
-        return _TI["arch"]
-    order = {"auto": ["cuda", "cpu"], "cuda": ["cuda", "cpu"], "gpu": ["cuda", "cpu"],
-             "cpu": ["cpu"]}.get(prefer, ["cuda", "cpu"])
-    last = None
+    want_gpu = prefer != "cpu"
+    cur = _TI["arch"]
+    if cur is not None:
+        switch = (not want_gpu and cur == "cuda") or (want_gpu and cur != "cuda" and _TI["prefer"] == "cpu"
+                                                      and not _TI["cuda_failed"])
+        if not switch:
+            return cur
+        ti.reset()
+        _TI["arch"] = None
+    order = ["cuda", "cpu"] if (want_gpu and not _TI["cuda_failed"]) else ["cpu"]
+    last, why = None, None
     for name in order:
         try:
             ti.init(arch=getattr(ti, name), default_fp=ti.f64, default_ip=ti.i32, offline_cache=True,
@@ -85,18 +96,38 @@ def init_backend(prefer="auto", log=None):
             got = str(ti.lang.impl.current_cfg().arch).split(".")[-1]
             if name != "cpu" and got in ("x64", "arm64"):
                 ti.reset()                                     # no GPU: Taichi fell back silently
+                why = "no NVIDIA GPU with CUDA found"
                 continue
-            _TI["arch"] = got
+            _TI["arch"], _TI["prefer"] = got, prefer
             if log:
-                log(f"    particle dynamics on {'the GPU (CUDA)' if got == 'cuda' else 'the CPU'}")
+                if got == "cuda":
+                    log("    particle dynamics on the GPU (CUDA)")
+                else:
+                    reason = ("as set" if not want_gpu else
+                              f"the GPU run failed: {_TI['cuda_failed']}" if _TI["cuda_failed"] else why or "")
+                    log(f"    particle dynamics on the CPU{f' ({reason})' if reason else ''}")
             return got
         except Exception as e:                                 # noqa: BLE001
             last = e
+            if name == "cuda":
+                why = f"CUDA did not start: {str(e).splitlines()[0][:160] if str(e) else type(e).__name__}"
             try:
                 ti.reset()
             except Exception:                                  # noqa: BLE001
                 pass
     raise RuntimeError(f"Taichi could not start ({last})")
+
+
+def fall_back_to_cpu(reason, log=None):
+    """A run on the GPU failed: the CPU from now on in this process."""
+    import taichi as ti
+    _TI["cuda_failed"] = str(reason).splitlines()[0][:200] if str(reason) else "error"
+    try:
+        ti.reset()
+    except Exception:                                          # noqa: BLE001
+        pass
+    _TI["arch"] = None
+    return init_backend("auto", log)
 
 
 def _kernels(n, maxn):
@@ -694,6 +725,31 @@ def hamaker(filler_id, resin_id, eps_f=None, eps_r=None, sigma_f=0.0, T=298.15):
 def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
                     strain=5.0, settle=1.0, seed=1, backend="auto", log=None, progress=None, should_stop=None,
                     bound_m=0.0, adhesion_J_m2=0.0, frames=None):
+    """See _shear_viscosity. On the GPU first; a run that fails there (the
+    driver, the GPU's memory) is redone on the CPU, and the process stays
+    on the CPU. out['gpu_fallback'] says why, when it happened."""
+    kw = dict(roughness_m=roughness_m, hmin_m=hmin_m, hamaker_J=hamaker_J, mu_f=mu_f, strain=strain, settle=settle,
+              seed=seed, log=log, progress=progress, should_stop=should_stop, bound_m=bound_m,
+              adhesion_J_m2=adhesion_J_m2, frames=frames)
+    try:
+        out = _shear_viscosity(radii_m, phi, mu_resin, gd, backend=backend, **kw)
+    except InterruptedError:
+        raise
+    except Exception as e:                                     # noqa: BLE001
+        if _TI["arch"] != "cuda":
+            raise
+        if log:
+            log(f"    the run on the GPU failed ({str(e).splitlines()[0][:200] if str(e) else type(e).__name__}); "
+                f"it is redone on the CPU")
+        fall_back_to_cpu(e, log)
+        out = _shear_viscosity(radii_m, phi, mu_resin, gd, backend="auto", **kw)
+    out["gpu_fallback"] = _TI["cuda_failed"]
+    return out
+
+
+def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
+                     strain=5.0, settle=1.0, seed=1, backend="auto", log=None, progress=None, should_stop=None,
+                     bound_m=0.0, adhesion_J_m2=0.0, frames=None):
     """Relative viscosity of spheres of the given radii (m) at volume fraction
     phi in a resin of viscosity mu_resin (Pa s) sheared at gd (1/s), from the
     particle dynamics. The surface roughness and the closest approach are

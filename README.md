@@ -69,7 +69,7 @@ Its capabilities include:
   (7 loads on 96³ in 49 s, 11× faster than MINRES on the same discretisation) — optionally above the glass transition.
 - **Rheology.** Effective viscosity of underfills, moulding compounds and pastes from a creeping-flow solve on the RVE
   and, for dense spherical fillers, a particle dynamics in which every filler moves, turns and collides in the sheared
-  resin (lubrication, friction, van der Waals; CPU or NVIDIA GPU) — which also gives the particle-size effect and, run at
+  resin (lubrication, friction, van der Waals; NVIDIA GPU first, CPU otherwise) — which also gives the particle-size effect and, run at
   several shear rates, the shear thinning that attraction causes; Krieger–Dougherty with the maximum packing fraction of
   the actual size distribution, flow curves, capillary underfill filling time and settling; the resin flow and the
   moving particles are shown.

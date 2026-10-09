@@ -691,7 +691,8 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     e = np.asarray(out["eta"])
     keep = max(1, len(st) // 200)
     res = {"mu_r": out["eta_mean"], "se": out["eta_se"], "n": out["n"], "phi": phi, "gd": gd, "mu_resin": mu_res,
-           "backend": out["backend"], "seconds": out["seconds"], "steps": out["steps"], "box_um": out["box_um"],
+           "backend": out["backend"], "gpu_fallback": out.get("gpu_fallback"),
+           "seconds": out["seconds"], "steps": out["steps"], "box_um": out["box_um"],
            "strain": st[::keep].tolist(), "eta": e[::keep].tolist(),
            "eta_lub": float(np.mean(np.asarray(out["eta_lub"])[st >= 1.0])),
            "eta_contact": float(np.mean(np.asarray(out["eta_contact"])[st >= 1.0])),
