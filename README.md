@@ -198,8 +198,8 @@ solver before it runs and warns with the numbers instead of refusing. Estimates 
 The program comes in two forms:
 
 - **The source (this repository)** — installed with conda on a PC with internet access.
-- **The offline package** — the same program with the official Python runtime, all 76 wheels and openEMS (about
-  380 MB), for PCs without internet. Binaries are not kept in the repository: download the package from the
+- **The offline package** — the same program with the official Python runtime, all 78 wheels and openEMS (about
+  500 MB), for PCs without internet. Binaries are not kept in the repository: download the package from the
   [**Releases**](https://github.com/HyoseokByun-opt/MPSim/releases) page, or build it with `tools\build_offline.py` (below).
 
 ### With conda (from the source)
@@ -222,7 +222,7 @@ package and must not be installed.
 
 ### On an offline PC
 
-The offline package contains everything: the official Python 3.11.9 runtime from python.org, 76 wheels (235 MB)
+The offline package contains everything: the official Python 3.11.9 runtime from python.org, 78 wheels (320 MB)
 including NASA PuMA, and openEMS. Neither internet nor conda is needed.
 
 1. Copy the whole folder to the offline PC, preferably to a short path such as `C:\MPSim`.
@@ -238,7 +238,7 @@ To remove the program, delete the folder.
 On a PC with internet access and the tested conda environment (`environment.yml`):
 
 ```bat
-conda run -p .\env python tools\build_offline.py            :: runtime, openEMS, PuMA wheel, 76 wheels
+conda run -p .\env python tools\build_offline.py            :: runtime, openEMS, PuMA wheel, 78 wheels
 conda run -p .\env python tools\build_offline.py --no-openems
 ```
 
