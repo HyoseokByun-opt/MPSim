@@ -96,13 +96,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM openEMS (full-wave check of the EMI analysis) is a program of its own:
+REM openEMS (the full-wave simulation of the EMI analysis, on by default) is a program of its own:
 REM unpacked next to the others, used from tools\openEMS
 set "OEMSZIP="
 for %%F in ("runtime\openEMS_x64_*.zip") do set "OEMSZIP=%%~fF"
 if defined OEMSZIP if not exist "tools\openEMS\openEMS.exe" (
     echo.
-    echo   Unpacking openEMS for the EMI full-wave check ...
+    echo   Unpacking openEMS for the EMI full-wave simulation ...
     tar -xf "%OEMSZIP%" -C tools
 )
 
