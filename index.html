@@ -185,7 +185,7 @@
         <div class="card"><span class="tag">Mechanics</span><h3>Elasticity and CTE</h3>
           <ul><li>Stiffness, engineering constants, CTE tensor</li><li>Thermal stress; α1 / α2 above Tg</li></ul></div>
         <div class="card"><span class="tag">Rheology</span><h3>Viscosity and flowability</h3>
-          <ul><li>Viscosity of uncured compounds, flow curves</li><li>Particle dynamics of the fillers: the particle-size effect, on CPU or GPU</li><li>Maximum packing, underfill filling time, settling</li></ul></div>
+          <ul><li>Viscosity of uncured compounds, flow curves</li><li>Particle dynamics of the fillers: the particle-size effect and shear thinning, on CPU or GPU</li><li>Maximum packing, underfill filling time, settling</li></ul></div>
         <div class="card"><span class="tag">Reliability</span><h3>Moisture</h3>
           <ul><li>Moisture diffusivity and saturated uptake</li><li>Uptake curve of a part, hygroscopic swelling (CME)</li></ul></div>
         <div class="card"><span class="tag">Porous media</span><h3>Flow, filtration, acoustics</h3>
@@ -193,7 +193,7 @@
         <div class="card"><span class="tag">Structure</span><h3>Morphology</h3>
           <ul><li>Porosity, size distributions, porosimetry</li><li>Pore networks, grain statistics, percolation paths</li></ul></div>
         <div class="card"><span class="tag">Inverse problems</span><h3>Calibration</h3>
-          <ul><li>Unknown material values from measurements</li><li>Credible intervals, identifiability, next measurement</li></ul></div>
+          <ul><li>Unknown material values from measurements, a filler's surface from a measured viscosity</li><li>Credible intervals, identifiability, next measurement</li></ul></div>
         <div class="card"><span class="tag">Studies</span><h3>DOE and optimisation</h3>
           <ul><li>Factorial and Latin-hypercube studies</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
       </div>
@@ -216,7 +216,7 @@
       <p class="sub">The engine is checked against problems whose answers are known, and every run reports its own checks —
         RVE size, resolution, particle count, convergence and rigorous bounds — as passed, warning or failed, with the reason.</p>
       <div class="stats">
-        <div class="stat"><b>55</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>56</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
         <div class="stat"><b>21</b><span>ready-to-run presets for semiconductor materials</span></div>
         <div class="stat"><b>52</b><span>materials in the library, all editable</span></div>
