@@ -137,6 +137,7 @@ def parameter_catalogue(form):
         {"path": "options.delta_T", "label": "ΔT", "unit": "K", "group": "Options"},
         {"path": "options.thickness_mm", "label": "Layer thickness", "unit": "mm", "group": "Options"},
         {"path": "options.filtration.face_velocity_m_s", "label": "Filtration face velocity", "unit": "m/s", "group": "Options"},
+        {"path": "options.viscosity.gd_ref", "label": "Shear rate (viscosity)", "unit": "1/s", "group": "Options"},
         {"path": "matrix.props.k", "label": "Matrix thermal conductivity", "unit": "W/m·K", "group": "Matrix"},
         {"path": "matrix.props.E", "label": "Matrix Young's modulus", "unit": "GPa", "group": "Matrix"},
         {"path": "matrix.props.eps_r", "label": "Matrix permittivity", "unit": "-", "group": "Matrix"},

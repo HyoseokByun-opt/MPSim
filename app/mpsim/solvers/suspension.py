@@ -60,6 +60,12 @@ import numpy as np
 
 LUB_CUT = 0.25          # lubrication acts below this gap / mean radius of the pair
 KN_FACTOR = 1000.0      # contact stiffness against the strongest attraction (see Suspension)
+# scatter of the mean viscosity between runs from other random packings,
+# relative: RUN_SCATTER / sqrt(spheres x averaged strain). Fitted to 50 vol%
+# silica, 1 and 10 um: 500 spheres to a strain of 5 scattered by 3.6 % and
+# 4.9 % between three packings each (the 8 blocks of one run said 1.4 and
+# 3.4 %), 150 spheres to a strain of 2 by 17 % and 32 % between five
+RUN_SCATTER = 2.5
 _TI = {"arch": None}
 
 
@@ -687,7 +693,7 @@ def hamaker(filler_id, resin_id, eps_f=None, eps_r=None, sigma_f=0.0, T=298.15):
 
 def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
                     strain=5.0, settle=1.0, seed=1, backend="auto", log=None, progress=None, should_stop=None,
-                    bound_m=0.0, adhesion_J_m2=0.0):
+                    bound_m=0.0, adhesion_J_m2=0.0, frames=None):
     """Relative viscosity of spheres of the given radii (m) at volume fraction
     phi in a resin of viscosity mu_resin (Pa s) sheared at gd (1/s), from the
     particle dynamics. The surface roughness and the closest approach are
@@ -710,17 +716,31 @@ def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, h
                    hmin=max(hmin_m, 1e-12) / a0, hamaker=np.asarray(hamaker_J, float) / (mu_resin * gd * a0 ** 3),
                    mu_f=mu_f, adhesion=float(adhesion_J_m2) / (mu_resin * gd * a0))
     s.pack()
-    out = s.run(strain, every=0.02, progress=progress, should_stop=should_stop, frames=min(1.0, strain / 2))
+    # frames of the last strain for the viewer (frames=0: none)
+    out = s.run(strain, every=0.02, progress=progress, should_stop=should_stop,
+                frames=min(1.0, strain / 2) if frames is None else frames)
     st, e = np.asarray(out["strain"]), np.asarray(out["eta"])
     m = st >= settle
     blocks = [b.mean() for b in np.array_split(e[m], 8) if len(b)]
+    # the standard error: contact networks build and break over a strain of
+    # order one, so the blocks of one run scatter less than whole runs from
+    # other packings do. The largest of the 8 blocks, batches of one strain
+    # and the measured scatter between runs (RUN_SCATTER) is taken.
+    eta_mean = float(e[m].mean())
+    span = max(float(st[-1]) - settle, 0.1)
+    se = float(np.std(blocks) / math.sqrt(len(blocks)))
+    nb = int(span // 1.0)
+    if nb >= 3:
+        batches = [e[(st >= settle + k) & (st < settle + k + 1.0)].mean() for k in range(nb)]
+        se = max(se, float(np.std(batches, ddof=1) / math.sqrt(nb)))
+    se = max(se, RUN_SCATTER / math.sqrt(len(r) * span) * eta_mean)
     if out["frames"]:
         out["frames_um"] = np.stack(out.pop("frames")) * (a0 * 1e6)
         out["frames_speed"] = np.stack(out["frames_speed"])
     else:
         out.pop("frames")
         out["frames_um"] = None
-    out.update(eta_mean=float(e[m].mean()), eta_se=float(np.std(blocks) / math.sqrt(len(blocks))),
+    out.update(eta_mean=eta_mean, eta_se=se,
                n=int(len(r)), box_um=float(s.L * a0 * 1e6), backend=s.backend,
                delta_rel=float(roughness_m / a0), phi_effective=float(phi),
                adhesion_rel=float(adhesion_J_m2) / (mu_resin * gd * a0),

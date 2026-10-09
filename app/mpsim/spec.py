@@ -415,6 +415,9 @@ def normalize(form):
                     # surface, and the work of adhesion of touching surfaces
                     "bound_nm": _num(dem.get("bound_nm", 0.0), "bound resin layer", 0.0, 1e4),
                     "adhesion_mJ_m2": _num(dem.get("adhesion_mJ_m2", 0.0), "work of adhesion", 0.0, 1e4),
+                    # further shear rates for the flow curve (0: only the reference
+                    # rate); skipped where the attraction is negligible
+                    "rates": int(_num(dem.get("rates", 4), "shear rates of the flow curve", 0, 12)),
                     "hamaker_J": (None if dem.get("hamaker_J") in (None, "", "auto") else
                                   _num(dem.get("hamaker_J"), "Hamaker constant", 0.0, 1e-17)),
                     "backend": dem.get("backend") if dem.get("backend") in ("auto", "cpu", "cuda") else "auto"},

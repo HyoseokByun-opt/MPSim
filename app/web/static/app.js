@@ -242,7 +242,7 @@
         viscosity: { model: { type: "newtonian", mu: 1, K: 1, n: 0.7, mu0: 1, mu_inf: 0, lam: 1 }, yield_Pa: 0, gd_min: 0.01, gd_max: 1000, gd_ref: 10,
           phi_m_mode: "auto", friction: "none", phi_m: 0.64, dilute_rve: true, density_resin: 1150, settle_min: 60,
           underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 },
-          dem: { on: true, n: 500, strain: 5, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, backend: "auto" } },
+          dem: { on: true, n: 500, strain: 5, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
         gas: { molar_mass_g_mol: 28.97, viscosity_Pa_s: 1.81e-5, diffusivity_m2_s: 2.0e-5, pressure_Pa: 101325, molecule_diameter_nm: 0.37, density_kg_m3: 1.204, sound_speed_m_s: 343.2, gamma: 1.4, prandtl: 0.71 },
       },
@@ -1636,6 +1636,8 @@
       <div class="g3">${num("options.viscosity.dem.roughness_nm", "Surface roughness", "nm")}${num("options.viscosity.dem.hmin_nm", "Closest approach", "nm")}${num("options.viscosity.dem.hamaker_J", "Hamaker constant (empty: auto)", "J")}</div>
       <div class="g2">${num("options.viscosity.dem.bound_nm", "Bound resin layer", "nm")}${num("options.viscosity.dem.adhesion_mJ_m2", "Work of adhesion", "mJ/m²")}</div>
       <div class="hint">Surface chemistry that bulk data cannot give: a resin layer that moves with the particle (adsorbed resin, coupling agent) adds (1 + b/a)³ to the filler volume, and adhesion of touching surfaces (hydrogen bonding of untreated silica) pulls them together with 2πW·R*. Both weigh most on a fine filler. Leave them at 0, or fit them to one measured viscosity and predict other sizes and loadings.</div>
+      <div class="g2">${num("options.viscosity.dem.rates", "Further shear rates (flow curve)", "", "1")}<div></div></div>
+      <div class="hint">The attraction weighs against the viscous force as 1/(μγ̇): with van der Waals or adhesion a compound flows more easily the faster it is sheared. The particles are sheared again at this many rates, log-spaced over the flow curve's range, and the curve follows them (0: only the reference rate; skipped where the attraction is negligible).</div>
       <label class="f">Computed on</label><select data-k="options.viscosity.dem.backend"><option value="auto">Automatic: an NVIDIA GPU (CUDA) when present, else all CPU cores</option><option value="cuda">NVIDIA GPU (CUDA)</option><option value="cpu">CPU</option></select>
       <div class="hint">Every filler particle moves, turns and collides in the sheared resin: lubrication between close surfaces, contacts with friction, and the van der Waals attraction of the filler across the resin (Hamaker constant from the refractive indices of the library, or entered). Roughness and the closest approach are lengths, so a fine filler meets them at a larger share of its size than a coarse one — this is where the particle-size effect comes from. Friction 0.25 reproduces the measured law of non-Brownian spheres (Boyer et al. 2011: μr 20.7 at 50 vol% and 103 at 55 vol%), friction 0 the frictionless Krieger–Dougherty curve. It is the best estimate above about 35 vol% or where particles touch.</div>
       <div class="subh">Capillary underfill (parallel plates)</div>
@@ -1666,13 +1668,13 @@
         const id = state.resultJob, host = $("#demPlayer");
         if (!id || !host || !window.DemPlayer) return;
         const m = await (await fetch(`/api/jobs/${id}/view/meta.json`, { cache: "no-store" })).json();
-        if (m.dem) state.demPlayer = await window.DemPlayer(host, id, m.dem, m.built);
+        if (m.dem) state.demPlayer = await window.DemPlayer(host, id, m.dem, m.built, state.result && state.result.name);
       } catch (e) { console.warn("particle dynamics player", e); }
     });
     const demBox = !dm ? "" : dm.error ? `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics</div><p class="hint">Not run: ${esc(dm.error)}</p></div>`
       : `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics <span class="hint">${dm.n} spheres moving, turning and colliding in the resin sheared at ${fmt(dm.gd)} 1/s · ${dm.backend === "cuda" ? "NVIDIA GPU" : "CPU"} · ${secs(dm.seconds)}</span></div>
         <div class="rgrid"><div>${canvas("viscDem", 230)}</div><div>
-        ${kv([["Relative viscosity", `<b class="mono">${fmt(dm.mu_r)}</b> ± ${fmt(dm.se)} <span class="hint">mean over the strain after 1, standard error of 8 blocks</span>`],
+        ${kv([["Relative viscosity", `<b class="mono">${fmt(dm.mu_r)}</b> ± ${fmt(dm.se)} <span class="hint">mean over the strain after 1; standard error including the scatter between runs from other random packings</span>`],
               ["From lubrication / contacts", `${fmt(dm.eta_lub)} / ${fmt(dm.eta_contact)} <span class="hint">plus 1 + 2.5φ (resin and single-sphere stresslet)</span>`],
               ["Contacts per particle", fmt(dm.contacts_per_particle)],
               ["Particles", dm.counts.map((c, i) => `${c} × ${fmt(dm.d_um[i])} µm`).join(" + ") + ` <span class="hint">box ${fmt(dm.box_um)} µm</span>`],
@@ -1685,7 +1687,8 @@
     const f = p.flow;
     draws.push(() => CH.line($("#viscFlow"), { xlog: true, ylog: true, xlabel: "Shear rate (1/s)", ylabel: "Viscosity (Pa·s)", series: [
       { x: f.gd, y: f.mu_compound, color: "#d1242f", width: 2.4, label: "Compound" },
-      { x: f.gd, y: f.mu_resin, color: "#0b62c4", dash: [6, 4], label: "Resin" }] }));
+      { x: f.gd, y: f.mu_resin, color: "#0b62c4", dash: [6, 4], label: "Resin" },
+      ...(f.dem_points ? [{ x: f.dem_points.gd, y: f.dem_points.mu, color: "#bf8700", marker: true, width: 0, label: "Particle dynamics" }] : [])] }));
     const uf = p.underfill;
     draws.push(() => setupUfAnim(p));
     const refs = Object.entries(p.refs).map(([k, v]) => [esc(k), fmt(v)]);
@@ -1706,12 +1709,13 @@
       <div class="box"><div class="bt">Relative viscosity against filler loading</div>${canvas("viscCurve", 300)}</div>
       ${demBox}
       <div class="box"><div class="bt">Flow curve <span class="hint">resin ${esc(f.model.type)}${f.yield_Pa ? `, yield stress ${fmt(f.yield_Pa)} Pa` : ""}; shear-rate amplification in the resin ${fmt(f.amplification)}</span></div>${canvas("viscFlow", 280)}
-        ${kv([[`Compound at ${fmt(p.gd_ref)} 1/s`, `<b class="mono">${fmt(p.mu_compound_ref)}</b> Pa·s`], [`Resin at ${fmt(p.gd_ref)} 1/s`, `${fmt(p.mu_resin_ref)} Pa·s`]])}</div>
+        ${kv([[`Compound at ${fmt(p.gd_ref)} 1/s`, `<b class="mono">${fmt(p.mu_compound_ref)}</b> Pa·s`], [`Resin at ${fmt(p.gd_ref)} 1/s`, `${fmt(p.mu_resin_ref)} Pa·s`]])}
+        ${f.dem_rates ? `<div class="hint">The compound follows the particle dynamics at ${f.dem_rates.gd.length} shear rates (dots; relative viscosity ${f.dem_rates.mu_r.map(fmt).join(" → ")} from ${fmt(f.dem_rates.gd[0])} to ${fmt(f.dem_rates.gd[f.dem_rates.gd.length - 1])} 1/s), linear in log-log between them.</div>` : (p.dem && p.dem.rate_note ? `<div class="hint">Particle dynamics: ${esc(p.dem.rate_note)}.</div>` : "")}</div>
       <div class="box"><div class="bt">Capillary underfill <span class="hint">parallel plates, gap ${fmt(uf.gap_um)} µm, flow length ${fmt(uf.length_mm)} mm, γ ${fmt(uf.gamma_mN_m)} mN/m, θ ${fmt(uf.theta_deg)}°</span></div>
         ${kv([["Filling time, compound", `<b class="mono">${fmtT(uf.t_compound_s)}</b>`], ["Filling time, resin alone", fmtT(uf.t_resin_s)]])}
         <div class="hint">Washburn's law t = 3μL² / (hγ cos θ) with the compound's viscosity at the reference shear rate; bumps, the dispensing pattern and curing during the flow are not included.</div></div>
       <div class="box" style="grid-column:1/-1"><div class="bt">Flow front under the die <span class="hint">top view, the same gap for the resin alone and the compound; the front advances as x = L·√(t / t_fill)</span>
-          <div class="grow"></div><button class="btn sm" id="ufPlay">${I("play")}Play</button></div>
+          <div class="grow"></div><button class="btn sm" id="ufPlay">${I("play")}Play</button><button class="btn sm" id="ufGif" title="Save the filling as an animated GIF">${I("download")}GIF</button></div>
         ${canvas("ufAnim", 230)}
         <div class="row gap" style="align-items:center;margin-top:4px"><input type="range" id="ufTime" min="0" max="1000" value="0" style="flex:1"><span class="mono" id="ufRead" style="min-width:330px;text-align:right"></span></div>
         <div class="hint">The dots are the bumps (schematic). The compound's front starts as fast as it can and slows as the wetted length grows; the resin alone fills ${fmt(uf.t_compound_s / uf.t_resin_s)}× faster.</div></div>
@@ -1792,6 +1796,21 @@
         };
         st.raf = requestAnimationFrame(step);
       }
+    };
+    const gb = $("#ufGif");
+    if (gb) gb.onclick = async () => {
+      if (!window.GifRec) return;
+      st.playing = false; btn.innerHTML = `${I("play")}Play`;
+      const keep = st.t, n = 60;
+      gb.disabled = true;
+      try {
+        await window.GifRec.record({ count: n + 1, delay: 90, maxWidth: 900, top: 22,
+          filename: `${(state.result ? state.result.name : "underfill").replace(/[^\w.-]+/g, "_")}_underfill.gif`,
+          frame: async (k) => { setT(tEnd * k / n); return cv; },
+          overlay: (g, w) => { g.font = "13px system-ui, sans-serif"; g.fillStyle = "#1f2328"; g.textAlign = "left"; g.fillText(`Capillary underfill · ${rd.textContent}`, 10, 16); },
+          onProgress: (i, m) => { gb.textContent = `${Math.round(100 * i / m)} %`; } });
+      } catch (e) { console.warn("GIF", e); }
+      finally { gb.disabled = false; gb.innerHTML = `${I("download")}GIF`; setT(keep); }
     };
     setT(0.35 * tR);
   }
@@ -1981,7 +2000,9 @@
   // the conductivity of a filler grade - from measured effective properties.
   // The case open in the editor is the base; each measurement is that case with
   // a few entries changed (content, particle size) and the value measured on it.
-  const CAL_PROPS = { k: ["Thermal conductivity", "W/m·K"], sigma: ["Electrical conductivity", "S/m"], eps_r: ["Relative permittivity", "-"], E: ["Young's modulus", "GPa"], alpha: ["CTE", "ppm/K"] };
+  const CAL_PROPS = { k: ["Thermal conductivity", "W/m·K"], sigma: ["Electrical conductivity", "S/m"], eps_r: ["Relative permittivity", "-"], E: ["Young's modulus", "GPa"], alpha: ["CTE", "ppm/K"],
+    mu_r: ["Relative viscosity (compound / resin)", "-"], mu: ["Viscosity of the compound", "Pa·s"] };
+  const calVisc = (p) => p === "mu_r" || p === "mu";
   let calDraws = [];
   function CAL() {
     if (!state.cal) {
@@ -2023,6 +2044,15 @@
     const ph = f.phases || [];
     for (let i = 0; i < ph.length; i++) for (let j = i + 1; j < ph.length; j++)
       add(`contact_rc.${i}-${j}`, `${ph[i].name || "Phase " + (i + 1)} – ${ph[j].name || "Phase " + (j + 1)}: contact resistance`, "m²K/W", (f.contact_rc || {})[`${i}-${j}`] || 0, 1e-9, 1e-4, "log");
+    // the particle surface of the particle dynamics, from a measured viscosity
+    if (ph.some((p) => p.shape === "sphere")) {
+      const dm = ((f.options || {}).viscosity || {}).dem || {}, P = "options.viscosity.dem.";
+      add(P + "bound_nm", "Particle dynamics: bound resin layer", "nm", dm.bound_nm ?? 0, 0, 20, "lin");
+      add(P + "adhesion_mJ_m2", "Particle dynamics: work of adhesion", "mJ/m²", dm.adhesion_mJ_m2 ?? 0, 0, 0.5, "lin");
+      add(P + "mu_f", "Particle dynamics: friction coefficient", "-", dm.mu_f ?? 0.25, 0.05, 1, "lin");
+      add(P + "roughness_nm", "Particle dynamics: surface roughness", "nm", dm.roughness_nm ?? 5, 1, 50, "log");
+      add(P + "hamaker_J", "Particle dynamics: Hamaker constant (all fillers)", "J", dm.hamaker_J || undefined, 1e-21, 1e-19, "log");
+    }
     return out;
   }
   function calTheoryFor(path) {
@@ -2038,7 +2068,8 @@
   }
   function calAddUnknown() {
     const c = CAL(), used = new Set(c.unknowns.map((u) => u.path));
-    const cand = calCandidates().find((x) => !used.has(x.path) && /r_int$/.test(x.path)) || calCandidates().find((x) => !used.has(x.path));
+    const pref = c.measurements.some((m) => calVisc(m.property)) ? /dem\.bound_nm$/ : /r_int$/;
+    const cand = calCandidates().find((x) => !used.has(x.path) && pref.test(x.path)) || calCandidates().find((x) => !used.has(x.path));
     if (!cand) { toast("Every candidate is already an unknown."); return; }
     if (c.unknowns.length >= 3) { toast("At most three unknowns: a few effective-property measurements cannot determine more. Fix the others at theory or literature values.", 7000); return; }
     c.unknowns.push(calUnknownFrom(cand));
@@ -2055,8 +2086,9 @@
     const c = CAL();
     return {
       name: c.name || `${state.form.name} · calibration`, base: clone(state.form),
-      measurements: c.measurements.map((m) => ({ label: m.label, property: m.property, direction: m.direction, value: Number(m.value), rel_unc: Number(m.unc || 5) / 100,
-        set: Object.fromEntries((m.set || []).filter((s) => s.path && s.value !== "" && s.value !== null).map((s) => [s.path, Number(s.value)])) })),
+      measurements: c.measurements.map((m) => ({ label: m.label, property: m.property, direction: calVisc(m.property) ? "iso" : m.direction, value: Number(m.value), rel_unc: Number(m.unc || 5) / 100,
+        set: Object.assign(Object.fromEntries((m.set || []).filter((s) => s.path && s.value !== "" && s.value !== null).map((s) => [s.path, Number(s.value)])),
+          calVisc(m.property) && Number(m.gd) > 0 ? { "options.viscosity.gd_ref": Number(m.gd) } : {}) })),
       unknowns: c.unknowns.map((u) => ({ path: u.path, label: u.label, unit: u.unit, lo: Number(u.lo), hi: Number(u.hi), scale: u.scale, prior: u.prior,
         center: u.prior === "normal" && u.center !== "" ? Number(u.center) : null, sigma_dec: Number(u.sigma_dec || 1),
         theory: (calTheoryFor(u.path) || {}).kapitza || null })),
@@ -2110,7 +2142,8 @@
   }
   function leftCalibration() {
     const c = CAL(), cands = calCandidates();
-    const cat = (state.doeCat || []).filter((x) => !/props\.|r_int|r_contact/.test(x.path));
+    const cat = (state.doeCat || []).filter((x) => !/props\.|r_int|r_contact|gd_ref/.test(x.path));
+    const gdRef = (((state.form.options || {}).viscosity || {}).gd_ref) ?? 10;
     const catOpts = (sel) => `<option value="">— choose —</option>` + cat.map((x) => `<option value="${esc(x.path)}" ${x.path === sel ? "selected" : ""}>${esc(x.label)}${x.unit ? ` [${esc(x.unit)}]` : ""}</option>`).join("");
     const meas = c.measurements.map((m, i) => {
       const unit = (CAL_PROPS[m.property] || ["", ""])[1];
@@ -2119,11 +2152,13 @@
         <div class="prow1"><input data-cm="${i}" data-cf="label" value="${esc(m.label || "")}" placeholder="Sample name"><button class="btn sm danger" data-cmdel="${i}" title="Remove this measurement">${I("delete")}</button></div>
         <div class="g2 calg">
           <div><label>Property</label><select data-cm="${i}" data-cf="property">${Object.entries(CAL_PROPS).map(([k, v]) => `<option value="${k}" ${m.property === k ? "selected" : ""}>${v[0]}</option>`).join("")}</select></div>
-          <div><label>Direction</label><select data-cm="${i}" data-cf="direction">${[["iso", "Mean of x, y, z"], ["x", "x"], ["y", "y"], ["z", "z (through-plane)"]].map(([k, v]) => `<option value="${k}" ${m.direction === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+          ${calVisc(m.property) ? `<div><label>Shear rate [1/s]</label><input type="number" step="any" min="0" data-cm="${i}" data-cf="gd" value="${esc(m.gd ?? "")}" placeholder="${esc(gdRef)} (the case)"></div>`
+            : `<div><label>Direction</label><select data-cm="${i}" data-cf="direction">${[["iso", "Mean of x, y, z"], ["x", "x"], ["y", "y"], ["z", "z (through-plane)"]].map(([k, v]) => `<option value="${k}" ${m.direction === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>`}
         </div><div class="g2 calg">
           <div><label>Measured [${esc(unit)}]</label><input type="number" step="any" data-cm="${i}" data-cf="value" value="${esc(m.value ?? "")}"></div>
           <div><label>Uncertainty ± %</label><input type="number" step="any" min="0.1" data-cm="${i}" data-cf="unc" value="${esc(m.unc ?? 5)}"></div>
         </div>
+        ${calVisc(m.property) ? '<div class="hint">Solved by the particle dynamics (spheres): one run per parameter set, a few minutes each on a CPU. The relative viscosity needs no resin data; the compound viscosity uses the resin flow model of the case.</div>' : ""}
         <div class="hint">Differs from the case in:</div>${sets || '<div class="hint">nothing — the case as it is.</div>'}
         <button class="btn sm" data-csadd="${i}">${I("plus")}Condition</button></div>`;
     }).join("");
@@ -2159,7 +2194,7 @@
       <div class="sec"><div class="sh">${I("solver")}Settings</div><div class="sb">
         <div class="g2"><div><label class="f">RVE model uncertainty ± %</label><input type="number" step="any" min="0" data-calopt="model_unc" value="${esc(c.options.model_unc)}"></div>
         <div><label class="f">Refinement rounds</label><input type="number" min="0" max="6" data-calopt="refine_rounds" value="${esc(c.options.refine_rounds)}"></div></div>
-        <div class="hint">The model uncertainty covers what one RVE realisation and its voxel size leave open (about 2 % for a converged RVE). Each refinement round solves the RVE at a few more parameter sets where the answer lies.</div>
+        <div class="hint">The model uncertainty covers what one RVE realisation and its voxel size leave open (about 2 % for a converged RVE). Each refinement round solves the RVE at a few more parameter sets where the answer lies. A viscosity measurement adds the statistical error of its particle-dynamics runs.</div>
         <div class="row gap" style="margin-top:8px"><button class="btn" data-act="calPreview">${I("checks")}Check identifiability</button><button class="btn primary" data-act="calRun">${I("play")}Calibrate on the RVE</button></div>
       </div></div>
       <div class="sec"><div class="sh">${I("runs")}Calibrations</div><div class="sb">${runs}</div></div>`;
@@ -2262,10 +2297,10 @@
   }
   function calResultHTML(r) {
     const us = r.unknowns, ident = r.identifiability;
-    const meas = ctbl(["Sample", "Conditions", "Property", "Measured", "RVE at the estimate", "Deviation", "Surrogate", "Effective medium"],
+    const meas = ctbl(["Sample", "Conditions", "Property", "Measured", "Solved at the estimate", "Deviation", "Surrogate", "Effective medium"],
       r.measurements.map((m) => [esc(m.label), esc(m.conditions ? (m.conditions.map((c) => `${c.label} ${fmt(c.value)}${c.unit && c.unit !== "-" ? " " + c.unit : ""}`).join(", ") || "as the case") : calCondText(m.set)),
         `${esc((CAL_PROPS[m.property] || [m.property])[0])} ${m.direction === "iso" ? "" : "(" + m.direction + ")"}`, `${fmt(m.measured)} ± ${fmt(100 * m.rel_unc)} %`,
-        `<b>${fmt(m.direct)}</b> ${esc(m.unit)}`, `<span class="${Math.abs(m.residual_sigma) > 2 ? "bad" : ""}">${(100 * (m.direct / m.measured - 1)).toFixed(1)} % (${m.residual_sigma.toFixed(1)}σ)</span>`,
+        `<b>${fmt(m.direct)}</b> ${esc(m.unit)}${m.model === "particle dynamics" ? ` <span class="hint">particle dynamics${m.run_unc ? `, ± ${fmt(100 * m.run_unc)} %` : ""}</span>` : ""}`, `<span class="${Math.abs(m.residual_sigma) > 2 ? "bad" : ""}">${(100 * (m.direct / m.measured - 1)).toFixed(1)} % (${m.residual_sigma.toFixed(1)}σ)</span>`,
         fmt(m.surrogate), m.theory_k ? fmt(m.theory_k) : "—"]), [3, 4, 5, 6, 7]);
     us.forEach((u, j) => {
       const th = (u.theory || {});
@@ -2289,7 +2324,7 @@
       ${(r.notes || []).map((n) => `<div class="note">${esc(n)}</div>`).join("")}
       <div class="rgrid">
         <div class="box" style="grid-column:1/-1"><div class="bt">Measurements against the RVE at the estimate</div>${meas}
-          <div class="hint">"RVE at the estimate" is a direct solve with the calibrated values, not the surrogate. A deviation within about 2σ is a fit; larger means no value in the ranges explains that sample.</div></div>
+          <div class="hint">"Solved at the estimate" is a direct RVE solve (a particle-dynamics run for a viscosity) with the calibrated values, not the surrogate. A deviation within about 2σ is a fit; larger means no value in the ranges explains that sample.</div></div>
         ${marg}
         ${calJointDraw("calJoint", r.joint, us, marks)}
         ${calIdentHTML(ident, us)}
@@ -2875,6 +2910,19 @@
     if (!url) { toast("No 3D view is available."); return; }
     download(`${state.result ? state.result.name : "view"}_screen.png`, await (await fetch(url)).blob());
   }
+  async function recordGif() {
+    if (!V.hasData()) { toast("No structure is displayed."); return; }
+    if (V.state.mode === "2d") { toast("The animated GIF is made of the 3D view."); return; }
+    const btn = $("#vGif");
+    btn.disabled = true;
+    try {
+      const S = V.state, what = S.pathKey || S.field || "structure";
+      const name = `${(state.result ? state.result.name : "view").replace(/[^\w.-]+/g, "_")}_${String(what).replace(/[^\w.-]+/g, "_")}.gif`;
+      const size = await V.recordGif({ filename: name, onProgress: (i, n) => { btn.innerHTML = `<span style="font:600 9px system-ui">${Math.round(100 * i / n)}%</span>`; } });
+      if (size) toast(`Saved ${name} (${(size / 1e6).toFixed(1)} MB).`);
+    } catch (e) { toast("The GIF could not be made: " + e.message, 6000); }
+    finally { btn.disabled = false; btn.innerHTML = `<span style="font:600 10px system-ui;letter-spacing:.3px">GIF</span>`; }
+  }
   async function hiresRender() {
     if (!V.hasData()) { toast("No structure is displayed."); return; }
     const S = V.state, req = V.renderRequest(), kind = S.mode === "2d" ? "slice" : "scene";
@@ -3000,6 +3048,7 @@
     $("#vPhaseToggles").addEventListener("change", (e) => { const l = e.target.dataset.hide; if (l !== undefined) { S.hidden[l] = !e.target.checked; V.refresh(true); } });
     $$("[data-cam]").forEach((b) => b.addEventListener("click", () => V.camera(b.dataset.cam)));
     $("#vShot").addEventListener("click", screenshot);
+    $("#vGif").addEventListener("click", recordGif);
     const lbox = $("#liveBox");
     if (lbox) lbox.addEventListener("click", (e) => {
       const f = e.target.closest("[data-livepick]");
@@ -3061,6 +3110,7 @@
     if (hVec) hVec.innerHTML = `${I("tortuosity")}Vectors and paths`;
     $("#camFit").innerHTML = I("fit");
     $("#vShot").innerHTML = I("camera");
+    $("#vGif").innerHTML = `<span style="font:600 10px system-ui;letter-spacing:.3px">GIF</span>`;
     $("#vRender").innerHTML = I("image");
     $("#dockToggle").innerHTML = I("collapse");
 

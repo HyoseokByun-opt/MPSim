@@ -17,7 +17,17 @@
     return r.arrayBuffer();
   }
 
-  window.DemPlayer = async function (host, jobId, dem, built) {
+  const jetAt = (t) => {
+    for (let i = 1; i < JET.length; i++) {
+      if (t <= JET[i][0]) {
+        const [t0, r0, g0, b0] = JET[i - 1], [t1, r1, g1, b1] = JET[i], a = (t - t0) / Math.max(t1 - t0, 1e-9);
+        return [r0 + a * (r1 - r0), g0 + a * (g1 - g0), b0 + a * (b1 - b0)];
+      }
+    }
+    return JET[JET.length - 1].slice(1);
+  };
+
+  window.DemPlayer = async function (host, jobId, dem, built, name) {
     if (!window.vtk || !host) return null;
     const v = built || 0;
     const base = `/api/jobs/${jobId}/view/`;
@@ -32,6 +42,7 @@
         <input type="range" data-dem="frame" min="0" max="${F - 1}" value="0" style="flex:1;min-width:160px">
         <span class="mono" data-dem="read" style="min-width:150px;text-align:right"></span>
         <select data-dem="color"><option value="speed">Colour: speed relative to the shear</option><option value="phase">Colour: filler</option></select>
+        <button class="btn sm" data-dem="gif" title="Save the animation as an animated GIF (the view as it is turned now)">Save GIF</button>
       </div>`;
     const view = host.querySelector(".demview");
     const GRW = ns("Rendering.Misc.vtkGenericRenderWindow"), PD = ns("Common.DataModel.vtkPolyData");
@@ -91,7 +102,7 @@
     };
     const state = { frame: 0, playing: true, mode: "speed", last: 0, id: null };
     const legend = host.querySelector('[data-dem="legend"]');
-    const fmtv = (x) => (Math.abs(x) >= 100 || Math.abs(x) < 0.01 ? x.toExponential(1) : x.toPrecision(2));
+    const fmtv = (x) => (x === 0 ? "0" : Math.abs(x) >= 100 || Math.abs(x) < 0.01 ? x.toExponential(1) : x.toPrecision(2));
     function setMode(m) {
       state.mode = m;
       gm.setLookupTable(m === "speed" ? lutSpeed() : lutPhase());
@@ -129,6 +140,34 @@
     });
     slider.addEventListener("input", () => { state.playing = false; host.querySelector('[data-dem="play"]').textContent = "Play"; state.frame = +slider.value; show(state.frame); });
     host.querySelector('[data-dem="color"]').addEventListener("change", (e) => setMode(e.target.value));
+    // every frame of the run, as the view is turned now, with its legend
+    host.querySelector('[data-dem="gif"]').addEventListener("click", async (e) => {
+      if (!window.GifRec) return;
+      const b = e.target, was = state.playing, keep = state.frame;
+      state.playing = false;
+      b.disabled = true;
+      try {
+        await window.GifRec.record({
+          count: F, delay: 70, filename: `${(name || "particle_dynamics").replace(/[^\w.-]+/g, "_")}_particles.gif`,
+          frame: async (k) => { show(k); const imgs = await rw.captureImages(); return imgs[0]; },
+          overlay: (g, w, h, k) => {
+            g.font = "13px system-ui, sans-serif"; g.fillStyle = "#1f2328"; g.textAlign = "left";
+            g.fillText(`Particle dynamics · strain + ${(k * dem.strain_step).toFixed(2)}`, 12, h - 12);
+            if (state.mode === "speed") {
+              window.GifRec.colourBar(g, w - 80, 46, Math.round(h * 0.38), "Speed / γ̇a", 0, vmax, jetAt, fmtv);
+            } else {
+              (dem.names || []).forEach((nm, j) => {
+                g.fillStyle = (dem.colors || [])[j] || "#888";
+                g.beginPath(); g.arc(w - 150, 30 + 18 * j, 6, 0, 2 * Math.PI); g.fill();
+                g.fillStyle = "#1f2328"; g.fillText(nm, w - 138, 34 + 18 * j);
+              });
+            }
+          },
+          onProgress: (i, n) => { b.textContent = `GIF ${Math.round(100 * i / n)} %`; },
+        });
+      } catch (err) { console.warn("GIF", err); }
+      finally { b.disabled = false; b.textContent = "Save GIF"; state.frame = keep; show(keep); state.playing = was; }
+    });
     // the camera from a corner, the shear plane facing the viewer
     const cam = ren.getActiveCamera();
     cam.setFocalPoint(L / 2, L / 2, L / 2);

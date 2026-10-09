@@ -1625,6 +1625,69 @@
     const imgs = await R.rw.captureImages();
     return imgs && imgs[0];
   };
+  /* An animated GIF of the 3D view as it is shown: one loop of the moving
+     field lines or route when that animation is on, otherwise one turn around
+     the RVE. The colour bar of the field is drawn into every frame. */
+  V.recordGif = async function ({ filename, onProgress } = {}) {
+    if (!R || !window.GifRec || S.mode === "2d") return null;
+    const anim = !!(R.path && (R.path.tracer || R.path.particle) && S.pathAnim);
+    stopAnim();
+    const cam = R.renderer.getActiveCamera();
+    const saved = { pos: cam.getPosition(), fp: cam.getFocalPoint(), up: cam.getViewUp() };
+    const f = fieldMeta();
+    const [lo, hi] = f ? currentRange() : [0, 1];
+    const cm = CMAPS[S.cmap] || CMAPS.jet;
+    const n = anim ? 80 : 60;
+    // lines coloured along their length get their own bar, below the field's
+    const pm = pathMeta();
+    const lineBar = !!(pm && pm.kind !== "particle" && pm.speed_max != null);
+    const overlay = (f || lineBar) ? (g, w, h) => {
+      const bh = Math.round(h * (f && lineBar ? 0.3 : 0.42));
+      let y = 52;
+      if (f) {
+        window.GifRec.colourBar(g, w - 96, y, bh, f.label || "", lo, hi, cm, fmt);
+        y += bh + 48;
+      }
+      if (lineBar) {
+        const llo = pm.speed_min || 0, lhi = Math.max(pm.speed_max, llo * 1.001 + 1e-30);
+        window.GifRec.colourBar(g, w - 96, y, bh, pm.speed_label || "Along the lines", llo, lhi, CMAPS.turbo, fmt);
+      }
+    } : null;
+    try {
+      return await window.GifRec.record({
+        count: n, delay: anim ? 100 : 70, filename: filename || "view.gif",
+        frame: async (k) => {
+          if (anim) {
+            const t = k / n;
+            if (R.path.particle) {
+              const pts = R.path.first, np = pts.length / 3;
+              if (np >= 2) {
+                const fpos = t * (np - 1), i = Math.floor(fpos), a = fpos - i, j = Math.min(i + 1, np - 1);
+                R.path.particle.setPosition(pts[3 * i] + (pts[3 * j] - pts[3 * i]) * a,
+                                            pts[3 * i + 1] + (pts[3 * j + 1] - pts[3 * i + 1]) * a,
+                                            pts[3 * i + 2] + (pts[3 * j + 2] - pts[3 * i + 2]) * a);
+              }
+            }
+            if (R.path.tracer) moveTracers(R.path.tracer, 8.0 * t);
+          } else {
+            cam.azimuth(360 / n);
+            R.renderer.resetCameraClippingRange();
+          }
+          const imgs = await R.rw.captureImages();
+          return imgs && imgs[0];
+        },
+        overlay,
+        onProgress,
+      });
+    } finally {
+      if (!anim) {
+        cam.setPosition(...saved.pos); cam.setFocalPoint(...saved.fp); cam.setViewUp(...saved.up);
+        R.renderer.resetCameraClippingRange();
+        R.rw.render();
+      }
+      startAnim();
+    }
+  };
   V.renderRequest = function () {
     const f = fieldMeta();
     const [lo, hi] = currentRange();

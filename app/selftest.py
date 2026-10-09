@@ -495,7 +495,7 @@ def t_dem_kd():
     return msg + "; no NVIDIA GPU here - the GPU comparison was skipped"
 
 
-@check("Viscosity closed forms: Krieger-Dougherty and Maron-Pierce limits, intrinsic viscosity of rods and discs")
+@check("Viscosity closed forms: Krieger-Dougherty and Maron-Pierce limits, intrinsic viscosity of rods and discs; the particle-dynamics flow curve")
 def t_visc_forms():
     from mpsim.solvers import viscosity as VI
     slope = (float(VI.krieger_dougherty(1e-4, 0.64, 2.5)) - 1.0) / 1e-4
@@ -507,7 +507,18 @@ def t_visc_forms():
     rod, disc = VI.intrinsic_viscosity("cylinder", 20.0), VI.intrinsic_viscosity("cylinder", 0.05)
     expect(VI.intrinsic_viscosity("sphere", 1.0) == 2.5, "sphere")
     expect(rod is not None and rod > 5 and disc is not None and disc > 5, f"rod {rod}, disc {disc}")
-    return f"KD(0.63) {float(VI.krieger_dougherty(0.63, 0.64, 2.5)):.0f}, rod (20) [η] {rod:.2f}, disc (1/20) [η] {disc:.2f}"
+    # the flow curve from the particle dynamics at several rates: mu_r
+    # log-log between its points, flat beyond; for a Newtonian resin the
+    # compound is mu_r(gd) times the resin at every rate
+    from mpsim import pipeline as PL
+    cv = {"gd": [0.1, 10.0, 1000.0], "mu_r": [400.0, 40.0, 20.0], "se": [0, 0, 0]}
+    m = PL._mu_r_at(cv, [0.01, 1.0, 100.0, 1e5], 7.0)
+    expect(np.allclose(m, [400.0, 126.4911, 28.2843, 20.0], rtol=1e-4), f"interpolated {m}")
+    expect(PL._mu_r_at(None, [1.0], 7.0) == 7.0, "no curve: the single value")
+    mu_s, _ = VI.suspension_flow({"type": "newtonian", "mu": 2.0}, m, 0.5, [0.01, 1.0, 100.0, 1e5])
+    expect(np.allclose(mu_s, 2.0 * m, rtol=1e-9), f"compound {mu_s} for mu_r {m}")
+    return (f"KD(0.63) {float(VI.krieger_dougherty(0.63, 0.64, 2.5)):.0f}, rod (20) [η] {rod:.2f}, disc (1/20) [η] {disc:.2f}; "
+            f"flow curve μr {m[1]:.1f} at 1 1/s between 400 and 40")
 
 
 @check("Contact faces per pair of fillers: counted across faces and the periodic boundary")
@@ -656,6 +667,45 @@ def t_cal_rve():
                    f"suggestion {sg['label']}: RVE {st.get('rve.L_um')} µm, voxel {st.get('rve.voxel_um')} µm for d {dd} µm")
     return (f"R {R_['map']:.3g} (95 % {R_['ci95'][0]:.2g}–{R_['ci95'][1]:.2g}), k_p {K_['map']:.3g} "
             f"({K_['ci95'][0]:.2g}–{K_['ci95'][1]:.2g}); true 2e-7, 2.0; γ {r['identifiability']['collinearity']:.1f}")
+
+
+@check("Calibration from a viscosity: the bound resin layer of 1 µm silica from a particle-dynamics measurement (synthetic data)", quick=False)
+def t_cal_visc():
+    # a 'measured' relative viscosity made by the particle dynamics with a
+    # 10 nm bound layer, then the layer calibrated back (0-20 nm): the same
+    # spheres for every parameter set, the run's own scatter in the likelihood
+    import json
+    from mpsim import calibrate as CA
+    from mpsim import spec as S
+    base = {"name": "t", "matrix": {"material_id": "epoxy"},
+            "phases": [{"material_id": "sio2", "name": "Silica", "shape": "sphere", "size": {"d": 1.0, "unit": "um"},
+                        "dist": {"type": "lognormal", "cv": 0.15}, "fraction": {"value": 50, "basis": "vol"}}],
+            "analyses": {"viscosity": True},
+            "options": {"viscosity": {"gd_ref": 10, "dem": {"n": 150, "strain": 2.0, "backend": "cpu"}}}}
+    f = CA.fill_props(base)
+    f["options"]["viscosity"]["dem"]["bound_nm"] = 10.0
+    smp = CA._dem_sample(0, {"property": "mu_r"}, f, S.normalize(f), lambda *a: None)
+    y, rel = CA._dem_value(smp, f, None)
+    expect(math.isfinite(y) and y > 1, f"synthetic measurement {y}")
+    # a layer that jams these spheres is ruled out, not run
+    expect(not math.isfinite(CA._dem_value(smp, CA._set_theta(f, [CA._Unknown(
+        {"path": "options.viscosity.dem.bound_nm", "lo": 0, "hi": 100, "scale": "lin"})], [100.0]), None)[0]),
+        "a 100 nm layer on 1 µm spheres was run")
+    with tempfile.TemporaryDirectory() as d:
+        CA.run({"name": "t", "base": base,
+                "measurements": [{"label": "1 µm", "property": "mu_r", "value": y, "rel_unc": 0.05}],
+                "unknowns": [{"path": "options.viscosity.dem.bound_nm", "label": "b", "unit": "nm", "lo": 0, "hi": 20,
+                              "scale": "lin"}],
+                "options": {"refine_rounds": 1}}, d, log=lambda *a: None)
+        with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
+            r = json.load(fh)
+    u = r["unknowns"][0]
+    # 150 spheres to a strain of 2 scatter by about 20 % between packings:
+    # the interval is wide, but it holds the truth and is narrower than 0-20
+    expect(u["ci95"][0] < 10.0 < u["ci95"][1], f"bound layer {u['map']:.2f} nm, 95 % {u['ci95']}")
+    expect(u["narrowing"] > 1.3, f"95 % interval {u['ci95']} hardly narrower than the range")
+    return (f"μr {y:.1f} (± {100 * rel:.1f} %) with 10 nm; calibrated {u['map']:.1f} nm "
+            f"(95 % {u['ci95'][0]:.1f}–{u['ci95'][1]:.1f}) from {len(r['design']['points'])} runs")
 
 
 @check("Moisture: Crank's half-saturation time, an impermeable sphere against Maxwell, swelling with stiff dry fillers")
@@ -1343,9 +1393,15 @@ def t_pipeline_live():
     expect(len(seen["figure"]) >= 2, f"figures {seen['figure']}")
     expect(v["mu_r_rve"] >= 0.99 * v["refs"]["Hashin-Shtrikman lower bound"], f"mu_r {v['mu_r_rve']}")
     expect(v["mu_compound_ref"] > v["mu_resin_ref"], "compound not more viscous than the resin")
+    # the particle dynamics ran at further shear rates (alumina attracts):
+    # the relative viscosity does not rise with the rate
+    rc = (v.get("dem") or {}).get("rate_curve")
+    expect(rc and len(rc["gd"]) >= 4, f"particle-dynamics flow curve {rc} ({(v.get('dem') or {}).get('rate_note')})")
+    expect(rc["mu_r"][0] >= 0.9 * rc["mu_r"][-1], f"μr {rc['mu_r']} at {rc['gd']} 1/s")
     return (f"μr {v['mu_r_rve']:.3f} (HS {v['refs']['Hashin-Shtrikman lower bound']:.3f}, KD {v['refs']['Krieger-Dougherty']:.3f}), "
             f"{seen['partial_result']} provisional results, {len(seen['figure'])} live figures, "
-            f"surface shear rate {min(med):.2f}, {s['elapsed_s']:.0f} s")
+            f"surface shear rate {min(med):.2f}; particle dynamics μr {rc['mu_r'][0]:.3g} → {rc['mu_r'][-1]:.3g} "
+            f"from {rc['gd'][0]:g} to {rc['gd'][-1]:g} 1/s; {s['elapsed_s']:.0f} s")
 
 
 @check("Complete pipeline: thin film (x, y periodic, z the real thickness), z solved first", quick=False)

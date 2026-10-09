@@ -613,12 +613,10 @@ def _dem_radii(spec, solid, n_target, seed=11):
     return np.concatenate(radii), np.concatenate(owner)
 
 
-def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=None):
-    """The relative viscosity of the spheres from the particle dynamics at
-    the reference shear rate (solvers/suspension.py)."""
+def dem_hamaker(spec, solid, do):
+    """Hamaker constant of each solid phase across the resin (J) and where it
+    comes from: entered, Lifshitz from refractive indices, or a typical value."""
     from .solvers import suspension as SU
-    do = vo["dem"]
-    radii, owner = _dem_radii(spec, solid, do["n"])
     mat = spec["matrix"]
     hks, hk_basis = [], []
     for i in solid:
@@ -635,6 +633,16 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
         else:
             hk_basis.append("Lifshitz, refractive indices" if a != SU.A_CONDUCTOR else "conductor across a polymer")
         hks.append(float(a))
+    return hks, hk_basis
+
+
+def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=None):
+    """The relative viscosity of the spheres from the particle dynamics at
+    the reference shear rate (solvers/suspension.py)."""
+    from .solvers import suspension as SU
+    do = vo["dem"]
+    radii, owner = _dem_radii(spec, solid, do["n"])
+    hks, hk_basis = dem_hamaker(spec, solid, do)
     gd = vo["gd_ref"]
     mu_res = float(VI.matrix_flow(vo["model"], [gd])[0])
     tot = do["strain"]
@@ -694,10 +702,70 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
            "hamaker": [{"phase": spec["phases"][i]["name"], "J": a, "basis": b} for i, a, b in zip(solid, hks, hk_basis)],
            "d_um": [float(2e6 * radii[owner == k].mean()) for k in range(len(solid))],
            "counts": [int((owner == k).sum()) for k in range(len(solid))], "anim": anim}
+    # ---- the flow curve: the same particles at other shear rates ---------
+    res["rate_curve"] = None
+    if do["rates"] > 0:
+        res["rate_curve"], res["rate_note"] = _dem_rates(radii, owner, hks, phi, vo, do, mu_res, gd, res, log, event,
+                                                         prog, should_stop)
     log(f"    particle dynamics: μr {res['mu_r']:.4g} ± {res['se']:.2g} (strain 1-{tot:g}; lubrication "
         f"{res['eta_lub']:.3g}, contacts {res['eta_contact']:.3g}; {res['contacts_per_particle']:.2f} contacts per particle; "
         f"{out['backend']}, {out['seconds']:.0f} s)")
     return res
+
+
+def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, event, prog, should_stop):
+    """The particle dynamics at further shear rates, log-spaced over the
+    flow curve's range, with the resin's viscosity at each rate. Returns the
+    curve {gd, mu_r, se} (the reference rate included) and a note; None when
+    the attraction stays below 1 % of the viscous force over the whole range
+    - the relative viscosity then does not depend on the rate."""
+    from .solvers import suspension as SU
+    a = float(np.median(radii))
+    rs = 0.5 * a
+    f_att = max(hks) * rs / (6.0 * (do["hmin_nm"] * 1e-9) ** 2) + 2.0 * math.pi * do["adhesion_mJ_m2"] * 1e-3 * rs
+    lo, hi = vo["gd_min"], vo["gd_max"]
+    f_visc = 6.0 * math.pi * float(VI.matrix_flow(vo["model"], [lo])[0]) * a * a * lo
+    if f_att < 0.01 * f_visc:
+        note = (f"the attraction stays below 1 % of the viscous force down to {lo:g} 1/s: the relative viscosity "
+                f"does not depend on the shear rate")
+        log(f"    flow curve: {note}")
+        return None, note
+    rates = np.logspace(math.log10(lo), math.log10(hi), do["rates"])
+    rates = [float(g) for g in rates if abs(math.log10(g / gd_ref)) > 0.15]
+    pts = [(gd_ref, res_ref["mu_r"], res_ref["se"])]
+    stage = "Viscosity · particle dynamics, flow curve"
+    prog.stage(stage, f"{len(rates)} further shear rates, {len(radii)} spheres each", units=float(len(rates)))
+    for k, g in enumerate(rates):
+        mu_g = float(VI.matrix_flow(vo["model"], [g])[0])
+        last = {"t": 0.0}
+
+        def cb(strain, eta, its, k=k, g=g):
+            now = time.time()
+            if now - last["t"] >= 1.0:
+                last["t"] = now
+                event("stage", name=stage, detail=f"{g:.3g} 1/s ({k + 1} of {len(rates)}) · strain {strain:.2f}, μr {eta:.3g}",
+                      progress=prog.sub((k + min(strain / do["strain"], 0.999)) / len(rates)))
+        out = SU.shear_viscosity(radii, phi, mu_g, g, roughness_m=do["roughness_nm"] * 1e-9,
+                                 hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
+                                 strain=do["strain"], backend=do["backend"], progress=cb, should_stop=should_stop,
+                                 bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, frames=0.0)
+        pts.append((g, out["eta_mean"], out["eta_se"]))
+        log(f"    flow curve: {g:.3g} 1/s, resin {mu_g:.4g} Pa·s -> μr {out['eta_mean']:.4g} ± {out['eta_se']:.2g} "
+            f"({out['seconds']:.0f} s)")
+    prog.end()
+    pts.sort()
+    return ({"gd": [p[0] for p in pts], "mu_r": [p[1] for p in pts], "se": [p[2] for p in pts]},
+            f"{len(pts)} shear rates from {pts[0][0]:.3g} to {pts[-1][0]:.3g} 1/s")
+
+
+def _mu_r_at(curve, gd, fallback):
+    """The relative viscosity of a particle-dynamics rate curve at the shear
+    rates gd: linear in log-log between its points, flat beyond its ends."""
+    if not curve:
+        return fallback
+    lg = np.log(np.asarray(curve["gd"], float))
+    lm = np.log(np.asarray(curve["mu_r"], float))
+    return np.exp(np.interp(np.log(np.maximum(np.asarray(gd, float), 1e-12)), lg, lm))
 
 
 def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks):
@@ -743,7 +811,11 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
              "batchelor": [VI.batchelor(p) for p in phis], "einstein": [VI.einstein(p) for p in phis]}
     gd = np.logspace(math.log10(vo["gd_min"]), math.log10(vo["gd_max"]), 40)
     mu_m = VI.matrix_flow(vo["model"], gd)
-    mu_s, A = VI.suspension_flow(vo["model"], best, phi, gd, vo["yield_Pa"])
+    # where the particle dynamics is the best estimate and ran at several
+    # rates, the relative viscosity follows the rate along the curve
+    rc = dem.get("rate_curve") if (dem_ok and basis == "particle dynamics") else None
+    mu_s, _ = VI.suspension_flow(vo["model"], _mu_r_at(rc, gd, best), phi, gd, vo["yield_Pa"])
+    _, A = VI.suspension_flow(vo["model"], best, phi, [vo["gd_ref"]], vo["yield_Pa"])
     mu_m_ref = float(VI.matrix_flow(vo["model"], [vo["gd_ref"]])[0])
     mu_s_ref = float(VI.suspension_flow(vo["model"], best, phi, [vo["gd_ref"]], vo["yield_Pa"])[0][0])
     uf = vo["underfill"]
@@ -774,7 +846,11 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
              "dem": dem,
              "kd_phi_m_fit": VI.kd_phi_m_from(mu_r, phi, eta), "mu_r": best, "basis": basis, "curve": curve,
              "flow": {"gd": gd.tolist(), "mu_resin": mu_m.tolist(), "mu_compound": mu_s.tolist(),
-                      "amplification": A, "model": vo["model"], "yield_Pa": vo["yield_Pa"]},
+                      "amplification": A, "model": vo["model"], "yield_Pa": vo["yield_Pa"],
+                      "dem_rates": rc,
+                      "dem_points": ({"gd": rc["gd"], "mu": [float(VI.suspension_flow(vo["model"], m_, phi, [g_],
+                                                                                     vo["yield_Pa"])[0][0])
+                                                            for g_, m_ in zip(rc["gd"], rc["mu_r"])]} if rc else None)},
              "gd_ref": vo["gd_ref"], "mu_resin_ref": mu_m_ref, "mu_compound_ref": mu_s_ref,
              "underfill": dict(uf, t_resin_s=t_resin, t_compound_s=t_comp),
              "settling": settle, "settle_min": vo["settle_min"]}
@@ -1959,7 +2035,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         + (0.5 * len(dirs) if "tortuosity" in need else 0.0) \
         + (0.5 * len(dirs) + 1.0 if "moisture" in need else 0.0) \
         + (3.0 if ("cte" in need and opts.get("above_tg")) else 0.0)         + (4.0 if "viscosity" in need else 0.0)
-    once_units = (2.0 + (3.0 if opts["viscosity"]["dem"]["on"] else 0.0) if "viscosity" in need else 0.0) + sum(u for k, u in (("morphology", 1.0), ("porosimetry", 1.0), ("pore_network", 1.0),
+    vdem = opts["viscosity"]["dem"]
+    once_units = (2.0 + (3.0 + vdem["rates"] if vdem["on"] else 0.0) if "viscosity" in need else 0.0) + sum(u for k, u in (("morphology", 1.0), ("porosimetry", 1.0), ("pore_network", 1.0),
                                     ("grains", 1.0), ("radiation", 0.5), ("acoustics", 0.3),
                                     ("percolation", 1.0), ("filtration", 0.7)) if k in need)
     prog = Progress(event, seeds * per_seed_units + once_units + 3.0)

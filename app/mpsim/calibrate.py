@@ -40,6 +40,14 @@ The method and why
    per unknown, their correlation, how much the data narrowed each one, a
    direct solve at the estimate, and the extra measurement that would best
    separate what is not yet separated.
+5. Viscosity. The particle surface parameters of the particle dynamics -
+   the bound resin layer, the work of adhesion, friction, roughness, the
+   Hamaker constant - set how much finer fillers thicken a compound and are
+   rarely known; a measured viscosity (relative, or of the compound at a
+   shear rate) calibrates them. A sample is then a set of spheres, not a
+   voxel structure: the same spheres for every parameter set (common random
+   numbers, so the response is smooth), one particle-dynamics run per
+   evaluation, its statistical error added to the measurement's.
 """
 from __future__ import annotations
 
@@ -64,6 +72,11 @@ from . import spec as S
 from .solvers import conduction as CD
 
 MAX_UNKNOWNS = 3
+# a viscosity sample whose effective content (filler + bound resin layer)
+# reaches this share of the random close packing of its spheres is taken as
+# jammed: frictional spheres jam a few per cent below the frictionless
+# packing (Boyer et al. 2011: 0.585 against 0.64 for equal spheres)
+JAM_SHARE = 0.95
 N_INIT = {1: 5, 2: 13, 3: 24}
 GRID = {1: 801, 2: 161, 3: 51}
 
@@ -73,6 +86,8 @@ PROPERTIES = {
     "eps_r": {"label": "Relative permittivity", "unit": "-", "solver": "cond", "key": "dielectric"},
     "E": {"label": "Young's modulus", "unit": "GPa", "solver": "elastic"},
     "alpha": {"label": "Thermal expansion (CTE)", "unit": "ppm/K", "solver": "elastic"},
+    "mu_r": {"label": "Relative viscosity (compound / resin)", "unit": "-", "solver": "dem"},
+    "mu": {"label": "Viscosity of the compound", "unit": "Pa·s", "solver": "dem"},
 }
 
 # what may be calibrated: material values and interface resistances, which
@@ -84,10 +99,13 @@ _UNKNOWN_RE = [
     (re.compile(r"^phases\.(\d+)\.shell\.props\.(k|sigma|eps_r|E|nu|alpha)$"), "shell"),
     (re.compile(r"^phases\.(\d+)\.(r_int|r_contact)$"), "interface"),
     (re.compile(r"^contact_rc\.(\d+)-(\d+)$"), "pair"),
+    # the particle surface of the particle dynamics (viscosity measurements)
+    (re.compile(r"^options\.viscosity\.dem\.(bound_nm|adhesion_mJ_m2|mu_f|roughness_nm|hmin_nm|hamaker_J)$"), "dem"),
 ]
 UNIT_TXT = {"nm": "nm", "um": "µm", "mm": "mm"}
 PROP_UNITS = {"k": "W/m·K", "sigma": "S/m", "eps_r": "-", "E": "GPa", "nu": "-", "alpha": "ppm/K",
-              "r_int": "m²K/W", "r_contact": "m²K/W"}
+              "r_int": "m²K/W", "r_contact": "m²K/W", "bound_nm": "nm", "adhesion_mJ_m2": "mJ/m²", "mu_f": "-",
+              "roughness_nm": "nm", "hmin_nm": "nm", "hamaker_J": "J"}
 
 
 def unknown_kind(path):
@@ -252,8 +270,9 @@ def _validate(job):
     for u in unk:
         p = u.get("path", "")
         if unknown_kind(p) is None:
-            errors.append(f"'{p}' cannot be calibrated: only material values and interface resistances "
-                          f"(sizes and contents are measurement conditions)")
+            errors.append(f"'{p}' cannot be calibrated: only material values, interface resistances and the "
+                          f"particle surface parameters of the particle dynamics (sizes and contents are "
+                          f"measurement conditions)")
         if p in seen:
             errors.append(f"'{p}' is listed twice")
         seen.add(p)
@@ -360,6 +379,9 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
             for ph in form.get("phases") or []:
                 ph["r_contact"] = ph.get("r_contact") or 1e-12
         spec = S.normalize(form)
+        if PROPERTIES[m["property"]]["solver"] == "dem":
+            samples.append(_dem_sample(i, m, form, spec, log))
+            continue
         need = {PROPERTIES[m["property"]].get("key") or "cte"}
         if PROPERTIES[m["property"]]["solver"] == "elastic":
             need = {"cte"}
@@ -392,6 +414,86 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
                         "lab_path": None, "cmask": cmask, "cm_path": None, "area_ratio": area_ratio,
                         "vf": vf.tolist(), "film": film, "theory_ok": _theory_k(spec) is not None})
     return samples
+
+
+def _dem_sample(i, m, form, spec, log):
+    """A viscosity sample: the spheres of the particle dynamics, drawn once
+    and kept for every parameter set."""
+    solid = [k for k, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != "network"]
+    name = m.get("label") or f"measurement {i + 1}"
+    if not solid:
+        raise ValueError(f"{name}: a viscosity measurement needs a filler")
+    if any(spec["phases"][k]["shape"] != "sphere" for k in solid) or any(ph["void"] for ph in spec["phases"]):
+        raise ValueError(f"{name}: the particle dynamics, which a viscosity calibration runs, handles spheres "
+                         f"without bubbles")
+    vo = spec["options"]["viscosity"]
+    radii, owner = PL._dem_radii(spec, solid, vo["dem"]["n"])
+    phi = float(sum(spec["phases"][k]["vf"] for k in solid))
+    if not 0.0 < phi < 0.64:
+        raise ValueError(f"{name}: the filler content {100 * phi:.1f} vol% is outside the particle dynamics' "
+                         f"range (below random close packing, 64 %)")
+    from .solvers import viscosity as VI
+    phi_jam = JAM_SHARE * float(VI.rcp_farr_groot(2.0 * radii))
+    log(f"   sample {i+1} ({name}): {len(radii)} spheres, φ {phi:.3f}, shear rate {vo['gd_ref']:g} 1/s "
+        f"(particle dynamics; jammed from an effective content of {phi_jam:.3f})")
+    # sums of the radius powers: the effective content with a bound layer b
+    # is phi * sum((r + b)^3) / sum(r^3), for any number of b at once
+    mom = [float(np.sum(radii ** k)) for k in range(4)]
+    return {"i": i, "m": m, "form": form, "spec": spec, "plan": None, "labels": None, "lab_path": None, "cmask": None,
+            "cm_path": None, "area_ratio": None, "vf": [1.0 - phi] + [float(spec["phases"][k]["vf"]) for k in solid],
+            "film": False, "theory_ok": False, "dem": {"solid": solid, "radii": radii, "owner": owner, "phi": phi,
+                                                       "phi_jam": phi_jam, "mom": mom},
+            "dem_se": []}
+
+
+def _dem_phi_eff(sample, bound_nm):
+    """Effective content of a viscosity sample for bound layers (nm)."""
+    d = sample["dem"]
+    b = np.asarray(bound_nm, float) * 1e-9
+    m0, m1, m2, m3 = d["mom"]
+    return d["phi"] * (m3 + 3 * b * m2 + 3 * b * b * m1 + b ** 3 * m0) / m3
+
+
+def _dem_jammed(sample, unknowns, Ug):
+    """Grid points (unit cube) at which a viscosity sample would be jammed."""
+    j = next((k for k, u in enumerate(unknowns) if u.path == "options.viscosity.dem.bound_nm"), None)
+    if j is None:
+        b = np.full(len(Ug), float(sample["spec"]["options"]["viscosity"]["dem"]["bound_nm"]))
+    else:
+        b = unknowns[j].value(Ug[:, j])
+    return _dem_phi_eff(sample, b) >= sample["dem"]["phi_jam"]
+
+
+def _dem_value(sample, theta_form, should_stop, cb=None):
+    """The measured viscosity of a viscosity sample at one parameter set: one
+    particle-dynamics run on the sample's spheres. Returns the value and its
+    relative standard error."""
+    from .solvers import suspension as SU
+    from .solvers import viscosity as VI
+    spec = S.normalize(theta_form)
+    vo = spec["options"]["viscosity"]
+    do = vo["dem"]
+    d = sample["dem"]
+    if float(_dem_phi_eff(sample, do["bound_nm"])) >= d["phi_jam"]:
+        return float("nan"), float("nan")
+    hks, _ = PL.dem_hamaker(spec, d["solid"], do)
+    gd = vo["gd_ref"]
+    mu_res = float(VI.matrix_flow(vo["model"], [gd])[0])
+    out = SU.shear_viscosity(d["radii"], d["phi"], mu_res, gd, roughness_m=do["roughness_nm"] * 1e-9,
+                             hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[d["owner"]], mu_f=do["mu_f"],
+                             strain=do["strain"], backend=do["backend"], progress=cb, should_stop=should_stop,
+                             bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, frames=0.0)
+    mu_r = float(out["eta_mean"])
+    rel = float(out["eta_se"]) / max(mu_r, 1e-30)
+    if sample["m"]["property"] == "mu":
+        return float(VI.suspension_flow(vo["model"], mu_r, d["phi"], [gd], vo["yield_Pa"])[0][0]), rel
+    return mu_r, rel
+
+
+def _extra_unc(s):
+    """The statistical error of a particle-dynamics sample (ln units): the
+    median relative standard error of its runs."""
+    return float(np.median(s["dem_se"])) if s.get("dem_se") else 0.0
 
 
 def _dirs(m):
@@ -444,19 +546,41 @@ def _elastic_value(sample, theta_form, tol, should_stop):
     return float(np.mean(a[:3])) if d == "iso" else float(a["xyz".index(d)])
 
 
-def _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event, tag, prog=(0.0, 1.0)):
+def _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event, tag, prog=(0.0, 1.0), rel=None):
     """The measured property of every sample at every row of U (unit cube):
-    an (n_points, n_samples) array."""
+    an (n_points, n_samples) array. rel, if given, is filled with the
+    relative standard error of each particle-dynamics value."""
     Y = np.full((len(U), len(samples)), np.nan)
     jobs, where = [], []
     for a, uu in enumerate(U):
         theta = [u.value(x) for u, x in zip(unknowns, uu)]
         for s in samples:
             f = _set_theta(form_of(s), unknowns, theta)
-            if PROPERTIES[s["m"]["property"]]["solver"] == "cond":
+            solver = PROPERTIES[s["m"]["property"]]["solver"]
+            if solver == "cond":
                 for t in _cond_tasks(s, f, tol, pool, f"{tag} {a + 1}"):
                     jobs.append(t)
                     where.append((a, s["i"], t[1]["d"]))
+            elif solver == "dem":
+                last = {"t": 0.0}
+
+                def cb(strain, eta, its, a=a, s=s):
+                    now = time.time()
+                    if now - last["t"] >= 1.0:
+                        last["t"] = now
+                        event("progress", detail=f"{tag} {a + 1} of {len(U)}: particle dynamics, sample {s['i'] + 1}, "
+                                                 f"strain {strain:.2f}, μr {eta:.3g}")
+                t1 = time.time()
+                Y[a, s["i"]], r_ = _dem_value(s, f, should_stop, cb)
+                if math.isfinite(r_):
+                    s["dem_se"].append(r_)
+                    if rel is not None:
+                        rel[a, s["i"]] = r_
+                    log(f"   {tag} {a + 1}: sample {s['i'] + 1} particle dynamics -> {Y[a, s['i']]:.4g} "
+                        f"(± {100 * r_:.1f} %, {time.time() - t1:.0f} s)")
+                else:
+                    log(f"   {tag} {a + 1}: sample {s['i'] + 1} jammed at these values (bound layer too thick for "
+                        f"its spheres) - not run, ruled out")
             else:
                 Y[a, s["i"]] = _elastic_value(s, f, tol, should_stop)
     if jobs:
@@ -474,8 +598,11 @@ def _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event,
     return Y
 
 
-def _fit(U, y):
-    """Gaussian process for one measurement: log value over the unit cube."""
+def _fit(U, y, noise=None):
+    """Gaussian process for one measurement: log value over the unit cube.
+    noise: the standard error of each value in ln units (particle dynamics):
+    the surrogate then passes through the runs within their scatter instead
+    of through every run, and its standard deviation is that of the mean."""
     import warnings
 
     from sklearn.exceptions import ConvergenceWarning
@@ -484,7 +611,11 @@ def _fit(U, y):
     p = U.shape[1]
     kern = ConstantKernel(1.0, (1e-4, 1e4)) * Matern(length_scale=np.full(p, 0.5), length_scale_bounds=(0.03, 30.0),
                                                      nu=2.5) + WhiteKernel(1e-8, (1e-12, 1e-4))
-    gp = GaussianProcessRegressor(kernel=kern, normalize_y=True, n_restarts_optimizer=3, random_state=0)
+    alpha = 1e-10
+    if noise is not None:
+        # sklearn adds alpha to the kernel of the normalised values
+        alpha = (np.asarray(noise, float) / max(float(np.std(np.log(y))), 1e-9)) ** 2 + 1e-10
+    gp = GaussianProcessRegressor(kernel=kern, alpha=alpha, normalize_y=True, n_restarts_optimizer=3, random_state=0)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ConvergenceWarning)
         warnings.simplefilter("ignore", UserWarning)
@@ -504,6 +635,13 @@ def _posterior(gps, samples, unknowns, Ug, model_unc):
     lp = np.zeros(len(Ug))
     for j, u in enumerate(unknowns):
         lp += u.log_prior(Ug[:, j])
+    # a measured, finite viscosity rules out the values that jam its sample
+    for s in samples:
+        if s.get("dem"):
+            lp[_dem_jammed(s, unknowns, Ug)] = -np.inf
+    if not np.isfinite(lp).any():
+        raise ValueError("Every value in the ranges jams a viscosity sample (bound layer too thick for its spheres): "
+                         "lower the upper bound of the bound layer")
     mus, sds = [], []
     for gp, s in zip(gps, samples):
         mu, sd = gp.predict(Ug, return_std=True)
@@ -754,20 +892,27 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
         threads = int(numba.get_num_threads())
     except Exception:                                                    # noqa: BLE001
         threads = os.cpu_count() or 4
-    n_dir = sum(len(_dirs(m)) for m in job["measurements"])
+    n_dir = sum(len(_dirs(m)) for m in job["measurements"] if PROPERTIES[m["property"]]["solver"] == "cond")
     event("stage", name="Calibration · samples", detail="structures of the measured samples", progress=0.02)
     samples = _prepare(job, base, unknowns, out_dir, limits, log, should_stop)
     # the solves of a round are independent: one per worker, side by side
-    n_vox = max(s["labels"].size for s in samples)
-    workers = PAR.plan_workers(threads, N_INIT[p] * n_dir, n_vox * 220e-9)
-    pool = PAR.SolvePool(workers, max(1, threads // workers))
+    pool = None
+    if n_dir:
+        n_vox = max(s["labels"].size for s in samples if s["labels"] is not None)
+        workers = PAR.plan_workers(threads, N_INIT[p] * n_dir, n_vox * 220e-9)
+        pool = PAR.SolvePool(workers, max(1, threads // workers))
     try:
         for s in samples:
+            if s["labels"] is None:
+                continue
             s["lab_path"] = pool.share(s["labels"], name=f"lab{s['i']}")
             if s["cmask"] is not None:
                 s["cm_path"] = os.path.join(pool.tmp, f"cm{s['i']}.npy")
                 np.save(s["cm_path"], s["cmask"])
-        log(f"   solves run {workers} at a time ({max(1, threads // workers)} thread(s) each)")
+        if pool is not None:
+            log(f"   solves run {workers} at a time ({max(1, threads // workers)} thread(s) each)")
+        if any(s.get("dem") for s in samples):
+            log("   viscosity samples: one particle-dynamics run per parameter set, one after the other")
         form_of = lambda s: s["form"]                                    # noqa: E731
 
         # ---- theory: the effective-medium preview -------------------------
@@ -780,17 +925,26 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
         U = _design(p, N_INIT[p])
         event("stage", name="Calibration · design", detail=f"{len(U)} parameter sets × {len(samples)} samples",
               progress=0.05)
-        log(f"   initial design: {len(U)} parameter sets × {n_dir} solves")
-        Y = _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event, "design", (0.05, 0.45))
+        n_dem = sum(1 for s in samples if s.get("dem"))
+        log(f"   initial design: {len(U)} parameter sets × "
+            + " + ".join(([f"{n_dir} solves"] if n_dir else []) + ([f"{n_dem} particle-dynamics run(s)"] if n_dem else [])))
+        Rel = np.full((len(U), len(samples)), np.nan)
+        Y = _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event, "design", (0.05, 0.45),
+                      rel=Rel)
         ax, Ug = _grid(p)
         history = []
         for rnd in range(rounds + 1):
             ok = np.all(np.isfinite(Y) & (Y > 0), axis=1)
-            gps = [_fit(U[ok], Y[ok, m]) for m in range(len(samples))]
+            if ok.sum() < 2:
+                raise ValueError("Fewer than two parameter sets of the design could be solved (jammed or failed): "
+                                 "narrow the ranges of the unknowns")
+            gps = [_fit(U[ok], Y[ok, m], noise=Rel[ok, m] if samples[m].get("dem") else None)
+                   for m in range(len(samples))]
             lp, mus, sds = _posterior(gps, samples, unknowns, Ug, model_unc)
             post = np.exp(lp - lp.max())
             summ, i_map, corr = _summaries(post, Ug, ax, unknowns)
-            sig = np.array([math.log(1.0 + float(s["m"].get("rel_unc") or 0.05)) for s in samples])
+            sig = np.array([math.hypot(math.log(1.0 + float(s["m"].get("rel_unc") or 0.05)), _extra_unc(s))
+                            for s in samples])
             gp_sd_map = float(np.max(sds[:, i_map] / np.sqrt(sig ** 2 + model_unc ** 2)))
             history.append({"round": rnd, "points": int(len(U)), "gp_sd_rel": gp_sd_map,
                             "map": [r["map"] for r in summ]})
@@ -815,16 +969,19 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
                 break
             event("stage", name="Calibration · refinement", detail=f"round {rnd + 1}: {len(new)} parameter sets",
                   progress=0.1 + 0.7 * (rnd + 1) / (rounds + 1))
+            Rn = np.full((len(new), len(samples)), np.nan)
             Yn = _evaluate(samples, form_of, new, unknowns, tol, pool, should_stop, log, event, f"round {rnd + 1}",
-                           (0.45 + 0.4 * rnd / max(rounds, 1), 0.45 + 0.4 * (rnd + 1) / max(rounds, 1)))
+                           (0.45 + 0.4 * rnd / max(rounds, 1), 0.45 + 0.4 * (rnd + 1) / max(rounds, 1)), rel=Rn)
             U = np.vstack([U, new])
             Y = np.vstack([Y, Yn])
+            Rel = np.vstack([Rel, Rn])
 
         # ---- a direct solve at the estimate --------------------------------
         u_map = Ug[i_map]
         event("stage", name="Calibration · check", detail="direct solve at the estimate", progress=0.9)
+        Rv = np.full((1, len(samples)), np.nan)
         Yv = _evaluate(samples, form_of, u_map[None, :], unknowns, tol, pool, should_stop, log, event, "check",
-                       (0.9, 0.97))[0]
+                       (0.9, 0.97), rel=Rv)[0]
         theta_map = [u.value(x) for u, x in zip(unknowns, u_map)]
         pred = [float(np.exp(gps[m].predict(u_map[None, :])[0])) for m in range(len(samples))]
         rows = []
@@ -834,20 +991,29 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
             cat = {}
         for s, yv, yp in zip(samples, Yv, pred):
             m = s["m"]
-            rows.append({"label": m.get("label") or f"measurement {s['i'] + 1}", "set": m.get("set") or {},
+            vo_s = s["spec"]["options"]["viscosity"]
+            # the direct check is one run: its own standard error counts
+            run_unc = float(Rv[0, s["i"]]) if (s.get("dem") and math.isfinite(Rv[0, s["i"]])) else 0.0
+            rows.append({"model": "particle dynamics" if s.get("dem") else "RVE",
+                         "gd": vo_s["gd_ref"] if s.get("dem") else None,
+                         "n_spheres": int(len(s["dem"]["radii"])) if s.get("dem") else None,
+                         "run_unc": run_unc if s.get("dem") else None,
+                         "label": m.get("label") or f"measurement {s['i'] + 1}", "set": m.get("set") or {},
                          "conditions": [{"label": (cat.get(k) or {}).get("label") or k, "value": v,
                                          "unit": (cat.get(k) or {}).get("unit") or ""} for k, v in (m.get("set") or {}).items()],
                          "property": m["property"], "unit": PROPERTIES[m["property"]]["unit"],
                          "direction": m.get("direction") or "iso", "measured": float(m["value"]),
                          "rel_unc": float(m.get("rel_unc") or 0.05), "surrogate": yp, "direct": float(yv),
                          "residual_sigma": (math.log(float(yv)) - math.log(float(m["value"])))
-                         / math.sqrt(math.log(1 + float(m.get("rel_unc") or 0.05)) ** 2 + model_unc ** 2),
-                         "grid": s["plan"]["N"], "voxel_um": s["plan"]["h_um"], "vf": s["vf"],
+                         / math.sqrt(math.log(1 + float(m.get("rel_unc") or 0.05)) ** 2 + model_unc ** 2
+                                     + run_unc ** 2),
+                         "grid": s["plan"]["N"] if s["plan"] else None,
+                         "voxel_um": s["plan"]["h_um"] if s["plan"] else None, "vf": s["vf"],
                          "theory_k": _theory_k(S.normalize(_set_theta(s["form"], unknowns, theta_map)))
                          if (m["property"] == "k" and s["theory_ok"]) else None})
         # ---- identifiability and what to measure next ----------------------
         J = _sensitivity(gps, u_map.copy(), unknowns)
-        sig_tot = np.sqrt(sig ** 2 + model_unc ** 2)
+        sig_tot = np.sqrt(sig ** 2 + model_unc ** 2)          # sig holds the runs' own error already
         ident = identifiability(J, sig_tot, unknowns)
         ident["J"] = J.tolist()
         F0 = (J / sig_tot[:, None]).T @ (J / sig_tot[:, None])
@@ -902,7 +1068,8 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
             log(f"   {r['label']}: {r['map']:.4g} {r['unit']} (95 % {r['ci95'][0]:.3g} – {r['ci95'][1]:.3g}, "
                 f"narrowed ×{r['narrowing']:.1f})")
         for r in rows:
-            log(f"   {r['label']}: measured {r['measured']:.4g}, RVE at the estimate {r['direct']:.4g} "
+            log(f"   {r['label']}: measured {r['measured']:.4g}, "
+                f"{'particle dynamics' if r['model'] == 'particle dynamics' else 'RVE'} at the estimate {r['direct']:.4g} "
                 f"({100 * (r['direct'] / r['measured'] - 1):+.1f} %)")
         for n in notes:
             log("   · " + n)

@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-55%20checks-2da44e" alt="55 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-56%20checks-2da44e" alt="56 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -69,9 +69,10 @@ Its capabilities include:
   (7 loads on 96³ in 49 s, 11× faster than MINRES on the same discretisation) — optionally above the glass transition.
 - **Rheology.** Effective viscosity of underfills, moulding compounds and pastes from a creeping-flow solve on the RVE
   and, for dense spherical fillers, a particle dynamics in which every filler moves, turns and collides in the sheared
-  resin (lubrication, friction, van der Waals; CPU or NVIDIA GPU) — which also gives the particle-size effect; Krieger–
-  Dougherty with the maximum packing fraction of the actual size distribution, flow curves, capillary underfill filling
-  time and settling; the resin flow and the moving particles are shown.
+  resin (lubrication, friction, van der Waals; CPU or NVIDIA GPU) — which also gives the particle-size effect and, run at
+  several shear rates, the shear thinning that attraction causes; Krieger–Dougherty with the maximum packing fraction of
+  the actual size distribution, flow curves, capillary underfill filling time and settling; the resin flow and the
+  moving particles are shown.
 - **Moisture.** Effective moisture diffusivity (solved on the water activity), saturated uptake, the uptake curve of a part
   and hygroscopic swelling.
 - **Electromagnetic shielding.** Frequency-resolved complex homogenisation feeding a transmission-line model, and a
@@ -80,9 +81,10 @@ Its capabilities include:
 - **Porous media.** Permeability (Stokes), filtration efficiency by particle tracking, diffusion and tortuosity, acoustic
   absorption (Johnson–Champoux–Allard), radiative extinction, porosimetry, pore networks, percolation paths and grain
   statistics.
-- **Calibration.** Unknown material values — interfacial and contact resistance, the conductivity of a filler grade — from
-  measured effective properties: phonon-mismatch theory first, an identifiability check, a Bayesian calibration on an RVE
-  surrogate with credible intervals, and the next measurement that would add the most information.
+- **Calibration.** Unknown material values — interfacial and contact resistance, the conductivity of a filler grade, the
+  bound resin layer or adhesion of a filler surface — from measured effective properties, viscosity included: phonon-
+  mismatch theory first, an identifiability check, a Bayesian calibration on an RVE or particle-dynamics surrogate with
+  credible intervals, and the next measurement that would add the most information.
 - **Studies.** DOE (full factorial, one factor at a time, Latin hypercube), Gaussian-process surrogates, Sobol sensitivity
   indices, single-objective optima and NSGA-II trade-off fronts.
 - **All cores in use.** Every solve that does not need another one — each property and direction, each Stokes and
@@ -91,7 +93,8 @@ Its capabilities include:
   analyses: 1231 s one after another, 693 s side by side on 8 cores).
 - **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as the solver's voxels, fields on
   the RVE faces and on XYZ sections, arrows, animated field lines and pore networks; publication figures rendered on the
-  server (PyVista); a single-file HTML report for every run.
+  server (PyVista); animations saved as GIF (3D view, moving particles, underfill front); a single-file HTML report for
+  every run.
 
 ### The workspace
 
@@ -133,7 +136,7 @@ bounds (Wiener, Hashin–Shtrikman, Schapery); a value outside a rigorous bound 
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **55 problems whose answers are known** (38 in the quick set) and compares the results.
+`5_SELF_TEST.bat` solves **56 problems whose answers are known** (38 in the quick set) and compares the results.
 Among them:
 
 | Check | Reference | Result |
@@ -149,9 +152,11 @@ Among them:
 | Sobol indices of the Ishigami function | closed form | passed |
 | FANS elasticity against PuMA (corrected) | same discretisation | 3.5e-9 |
 | Dilute rigid sphere in a viscous liquid | Einstein [η] = 2.5 | within 15 % (voxelised sphere) |
+| Particle dynamics, frictionless spheres at 50 vol% | Krieger–Dougherty with random close packing, 11.4 | 12.6 (200 spheres, strain 2) |
 | Maximum packing of bidisperse spheres | Farr–Groot simulations, 27 cases | within 0.011 |
 | Impermeable sphere, moisture diffusion | Maxwell 2/(2+φ) | within 2 % |
 | Calibration of R_int and filler k from two particle sizes | known values 2e-7 m²K/W, 2.0 W/m·K | 2.0e-7, 2.01 |
+| Calibration of a bound resin layer from a viscosity (particle dynamics) | known value 10 nm | 10.6 nm (95 % 8.8–12.5) |
 | Blends: two sphere sizes at 55 vol%, cubes with flakes at 45 vol% | no voxel inside two particles | 0 shared voxels, none trimmed |
 | Complete pipelines: filled RVE, thin film, porous RVE, viscosity with live results | all files, all analyses | passed |
 
@@ -388,7 +393,7 @@ The code and documentation of MPSim are released under the MIT License (see
 [LICENSE](LICENSE)). Redistributions must keep the copyright notice and the licence text.
 
 The program builds on the open-source projects below; they are installed from conda-forge or PyPI, and only
-vtk.js is included in the repository (`app/web/static/vendor`, with its licence). The offline package
+vtk.js and gifenc are included in the repository (`app/web/static/vendor`, with their licences). The offline package
 redistributes them unchanged, each under its own licence:
 
 | Component | Licence | Use |
@@ -400,6 +405,7 @@ redistributes them unchanged, each under its own licence:
 | scikit-rf | BSD-3-Clause | EMI transmission line |
 | VTK / PyVista | BSD-3-Clause / MIT | Surfaces, figures |
 | vtk.js | BSD-3-Clause | 3D view in the browser |
+| gifenc | MIT | Animated GIFs of the views, in the browser |
 | NumPy, SciPy, numba, scikit-image, scikit-learn, pandas, Flask, psutil, tifffile, pyamg | BSD or MIT | Numerics, server |
 | Matplotlib | Matplotlib licence (PSF-based) | Figures |
 | Python 3.11.9 | PSF License | Runtime |

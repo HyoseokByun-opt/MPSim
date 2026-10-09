@@ -298,9 +298,12 @@ def matrix_flow(model, gd):
 def suspension_flow(model, mu_r, phi, gd, tau_y=0.0):
     """Viscosity of the suspension at shear rate gd: Chateau-Ovarlez-Trung,
     sigma_s(g) = (1 - phi) A sigma_m(A g), A = sqrt(mu_r / (1 - phi)); a resin
-    yield stress tau_y becomes sqrt((1 - phi) mu_r) tau_y."""
+    yield stress tau_y becomes sqrt((1 - phi) mu_r) tau_y. mu_r may be one
+    value or one per shear rate (from the particle dynamics at several rates)."""
     gd = np.maximum(np.asarray(gd, float), 1e-12)
-    A = math.sqrt(max(mu_r, 1.0) / max(1.0 - phi, 1e-9))
+    A = np.sqrt(np.maximum(np.asarray(mu_r, float), 1.0) / max(1.0 - phi, 1e-9))
+    if A.ndim == 0:
+        A = float(A)
     sig_m = matrix_flow(model, A * gd) * A * gd + (tau_y if tau_y else 0.0)
     sig_s = (1.0 - phi) * A * sig_m
     return sig_s / gd, A

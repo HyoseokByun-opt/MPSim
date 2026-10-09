@@ -81,7 +81,12 @@
     series.forEach((s) => {
       if (!s.label) return;
       g.strokeStyle = s.color || C.PALETTE[0]; g.lineWidth = 2.5; g.setLineDash(s.dash || []);
-      g.beginPath(); g.moveTo(lx, y - 3); g.lineTo(lx + 16, y - 3); g.stroke(); g.setLineDash([]);
+      if (s.marker && s.width === 0) {
+        // points only: a point in the legend too
+        g.fillStyle = "#fff"; g.lineWidth = 2;
+        g.beginPath(); g.arc(lx + 8, y - 3, 4, 0, 2 * Math.PI); g.fill(); g.stroke();
+      } else { g.beginPath(); g.moveTo(lx, y - 3); g.lineTo(lx + 16, y - 3); g.stroke(); }
+      g.setLineDash([]);
       g.fillStyle = INK; g.textAlign = "left"; g.fillText(s.label, lx + 21, y + 1);
       lx += g.measureText(s.label).width + 40;
     });
@@ -121,13 +126,16 @@
         const px = X(x), py = Y(y);
         if (!on) { g.moveTo(px, py); on = true; } else g.lineTo(px, py);
       });
-      g.stroke(); g.setLineDash([]);
+      // width 0: the points alone, no line through them
+      if (s.width !== 0) g.stroke();
+      g.setLineDash([]);
       if (s.marker) {
         g.fillStyle = "#fff";
+        if (s.width === 0) g.lineWidth = 2;
         s.x.forEach((x, i) => {
           const y = s.y[i];
           if (x === null || y === null || !isFinite(x) || !isFinite(y)) return;
-          g.beginPath(); g.arc(X(x), Y(y), 3, 0, 2 * Math.PI); g.fill(); g.stroke();
+          g.beginPath(); g.arc(X(x), Y(y), s.width === 0 ? 4 : 3, 0, 2 * Math.PI); g.fill(); g.stroke();
         });
       }
     });
