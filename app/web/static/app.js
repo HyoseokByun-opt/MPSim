@@ -54,7 +54,7 @@
     cte: { title: "Elasticity and CTE", icon: "cte", color: "var(--c-mech)", solver: "Voxel FE with an FFT preconditioner (FANS) · 6 strains + ΔT", out: "C and S matrices · E, G, ν · α tensor · thermal stress fields" },
     permeability: { title: "Permeability", icon: "permeability", color: "var(--c-flow)", solver: "NASA PuMA · Stokes finite elements", out: "K tensor · flow resistivity · Kozeny constant · velocity field", pores: true },
     moisture: { title: "Moisture uptake and swelling", icon: "tortuosity", color: "var(--c-flow)", solver: "Periodic FV on the activity c/c_sat (permeability D·c_sat) · FANS eigenstrain for swelling", out: "Effective moisture diffusivity · saturated uptake · uptake curve of the part · hygroscopic swelling and CME" },
-    viscosity: { title: "Viscosity and flowability", icon: "permeability", color: "var(--c-flow)", solver: "Voxel FE creeping flow (B-bar, FFT-preconditioned CG) · Krieger–Dougherty with the jammed packing fraction", out: "Relative viscosity · flow curve of the compound · maximum packing fraction · underfill filling time · settling" },
+    viscosity: { title: "Viscosity and flowability", icon: "permeability", color: "var(--c-flow)", solver: "Voxel FE creeping flow (B-bar, FFT-preconditioned CG) · particle dynamics of the fillers (lubrication, contacts, friction, van der Waals; CPU or CUDA GPU) · Krieger–Dougherty with the jammed packing fraction", out: "Relative viscosity · flow curve of the compound · maximum packing fraction · underfill filling time · settling" },
     filtration: { title: "Filtration efficiency", icon: "pores", color: "var(--c-flow)", solver: "Particle tracking in the PuMA Stokes field", out: "Efficiency per particle size · most penetrating size · pressure drop · quality factor", pores: true },
     tortuosity: { title: "Diffusion", icon: "tortuosity", color: "var(--c-diff)", solver: "NASA PuMA · continuum tortuosity", out: "τ · D_eff/D₀ · formation factor · Knudsen diffusion", pores: true },
     acoustics: { title: "Acoustic absorption", icon: "acoustics", color: "var(--c-ac)", solver: "JCA model from PuMA flow and diffusion fields", out: "φ, σ, α∞, Λ, Λ' · absorption coefficient · NRC", pores: true },
@@ -241,7 +241,8 @@
         filtration: { face_velocity_m_s: 0.05, n_particles: 200, particle_density_kg_m3: 1000, d_min_um: 0.01, d_max_um: 5, n_sizes: 8 },
         viscosity: { model: { type: "newtonian", mu: 1, K: 1, n: 0.7, mu0: 1, mu_inf: 0, lam: 1 }, yield_Pa: 0, gd_min: 0.01, gd_max: 1000, gd_ref: 10,
           phi_m_mode: "auto", friction: "none", phi_m: 0.64, dilute_rve: true, density_resin: 1150, settle_min: 60,
-          underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 } },
+          underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 },
+          dem: { on: true, n: 500, strain: 5, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, backend: "auto" } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
         gas: { molar_mass_g_mol: 28.97, viscosity_Pa_s: 1.81e-5, diffusivity_m2_s: 2.0e-5, pressure_Pa: 101325, molecule_diameter_nm: 0.37, density_kg_m3: 1.204, sound_speed_m_s: 343.2, gamma: 1.4, prandtl: 0.71 },
       },
@@ -1629,11 +1630,19 @@
       ${v.phi_m_mode === "manual" ? num("options.viscosity.phi_m", "φm", "") : `<label class="f">Particle friction</label><select data-k="options.viscosity.friction"><option value="none">Frictionless or lubricated: φm = random close packing (default)</option><option value="frictional">Frictional: φm × 0.585/0.64 (Boyer et al. 2011)</option></select>`}
       <div class="hint">Farr–Groot maps the sphere size distribution (several fillers, log-normal spreads, coatings included) onto rods on a line; it reproduced 3D packings of bidisperse spheres to within 0.01 up to a 1:10 size ratio, and gives 0.6435 for equal spheres. Other shapes are packed by the structure generator itself until they jam. Frictional particles jam in shear earlier; the result shows the other case as a range.</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dilute_rve"><span></span></span> Intrinsic viscosity of non-spherical fillers from a dilute RVE</label>
+      <div class="subh">Particle dynamics (spherical fillers)</div>
+      <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dem.on"><span></span></span> Shear the fillers as moving particles (on by default)</label>
+      <div class="g3">${num("options.viscosity.dem.n", "Particles", "", "1")}${num("options.viscosity.dem.strain", "Sheared strain", "")}${num("options.viscosity.dem.mu_f", "Friction coefficient", "")}</div>
+      <div class="g3">${num("options.viscosity.dem.roughness_nm", "Surface roughness", "nm")}${num("options.viscosity.dem.hmin_nm", "Closest approach", "nm")}${num("options.viscosity.dem.hamaker_J", "Hamaker constant (empty: auto)", "J")}</div>
+      <div class="g2">${num("options.viscosity.dem.bound_nm", "Bound resin layer", "nm")}${num("options.viscosity.dem.adhesion_mJ_m2", "Work of adhesion", "mJ/m²")}</div>
+      <div class="hint">Surface chemistry that bulk data cannot give: a resin layer that moves with the particle (adsorbed resin, coupling agent) adds (1 + b/a)³ to the filler volume, and adhesion of touching surfaces (hydrogen bonding of untreated silica) pulls them together with 2πW·R*. Both weigh most on a fine filler. Leave them at 0, or fit them to one measured viscosity and predict other sizes and loadings.</div>
+      <label class="f">Computed on</label><select data-k="options.viscosity.dem.backend"><option value="auto">Automatic: an NVIDIA GPU (CUDA) when present, else all CPU cores</option><option value="cuda">NVIDIA GPU (CUDA)</option><option value="cpu">CPU</option></select>
+      <div class="hint">Every filler particle moves, turns and collides in the sheared resin: lubrication between close surfaces, contacts with friction, and the van der Waals attraction of the filler across the resin (Hamaker constant from the refractive indices of the library, or entered). Roughness and the closest approach are lengths, so a fine filler meets them at a larger share of its size than a coarse one — this is where the particle-size effect comes from. Friction 0.25 reproduces the measured law of non-Brownian spheres (Boyer et al. 2011: μr 20.7 at 50 vol% and 103 at 55 vol%), friction 0 the frictionless Krieger–Dougherty curve. It is the best estimate above about 35 vol% or where particles touch.</div>
       <div class="subh">Capillary underfill (parallel plates)</div>
       <div class="g2">${num("options.viscosity.underfill.gap_um", "Gap", "µm")}${num("options.viscosity.underfill.length_mm", "Flow length", "mm")}${num("options.viscosity.underfill.gamma_mN_m", "Surface tension", "mN/m")}${num("options.viscosity.underfill.theta_deg", "Contact angle", "°")}</div>
       <div class="subh">Filler settling</div>
       <div class="g2">${num("options.viscosity.density_resin", "Resin density", "kg/m³")}${num("options.viscosity.settle_min", "Time before gelation", "min")}</div>
-      <div class="hint">The RVE flow solve is reliable while every particle stays surrounded by resin on the grid (up to about 35 vol%); above that, and for the curve against loading, Krieger–Dougherty with the maximum packing fraction carries the result.</div>`;
+      <div class="hint">The RVE flow solve is reliable while every particle stays surrounded by resin on the grid (up to about 35 vol%); above that the particle dynamics (spheres) or, for other shapes, Krieger–Dougherty with the maximum packing fraction carries the result.</div>`;
   }
   function secVisc(p) {
     const fmtT = (s) => !isFinite(s) ? "—" : s < 60 ? `${fmt(s)} s` : s < 3600 ? `${fmt(s / 60)} min` : `${fmt(s / 3600)} h`;
@@ -1644,7 +1653,35 @@
       { x: c.phi, y: c.mp, color: "#8250df", dash: [6, 4], label: "Maron–Pierce" },
       { x: c.phi, y: c.batchelor, color: "#1a7f37", dash: [3, 3], label: "Batchelor" },
       { x: c.phi, y: c.hs, color: "#57606a", dash: [2, 3], label: "Hashin–Shtrikman lower bound" },
-      { x: [p.phi], y: [p.mu_r_rve], color: "#d1242f", marker: true, width: 0, label: "RVE flow solve" }] }));
+      { x: [p.phi], y: [p.mu_r_rve], color: "#d1242f", marker: true, width: 0, label: "RVE flow solve" },
+      ...(p.dem && !p.dem.error ? [{ x: [p.phi], y: [p.dem.mu_r], color: "#bf8700", marker: true, width: 0, label: "Particle dynamics" }] : [])] }));
+    const dm = p.dem;
+    if (dm && !dm.error) draws.push(() => CH.line($("#viscDem"), { xlabel: "Sheared strain", ylabel: "Relative viscosity μr", series: [
+      { x: dm.strain, y: dm.eta, color: "#bf8700", width: 1.8, label: "Instantaneous" },
+      { x: [1, dm.strain[dm.strain.length - 1]], y: [dm.mu_r, dm.mu_r], color: "#0b62c4", dash: [6, 4], width: 1.6, label: "Mean from strain 1" }] }));
+    if (dm && !dm.error && dm.anim) draws.push(async () => {
+      // the solver's own sheared box, played in a small 3D view
+      try {
+        if (state.demPlayer) { state.demPlayer.stop(); state.demPlayer = null; }
+        const id = state.resultJob, host = $("#demPlayer");
+        if (!id || !host || !window.DemPlayer) return;
+        const m = await (await fetch(`/api/jobs/${id}/view/meta.json`, { cache: "no-store" })).json();
+        if (m.dem) state.demPlayer = await window.DemPlayer(host, id, m.dem, m.built);
+      } catch (e) { console.warn("particle dynamics player", e); }
+    });
+    const demBox = !dm ? "" : dm.error ? `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics</div><p class="hint">Not run: ${esc(dm.error)}</p></div>`
+      : `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics <span class="hint">${dm.n} spheres moving, turning and colliding in the resin sheared at ${fmt(dm.gd)} 1/s · ${dm.backend === "cuda" ? "NVIDIA GPU" : "CPU"} · ${secs(dm.seconds)}</span></div>
+        <div class="rgrid"><div>${canvas("viscDem", 230)}</div><div>
+        ${kv([["Relative viscosity", `<b class="mono">${fmt(dm.mu_r)}</b> ± ${fmt(dm.se)} <span class="hint">mean over the strain after 1, standard error of 8 blocks</span>`],
+              ["From lubrication / contacts", `${fmt(dm.eta_lub)} / ${fmt(dm.eta_contact)} <span class="hint">plus 1 + 2.5φ (resin and single-sphere stresslet)</span>`],
+              ["Contacts per particle", fmt(dm.contacts_per_particle)],
+              ["Particles", dm.counts.map((c, i) => `${c} × ${fmt(dm.d_um[i])} µm`).join(" + ") + ` <span class="hint">box ${fmt(dm.box_um)} µm</span>`],
+              ["Friction · roughness · closest approach", `${fmt(dm.mu_f)} · ${fmt(dm.roughness_nm)} nm · ${fmt(dm.hmin_nm)} nm`],
+              ["Bound layer · adhesion", `${fmt(dm.bound_nm)} nm · ${fmt(dm.adhesion_mJ_m2)} mJ/m²${dm.bound_nm ? ` <span class="hint">effective φ ${fmt(dm.phi_effective)}</span>` : ""}`],
+              ["Hamaker constant", dm.hamaker.map((h) => `${esc(h.phase)} ${fmt(h.J)} J <span class="hint">${esc(h.basis)}</span>`).join("<br>")]])}
+        </div></div>
+        ${dm.anim ? `<div class="bt" style="margin-top:10px">The sheared particles <span class="hint">the solver's own box (not the RVE above), the top moving +x and the bottom −x; drag to turn it</span></div><div id="demPlayer"></div>` : ""}
+        <p class="hint">The fillers are not held: each one moves and turns with the resin, the films between close surfaces resist squeezing and sliding (lubrication), touching surfaces push and rub (friction), and the van der Waals attraction pulls them together. Roughness, the closest approach and the attraction carry lengths of their own, so the same loading of a finer filler comes out stiffer. Above about 35 vol%, or where the particles of the RVE touch, this is the best estimate.</p></div>`;
     const f = p.flow;
     draws.push(() => CH.line($("#viscFlow"), { xlog: true, ylog: true, xlabel: "Shear rate (1/s)", ylabel: "Viscosity (Pa·s)", series: [
       { x: f.gd, y: f.mu_compound, color: "#d1242f", width: 2.4, label: "Compound" },
@@ -1656,6 +1693,7 @@
       <div class="box"><div class="bt">Relative viscosity <span class="hint">μ / μ<sub>resin</sub>, φ = ${fmt(100 * p.phi)} vol% filler${p.bubbles ? ` · ${fmt(100 * p.bubbles)} vol% bubbles` : ""}</span></div>
         ${kv([["Best estimate", `<b class="mono">${fmt(p.mu_r)}</b> <span class="hint">${esc(p.basis)}</span>`],
               ["RVE flow solve (isotropic mean)", fmt(p.mu_r_rve) + (p.ci95 ? ` ± ${fmt(p.ci95)}` : "")],
+              p.dem && !p.dem.error ? ["Particle dynamics", `${fmt(p.dem.mu_r)} ± ${fmt(p.dem.se)}`] : null,
               ["Shear yz / xz / xy", ["yz", "xz", "xy"].map((k) => fmt(p.shear[k])).join(" / ")],
               ["Extension (η<sub>E</sub> / 3μ)", fmt(p.extension)],
               ["Maximum packing fraction φm", `${fmt(p.phi_m)} <span class="hint">${esc(p.phi_m_basis || "")}${p.jamming ? ` · ${p.jamming.n_particles} particles` : ""}${p.friction ? ` · frictional (random close packing ${fmt(p.phi_m_rcp)} × 0.914)` : ""}</span>`],
@@ -1666,6 +1704,7 @@
               p.kd_phi_m_fit ? ["φm that puts Krieger–Dougherty through the RVE value", fmt(p.kd_phi_m_fit)] : null])}
         <div class="bt" style="margin-top:8px">Closed forms at this φ</div>${kv(refs)}</div>
       <div class="box"><div class="bt">Relative viscosity against filler loading</div>${canvas("viscCurve", 300)}</div>
+      ${demBox}
       <div class="box"><div class="bt">Flow curve <span class="hint">resin ${esc(f.model.type)}${f.yield_Pa ? `, yield stress ${fmt(f.yield_Pa)} Pa` : ""}; shear-rate amplification in the resin ${fmt(f.amplification)}</span></div>${canvas("viscFlow", 280)}
         ${kv([[`Compound at ${fmt(p.gd_ref)} 1/s`, `<b class="mono">${fmt(p.mu_compound_ref)}</b> Pa·s`], [`Resin at ${fmt(p.gd_ref)} 1/s`, `${fmt(p.mu_resin_ref)} Pa·s`]])}</div>
       <div class="box"><div class="bt">Capillary underfill <span class="hint">parallel plates, gap ${fmt(uf.gap_um)} µm, flow length ${fmt(uf.length_mm)} mm, γ ${fmt(uf.gamma_mN_m)} mN/m, θ ${fmt(uf.theta_deg)}°</span></div>

@@ -261,6 +261,7 @@ def normalize(form):
     vis = opts.get("viscosity") or {}
     vmod = vis.get("model") or {}
     uf = vis.get("underfill") or {}
+    dem = vis.get("dem") or {}
     f_dmin = _num(filt.get("d_min_um", 0.01), "smallest particle diameter", 1e-4, 1e3)
     f_dmax = _num(filt.get("d_max_um", 5.0), "largest particle diameter", 1e-4, 1e3)
     f_n = int(_num(filt.get("n_sizes", 8), "number of particle sizes", 2, 24))
@@ -395,6 +396,28 @@ def normalize(form):
             "dilute_rve": bool(vis.get("dilute_rve", True)),
             "density_resin": _num(vis.get("density_resin", 1150.0), "resin density", 100.0, 3e4),
             "settle_min": _num(vis.get("settle_min", 60.0), "settling time", 0.0, 1e6),
+            # particle dynamics (solvers/suspension.py): every filler particle
+            # moving, turning and colliding in the sheared resin - the best
+            # estimate for spheres where the voxel flow solve cannot resolve
+            # the films between them, and the source of the particle-size
+            # effect (roughness and van der Waals are lengths). Friction 0.25
+            # reproduces the measured law of non-Brownian spheres (Boyer et al.
+            # 2011: 20.7 at 50 vol%, 103 at 55 vol%; mu_f 0.2 gave 19.6 / 70,
+            # 0.3 20.3 / 165); 0 reproduces Krieger-Dougherty with phi_m 0.64.
+            "dem": {"on": bool(dem.get("on", True)),
+                    "n": int(_num(dem.get("n", 500), "number of particles", 50, 200000)),
+                    "strain": _num(dem.get("strain", 5.0), "sheared strain", 1.0, 100.0),
+                    "roughness_nm": _num(dem.get("roughness_nm", 5.0), "surface roughness", 0.01, 1e4),
+                    "hmin_nm": _num(dem.get("hmin_nm", 1.0), "closest approach of the surfaces", 0.1, 1e3),
+                    "mu_f": _num(dem.get("mu_f", 0.25), "friction coefficient", 0.0, 2.0),
+                    # surface chemistry that bulk data cannot give - fitted to a
+                    # measured viscosity (0: none): a resin layer bound to the
+                    # surface, and the work of adhesion of touching surfaces
+                    "bound_nm": _num(dem.get("bound_nm", 0.0), "bound resin layer", 0.0, 1e4),
+                    "adhesion_mJ_m2": _num(dem.get("adhesion_mJ_m2", 0.0), "work of adhesion", 0.0, 1e4),
+                    "hamaker_J": (None if dem.get("hamaker_J") in (None, "", "auto") else
+                                  _num(dem.get("hamaker_J"), "Hamaker constant", 0.0, 1e-17)),
+                    "backend": dem.get("backend") if dem.get("backend") in ("auto", "cpu", "cuda") else "auto"},
             "underfill": {"gap_um": _num(uf.get("gap_um", 50.0), "underfill gap", 0.1, 1e5),
                           "length_mm": _num(uf.get("length_mm", 10.0), "underfill flow length", 1e-3, 1e4),
                           "gamma_mN_m": _num(uf.get("gamma_mN_m", 35.0), "surface tension", 0.1, 1000.0),

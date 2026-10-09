@@ -24,3 +24,6 @@ porespy==3.0.4
 scikit-rf==1.3.0
 pyamg==5.1.0
 pandas==2.3.3
+# particle dynamics of the viscosity analysis (CPU, or an NVIDIA GPU through CUDA)
+taichi==1.7.4
+dill==0.4.1

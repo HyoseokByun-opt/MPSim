@@ -438,6 +438,25 @@ class ViewWriter:
             "speed_min": float(min(sp)) if sp else None, "speed_max": float(max(sp)) if sp else None,
             "speed_label": speed_label, "speed_unit": speed_unit})
 
+    def add_particles_anim(self, radii_um, phase_of, frames_um, speeds, box_um, strain_step, names, colors,
+                           mu_r=None):
+        """The particle dynamics of the viscosity analysis for the viewer: its
+        own sheared box (not the RVE), the sphere radii and phase of every
+        particle, and frames of the positions (um) and of the speed relative
+        to the shear flow (in units of the shear rate times the largest
+        radius), float32, frame after frame."""
+        fr = np.asarray(frames_um, np.float32)
+        sp = np.asarray(speeds, np.float32)
+        fr.tofile(os.path.join(self.dir, "dem_pos.f32"))
+        sp.tofile(os.path.join(self.dir, "dem_speed.f32"))
+        np.asarray(radii_um, np.float32).tofile(os.path.join(self.dir, "dem_radii.f32"))
+        np.asarray(phase_of, np.uint8).tofile(os.path.join(self.dir, "dem_phase.u8"))
+        self.meta["dem"] = {"n": int(fr.shape[1]), "frames": int(fr.shape[0]), "box_um": float(box_um),
+                            "strain_step": float(strain_step), "pos": "dem_pos.f32", "speed": "dem_speed.f32",
+                            "radii": "dem_radii.f32", "phase": "dem_phase.u8", "names": list(names),
+                            "colors": list(colors), "speed_p99": float(np.percentile(sp, 99)) if sp.size else 1.0,
+                            "mu_r": mu_r}
+
     def add_network(self, view):
         if not view:
             return
@@ -475,6 +494,8 @@ class ViewWriter:
                                 if keep(x["key"]) and os.path.exists(os.path.join(self.dir, x["file"]))]
         if old.get("network") and os.path.exists(os.path.join(self.dir, "network.json")):
             self.meta["network"] = old["network"]
+        if old.get("dem") and os.path.exists(os.path.join(self.dir, old["dem"].get("pos", ""))):
+            self.meta["dem"] = old["dem"]
         self._old = {"keys": kept,
                      "surf": {int(sf["label"]): (int(sf.get("n_points", -1)), dict(sf.get("fields") or {}))
                               for sf in old.get("surfaces") or []},

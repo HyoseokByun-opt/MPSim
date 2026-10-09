@@ -582,6 +582,124 @@ def _moisture_entry(spec, opts, table, realisations, results_first, checks):
                                "the dilute-sphere value, contacts and shape lower it further"})
     return entry
 
+def _dem_radii(spec, solid, n_target, seed=11):
+    """Sphere radii (m) and phase of each particle for the particle dynamics:
+    every phase in proportion to its volume fraction, sizes drawn from its
+    distribution. A size spread of at least CV 0.1 is used - equal spheres
+    order into sliding layers under shear, which no real powder does. The
+    largest phase gets at least 40 particles, so the box is several of its
+    diameters wide."""
+    rng = np.random.default_rng(seed)
+    phases = [spec["phases"][i] for i in solid]
+    dists, mean_v = [], []
+    for p in phases:
+        dd = dict(p.get("dist") or {})
+        cv = float(dd.get("cv", 0.0) or 0.0) if dd.get("type") == "lognormal" else 0.0
+        dd = {"type": "lognormal", "cv": max(cv, 0.1)}
+        dists.append(dd)
+        sc = G.sample_scales(20000, dd, rng)
+        mean_v.append(float(np.mean((p["size_um"]["d"] * sc) ** 3)))
+    vf = np.array([p["vf"] for p in phases], float)
+    share = vf / np.array(mean_v)
+    share = share / share.sum()
+    counts = np.maximum(1, np.round(share * n_target)).astype(int)
+    big = int(np.argmax([p["size_um"]["d"] for p in phases]))
+    if counts[big] < 40:
+        counts = np.maximum(1, np.round(counts * 40.0 / counts[big])).astype(int)
+    radii, owner = [], []
+    for k, (p, dd) in enumerate(zip(phases, dists)):
+        radii.append(0.5e-6 * p["size_um"]["d"] * G.sample_scales(int(counts[k]), dd, rng))
+        owner.append(np.full(int(counts[k]), k))
+    return np.concatenate(radii), np.concatenate(owner)
+
+
+def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=None):
+    """The relative viscosity of the spheres from the particle dynamics at
+    the reference shear rate (solvers/suspension.py)."""
+    from .solvers import suspension as SU
+    do = vo["dem"]
+    radii, owner = _dem_radii(spec, solid, do["n"])
+    mat = spec["matrix"]
+    hks, hk_basis = [], []
+    for i in solid:
+        p = spec["phases"][i]
+        if do["hamaker_J"] is not None:
+            hks.append(float(do["hamaker_J"]))
+            hk_basis.append("entered")
+            continue
+        a = SU.hamaker(p.get("material_id"), mat.get("material_id"), eps_f=p["props"].get("eps_r"),
+                       eps_r=mat["props"].get("eps_r"), sigma_f=float(p["props"].get("sigma", 0.0) or 0.0))
+        if a is None:
+            a = 1.0e-20
+            hk_basis.append("typical value (no optical data for this material)")
+        else:
+            hk_basis.append("Lifshitz, refractive indices" if a != SU.A_CONDUCTOR else "conductor across a polymer")
+        hks.append(float(a))
+    gd = vo["gd_ref"]
+    mu_res = float(VI.matrix_flow(vo["model"], [gd])[0])
+    tot = do["strain"]
+    stage_name = "Viscosity · particle dynamics"
+    detail = (f"{len(radii)} spheres sheared in the resin at {gd:g} 1/s - lubrication, contacts with friction "
+              f"{do['mu_f']:g}, van der Waals")
+    prog.stage(stage_name, detail, units=3.0)
+    last = {"t": 0.0, "s": -1.0}
+
+    def cb(strain, eta, its):
+        now = time.time()
+        if now - last["t"] >= 1.0:
+            last["t"] = now
+            event("stage", name=stage_name, detail=f"{detail} · strain {strain:.2f} of {tot:g}, μr {eta:.3g}",
+                  progress=prog.sub(min(strain / tot, 0.999)))
+        if strain >= last["s"] + 1.0:
+            last["s"] = math.floor(strain)
+            log(f"    strain {strain:.2f}: μr {eta:.4g} (CG {its} iterations)")
+    log(f"    particle dynamics: {len(radii)} spheres, φ {phi:.3f}, resin {mu_res:.4g} Pa·s at {gd:g} 1/s, "
+        f"roughness {do['roughness_nm']:g} nm, closest approach {do['hmin_nm']:g} nm, friction {do['mu_f']:g}, "
+        f"bound layer {do['bound_nm']:g} nm, adhesion {do['adhesion_mJ_m2']:g} mJ/m², "
+        f"Hamaker " + ", ".join(f"{spec['phases'][i]['name']} {a:.3g} J" for i, a in zip(solid, hks)))
+    out = SU.shear_viscosity(radii, phi, mu_res, gd, roughness_m=do["roughness_nm"] * 1e-9,
+                             hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
+                             strain=tot, backend=do["backend"], log=log, progress=cb, should_stop=should_stop,
+                             bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3)
+    prog.end()
+    anim = False
+    if viewer is not None and out.get("frames_um") is not None:
+        # the solver's own box for the viewer: positions and speeds of the last
+        # strain it ran, the phase colours of the structure
+        labs = viewer.meta.get("labels") or []
+        cols = []
+        for k, i in enumerate(solid):
+            nm = spec["phases"][i]["name"]
+            lb = next((lb_ for lb_ in labs if lb_.get("name") == nm), None)
+            cols.append(lb["color"] if lb else V.PHASE_COLORS[(k + 1) % len(V.PHASE_COLORS)])
+        try:
+            viewer.add_particles_anim(radii * 1e6, owner, out["frames_um"], out["frames_speed"], out["box_um"],
+                                      out["frame_strain"], [spec["phases"][i]["name"] for i in solid], cols,
+                                      mu_r=out["eta_mean"])
+            anim = True
+        except Exception as e_:                                          # noqa: BLE001
+            log(f"    (the particle animation could not be written: {e_})")
+    st = np.asarray(out["strain"])
+    e = np.asarray(out["eta"])
+    keep = max(1, len(st) // 200)
+    res = {"mu_r": out["eta_mean"], "se": out["eta_se"], "n": out["n"], "phi": phi, "gd": gd, "mu_resin": mu_res,
+           "backend": out["backend"], "seconds": out["seconds"], "steps": out["steps"], "box_um": out["box_um"],
+           "strain": st[::keep].tolist(), "eta": e[::keep].tolist(),
+           "eta_lub": float(np.mean(np.asarray(out["eta_lub"])[st >= 1.0])),
+           "eta_contact": float(np.mean(np.asarray(out["eta_contact"])[st >= 1.0])),
+           "contacts_per_particle": float(np.mean(np.asarray(out["contacts_per_particle"])[st >= 1.0])),
+           "max_overlap": float(max(out["max_overlap"])),
+           "roughness_nm": do["roughness_nm"], "hmin_nm": do["hmin_nm"], "mu_f": do["mu_f"],
+           "bound_nm": do["bound_nm"], "adhesion_mJ_m2": do["adhesion_mJ_m2"], "phi_effective": out["phi_effective"],
+           "hamaker": [{"phase": spec["phases"][i]["name"], "J": a, "basis": b} for i, a, b in zip(solid, hks, hk_basis)],
+           "d_um": [float(2e6 * radii[owner == k].mean()) for k in range(len(solid))],
+           "counts": [int((owner == k).sum()) for k in range(len(solid))], "anim": anim}
+    log(f"    particle dynamics: μr {res['mu_r']:.4g} ± {res['se']:.2g} (strain 1-{tot:g}; lubrication "
+        f"{res['eta_lub']:.3g}, contacts {res['eta_contact']:.3g}; {res['contacts_per_particle']:.2f} contacts per particle; "
+        f"{out['backend']}, {out['seconds']:.0f} s)")
+    return res
+
+
 def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks):
     """The viscosity section of the result: the RVE value, the closed forms,
     Krieger-Dougherty with the jammed phi_m, the best estimate, the flow curve
@@ -610,7 +728,14 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
     mp = float(VI.maron_pierce(phi, phi_m))
     touching = int(v0.get("touching_pairs") or 0)
     resolved = phi <= 0.35 and touching == 0
-    best, basis = (mu_r, "RVE flow solve") if resolved else (kd, "Krieger-Dougherty with the jammed packing fraction")
+    dem = results_first.get("viscosity_dem")
+    dem_ok = bool(dem) and not dem.get("error")
+    if resolved:
+        best, basis = mu_r, "RVE flow solve"
+    elif dem_ok:
+        best, basis = float(dem["mu_r"]), "particle dynamics"
+    else:
+        best, basis = kd, "Krieger-Dougherty with the jammed packing fraction"
     phis = np.linspace(0.0, 0.97 * phi_m, 60)
     curve = {"phi": phis.tolist(), "kd": VI.krieger_dougherty(phis, phi_m, eta).tolist(),
              "kd_alt": [float(VI.krieger_dougherty(p, phi_m_alt, eta)) if p < 0.97 * phi_m_alt else None for p in phis],
@@ -644,7 +769,9 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
              "jamming": vx.get("jamming"), "eta": eta, "eta_basis": vx.get("eta_basis", "sphere value"),
              "dilute": vx.get("dilute"),
              "refs": {"Einstein": VI.einstein(phi), "Batchelor": VI.batchelor(phi), "Hashin-Shtrikman lower bound": VI.hs_lower(phi),
-                      "Krieger-Dougherty": kd, "Maron-Pierce": mp},
+                      "Krieger-Dougherty": kd, "Maron-Pierce": mp,
+                      **({"Particle dynamics": float(dem["mu_r"])} if dem_ok else {})},
+             "dem": dem,
              "kd_phi_m_fit": VI.kd_phi_m_from(mu_r, phi, eta), "mu_r": best, "basis": basis, "curve": curve,
              "flow": {"gd": gd.tolist(), "mu_resin": mu_m.tolist(), "mu_compound": mu_s.tolist(),
                       "amplification": A, "model": vo["model"], "yield_Pa": vo["yield_Pa"]},
@@ -662,9 +789,27 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
                             "Every particle is surrounded by resin on the grid")})
     if phi > 0.35:
         checks.append({"id": "visc_dense", "group": "Viscosity", "label": "Filler fraction within the range the voxel flow solve resolves",
-                       "value": phi, "target": 0.35, "unit": "", "status": "warn",
+                       "value": phi, "target": 0.35, "unit": "",
+                       "status": "pass" if dem_ok else "warn",
                        "note": "Above about 35 vol% the resin films between particles are thinner than a voxel or two; "
-                               "the best estimate is Krieger-Dougherty with the jammed packing fraction"})
+                               + ("the best estimate is the particle dynamics, which resolves them" if dem_ok else
+                                  "the best estimate is Krieger-Dougherty with the jammed packing fraction")})
+    if dem_ok:
+        late = [e_ for s_, e_ in zip(dem["strain"], dem["eta"]) if s_ >= 1.0]
+        third = max(1, len(late) // 3)
+        drift = abs(float(np.mean(late[-third:])) - float(np.mean(late[third:2 * third]))) / max(dem["mu_r"], 1e-9)
+        checks.append({"id": "visc_dem_steady", "group": "Viscosity", "label": "Particle dynamics at steady state",
+                       "value": drift, "target": 0.1, "unit": "rel",
+                       "status": "pass" if drift <= 0.1 else "warn",
+                       "note": "Change of the mean viscosity between the middle and the last third of the sheared strain; "
+                               "a larger strain (Simulation tab) settles it further"})
+        checks.append({"id": "visc_dem_overlap", "group": "Viscosity", "label": "Contact overlap in the particle dynamics",
+                       "value": dem["max_overlap"], "target": 0.05, "unit": "radii",
+                       "status": "pass" if dem["max_overlap"] <= 0.05 else "warn",
+                       "note": "The stiff contact springs let surfaces overlap by this much of the largest radius"})
+    elif dem and dem.get("error"):
+        checks.append({"id": "visc_dem", "group": "Viscosity", "label": "Particle dynamics", "value": None, "target": None,
+                       "unit": "", "status": "warn", "note": dem["error"]})
     if bubbles > 0:
         checks.append({"id": "visc_bubbles", "group": "Viscosity", "label": "Bubbles treated as freely deforming",
                        "value": bubbles, "target": None, "unit": "", "status": "warn",
@@ -1813,8 +1958,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         + (2.0 * len(dirs) if "permeability" in need else 0.0) \
         + (0.5 * len(dirs) if "tortuosity" in need else 0.0) \
         + (0.5 * len(dirs) + 1.0 if "moisture" in need else 0.0) \
-        + (3.0 if ("cte" in need and opts.get("above_tg")) else 0.0)
-    once_units = sum(u for k, u in (("morphology", 1.0), ("porosimetry", 1.0), ("pore_network", 1.0),
+        + (3.0 if ("cte" in need and opts.get("above_tg")) else 0.0)         + (4.0 if "viscosity" in need else 0.0)
+    once_units = (2.0 + (3.0 if opts["viscosity"]["dem"]["on"] else 0.0) if "viscosity" in need else 0.0) + sum(u for k, u in (("morphology", 1.0), ("porosimetry", 1.0), ("pore_network", 1.0),
                                     ("grains", 1.0), ("radiation", 0.5), ("acoustics", 0.3),
                                     ("percolation", 1.0), ("filtration", 0.7)) if k in need)
     prog = Progress(event, seeds * per_seed_units + once_units + 3.0)
@@ -2569,6 +2714,27 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 else:
                     vx["eta"], vx["eta_basis"] = 2.5, "sphere value"
                 res_r["viscosity_extra"] = vx
+                # particle dynamics of the spheres (all solid phases spheres, no bubbles)
+                if vo["dem"]["on"] and solid:
+                    sph = all(spec["phases"][i]["shape"] == "sphere" for i in solid)
+                    bubbles_ = any(ph["void"] for ph in spec["phases"])
+                    if not sph:
+                        res_r["viscosity_dem"] = {"error": "the particle dynamics handles spheres; other shapes use the RVE "
+                                                           "flow solve and Krieger-Dougherty"}
+                    elif bubbles_:
+                        res_r["viscosity_dem"] = {"error": "bubbles are not in the particle dynamics; the RVE flow solve and "
+                                                           "Krieger-Dougherty are used"}
+                    else:
+                        try:
+                            phi_s = float(sum(spec["phases"][i]["vf"] for i in solid))
+                            res_r["viscosity_dem"] = _dem_viscosity(spec, solid, phi_s, vo, log, event, prog, should_stop,
+                                                                    viewer if first else None)
+                        except InterruptedError:
+                            raise
+                        except Exception as e:                           # noqa: BLE001
+                            prog.end()
+                            res_r["viscosity_dem"] = {"error": f"the particle dynamics failed: {e}"}
+                            log(f"    particle dynamics not run: {e}")
 
         # ---- moisture ------------------------------------------------------
         if "moisture" in need:

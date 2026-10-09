@@ -454,6 +454,47 @@ def t_visc_dilute():
             f"a filler off the centre moves {rb[0]:.3f} with the resin's {u_res:.3f} and spins {rb[5]:.3f}")
 
 
+@check("Particle dynamics: frictionless spheres at 50 vol% follow Krieger-Dougherty (phi_m 0.64); GPU = CPU where an NVIDIA GPU is present", quick=False)
+def t_dem_kd():
+    # every filler moving and colliding in the sheared resin; without
+    # friction the jamming point is the random close packing, so the
+    # viscosity follows Krieger-Dougherty with phi_m 0.64 (11.4 at 50 vol%;
+    # 400 spheres to strain 4 gave 11.65 +- 0.33). Here 200 spheres to strain 2.
+    from mpsim.solvers import suspension as SU
+    n = 200
+    na = int(round(n / (1 + 1.4 ** 3)))
+    r = np.concatenate([np.full(na, 1.0), np.full(n - na, 1 / 1.4)])
+    s = SU.Suspension(r, 0.50, seed=3, backend="cpu")
+    s.pack()
+    out = s.run(2.0, every=0.05)
+    st, e = np.asarray(out["strain"]), np.asarray(out["eta"])
+    eta = float(e[st >= 0.5].mean())
+    kd = (1 - 0.5 / 0.64) ** (-2.5 * 0.64)
+    expect(abs(eta / kd - 1) < 0.25, f"eta {eta:.2f} against Krieger-Dougherty {kd:.2f}")
+    msg = f"μr {eta:.2f} against Krieger-Dougherty {kd:.2f} ({out['steps']} steps, CPU {out['seconds']:.0f} s)"
+    # the GPU path runs the same kernels: a short shear from the same start
+    # must agree (chaotic dynamics separate the two only slowly)
+    import subprocess, sys as _s, json as _j
+    code = ("import sys,json,numpy as np;sys.path.insert(0,%r);from mpsim.solvers import suspension as SU;"
+            "r=np.concatenate([np.full(%d,1.0),np.full(%d,1/1.4)]);out={}\n"
+            "for b in ('cuda','cpu'):\n"
+            "  SU._TI['arch']=None\n  import taichi as ti\n  ti.reset()\n"
+            "  try:\n    s=SU.Suspension(r,0.5,seed=3,backend=b)\n  except Exception as ex:\n    out[b]=str(ex);continue\n"
+            "  if b=='cuda' and s.backend!='cuda':\n    out[b]='no CUDA';continue\n"
+            "  s.pack();o=s.run(0.05,every=0.01);out[b]=o['eta'][-1]\n"
+            "print(json.dumps(out))") % (os.path.dirname(os.path.abspath(__file__)), na, n - na)
+    try:
+        p = subprocess.run([_s.executable, "-c", code], capture_output=True, text=True, timeout=600)
+        got = _j.loads(p.stdout.strip().splitlines()[-1])
+    except Exception as ex:                                            # noqa: BLE001
+        return msg + f"; GPU comparison not run ({ex})"
+    if isinstance(got.get("cuda"), float):
+        rel = abs(got["cuda"] / got["cpu"] - 1)
+        expect(rel < 1e-3, f"GPU {got['cuda']:.6g} against CPU {got['cpu']:.6g}")
+        return msg + f"; GPU (CUDA) agrees with the CPU to {rel:.1e}"
+    return msg + "; no NVIDIA GPU here - the GPU comparison was skipped"
+
+
 @check("Viscosity closed forms: Krieger-Dougherty and Maron-Pierce limits, intrinsic viscosity of rods and discs")
 def t_visc_forms():
     from mpsim.solvers import viscosity as VI
@@ -1273,7 +1314,8 @@ def t_pipeline_live():
                         "fraction": {"value": 20, "basis": "vol"}}],
             "rve": {"auto": False, "L_um": 32, "voxel_um": 1.0, "auto_enlarge": False, "quality": "fast"},
             "analyses": {"thermal": True, "viscosity": True},
-            "options": {"directions": "x", "live_figures": True, "viscosity": {"phi_m_mode": "manual", "phi_m": 0.64}}}
+            "options": {"directions": "x", "live_figures": True, "viscosity": {"phi_m_mode": "manual", "phi_m": 0.64,
+                                                                                 "dem": {"n": 100, "strain": 1.5}}}}
     seen = {"figure": [], "partial_result": 0}
 
     def event(kind, **p):

@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-54%20checks-2da44e" alt="54 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-55%20checks-2da44e" alt="55 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -67,9 +67,11 @@ Its capabilities include:
 - **Mechanics.** Stiffness, engineering constants and the thermal-expansion tensor from FANS — the periodic voxel finite
   elements of NASA PuMA solved with an FFT preconditioner whose iteration count does not grow with the grid
   (7 loads on 96³ in 49 s, 11× faster than MINRES on the same discretisation) — optionally above the glass transition.
-- **Rheology.** Effective viscosity of underfills, moulding compounds and pastes from a creeping-flow solve on the RVE,
-  Krieger–Dougherty with the maximum packing fraction of the actual size distribution, flow curves, capillary underfill
-  filling time and settling; the resin flow is shown moving.
+- **Rheology.** Effective viscosity of underfills, moulding compounds and pastes from a creeping-flow solve on the RVE
+  and, for dense spherical fillers, a particle dynamics in which every filler moves, turns and collides in the sheared
+  resin (lubrication, friction, van der Waals; CPU or NVIDIA GPU) — which also gives the particle-size effect; Krieger–
+  Dougherty with the maximum packing fraction of the actual size distribution, flow curves, capillary underfill filling
+  time and settling; the resin flow and the moving particles are shown.
 - **Moisture.** Effective moisture diffusivity (solved on the water activity), saturated uptake, the uptake curve of a part
   and hygroscopic swelling.
 - **Electromagnetic shielding.** Frequency-resolved complex homogenisation feeding a transmission-line model, and a
@@ -112,7 +114,7 @@ through it.
 | | Magnetic permeability | same | μr tensor |
 | | EMI shielding | Complex homogenisation → scikit-rf; openEMS FDTD check | SE(f) with reflection, absorption and multiple-reflection terms, validity limits |
 | Mechanics | Elasticity and thermal expansion | FANS voxel FE (default), NASA PuMA FE | C\*, S\*, E, G, ν, Hill moduli, anisotropy index, α tensor, thermal stress per region; optionally α2 and E above Tg |
-| Rheology | Viscosity and flowability | FANS creeping flow; Krieger–Dougherty with Farr–Groot φm | Relative viscosity, flow curve, φm, underfill filling time, settling, local shear-rate field |
+| Rheology | Viscosity and flowability | FANS creeping flow; particle dynamics (lubrication DEM); Krieger–Dougherty with Farr–Groot φm | Relative viscosity, flow curve, φm, underfill filling time, settling, local shear-rate field |
 | Reliability | Moisture uptake and swelling | Periodic FV on the water activity; FANS eigenstrain | D_eff tensor, saturated uptake, uptake curve, swelling strain and CME |
 | Porous media | Permeability | NASA PuMA Stokes FE | K tensor, Kozeny–Carman constant, hydraulic tortuosity |
 | | Filtration efficiency | Particle tracking in the Stokes field | Efficiency per particle size, most penetrating size, quality factor |
@@ -131,7 +133,7 @@ bounds (Wiener, Hashin–Shtrikman, Schapery); a value outside a rigorous bound 
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **54 problems whose answers are known** (38 in the quick set) and compares the results.
+`5_SELF_TEST.bat` solves **55 problems whose answers are known** (38 in the quick set) and compares the results.
 Among them:
 
 | Check | Reference | Result |
@@ -349,6 +351,12 @@ and the solvers that produced the results:
   applications", *International Journal of Numerical Modelling* 26(6), 680–696 (2013).
 - A. Arsenovic et al., "scikit-rf: An open source Python package for microwave network creation, analysis, and
   calibration", *IEEE Microwave Magazine* 23(1), 98–105 (2022).
+- R. Mari, R. Seto, J. F. Morris, M. M. Denn, "Shear thickening, frictionless and frictional rheologies in
+  non-Brownian suspensions", *Journal of Rheology* 58(6), 1693–1724 (2014).
+- F. Boyer, É. Guazzelli, O. Pouliquen, "Unifying suspension and granular rheology", *Physical Review Letters* 107,
+  188301 (2011).
+- Y. Hu, T.-M. Li, L. Anderson, J. Ragan-Kelley, F. Durand, "Taichi: a language for high-performance computation on
+  spatially sparse data structures", *ACM Transactions on Graphics* 38(6), 201 (2019).
 - T. Kanit, S. Forest, I. Galliet, V. Mounoury, D. Jeulin, "Determination of the size of the representative volume
   element for random composites: statistical and numerical approach", *International Journal of Solids and
   Structures* 40(13–14), 3647–3679 (2003) (the RVE size criteria).
@@ -388,6 +396,7 @@ redistributes them unchanged, each under its own licence:
 | NASA PuMA 3.2.2 | NASA Open Source Agreement 1.3 (licence included in the wheel) | FE conduction, elasticity, Stokes flow, tortuosity, ray casting |
 | openEMS v0.37.0-rc3 | GPL-3.0 (CSXCAD LGPL-3.0), run as a separate program; source at [thliebig/openEMS-Project](https://github.com/thliebig/openEMS-Project) | EMI full-wave check |
 | PoreSpy, OpenPNM | MIT | Morphology, porosimetry, pore network |
+| Taichi | Apache-2.0 | Particle dynamics of the viscosity (CPU or CUDA GPU) |
 | scikit-rf | BSD-3-Clause | EMI transmission line |
 | VTK / PyVista | BSD-3-Clause / MIT | Surfaces, figures |
 | vtk.js | BSD-3-Clause | 3D view in the browser |

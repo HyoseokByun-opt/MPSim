@@ -23,6 +23,7 @@ PARTS = [
     ("matplotlib", "section figures"),
     ("psutil", "memory check"),
     ("flask", "the web interface"),
+    ("taichi", "particle dynamics of the viscosity analysis (CPU or CUDA GPU)"),
 ]
 OPTIONAL = []
 
