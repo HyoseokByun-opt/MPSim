@@ -1633,6 +1633,7 @@
       <div class="subh">Particle dynamics (spherical fillers)</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dem.on"><span></span></span> Shear the fillers as moving particles (on by default)</label>
       <div class="g3">${num("options.viscosity.dem.n", "Particles", "", "1")}${num("options.viscosity.dem.strain", "Sheared strain", "")}${num("options.viscosity.dem.mu_f", "Friction coefficient", "")}</div>
+      <div class="hint">More particles narrow the scatter between runs (about 2.5 / √(particles × strain): 6 % at 500 and a strain of 5, 0.6 % at 50 000) and are needed for blends of very different sizes. The neighbour search grows with the count, not its square: the time per step grows in proportion, and the memory is about 2 GB per 100 000 particles, on the GPU or in RAM. Hundreds of thousands are for an NVIDIA GPU; a laptop CPU took 2.3 s per step at 128 000.</div>
       <div class="g3">${num("options.viscosity.dem.roughness_nm", "Surface roughness", "nm")}${num("options.viscosity.dem.hmin_nm", "Closest approach", "nm")}${num("options.viscosity.dem.hamaker_J", "Hamaker constant (empty: auto)", "J")}</div>
       <div class="g2">${num("options.viscosity.dem.bound_nm", "Bound resin layer", "nm")}${num("options.viscosity.dem.adhesion_mJ_m2", "Work of adhesion", "mJ/m²")}</div>
       <div class="hint">Surface chemistry that bulk data cannot give: a resin layer that moves with the particle (adsorbed resin, coupling agent) adds (1 + b/a)³ to the filler volume, and adhesion of touching surfaces (hydrogen bonding of untreated silica) pulls them together with 2πW·R*. Both weigh most on a fine filler. Leave them at 0, or fit them to one measured viscosity and predict other sizes and loadings.</div>
@@ -1674,7 +1675,7 @@
     const demBox = !dm ? "" : dm.error ? `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics</div><p class="hint">Not run: ${esc(dm.error)}</p></div>`
       : `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics <span class="hint">${dm.n} spheres moving, turning and colliding in the resin sheared at ${fmt(dm.gd)} 1/s · ${dm.backend === "cuda" ? "NVIDIA GPU" : dm.gpu_fallback ? "CPU (the GPU run failed)" : "CPU"} · ${secs(dm.seconds)}</span></div>
         <div class="rgrid"><div>${canvas("viscDem", 230)}</div><div>
-        ${kv([["Relative viscosity", `<b class="mono">${fmt(dm.mu_r)}</b> ± ${fmt(dm.se)} <span class="hint">mean over the strain after 1; standard error including the scatter between runs from other random packings</span>`],
+        ${kv([["Relative viscosity", `<b class="mono">${fmt(dm.mu_r)}</b> ± ${fmt(dm.se)} <span class="hint">mean after a strain of 1; ± with the scatter between packings</span>`],
               ["From lubrication / contacts", `${fmt(dm.eta_lub)} / ${fmt(dm.eta_contact)} <span class="hint">plus 1 + 2.5φ (resin and single-sphere stresslet)</span>`],
               ["Contacts per particle", fmt(dm.contacts_per_particle)],
               ["Particles", dm.counts.map((c, i) => `${c} × ${fmt(dm.d_um[i])} µm`).join(" + ") + ` <span class="hint">box ${fmt(dm.box_um)} µm</span>`],

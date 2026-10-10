@@ -43,7 +43,7 @@
         <span class="mono" data-dem="read" style="min-width:150px;text-align:right"></span>
         <select data-dem="color"><option value="speed">Colour: speed relative to the shear</option><option value="phase">Colour: filler</option></select>
         <button class="btn sm" data-dem="gif" title="Save the animation as an animated GIF (the view as it is turned now)">Save GIF</button>
-      </div>`;
+      </div>${dem.slab_um ? `<div class="hint">Shown: a slab ${(dem.slab_um[1] - dem.slab_um[0]).toFixed(1)} µm thick across z (the direction the shear does not move particles along), ${n.toLocaleString()} of the ${(dem.n_total || n).toLocaleString()} spheres computed.</div>` : ""}`;
     const view = host.querySelector(".demview");
     const GRW = ns("Rendering.Misc.vtkGenericRenderWindow"), PD = ns("Common.DataModel.vtkPolyData");
     const DA = ns("Common.Core.vtkDataArray"), Glyph = ns("Rendering.Core.vtkGlyph3DMapper");
@@ -79,7 +79,8 @@
     ren.addActor(actor);
     // the box edges
     const corners = [];
-    for (const z of [0, L]) for (const y of [0, L]) for (const x of [0, L]) corners.push(x, y, z);
+    const Z = dem.slab_um || [0, L];
+    for (const z of Z) for (const y of [0, L]) for (const x of [0, L]) corners.push(x, y, z);
     const edges = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
     const lines = new Uint32Array(edges.length * 3);
     edges.forEach(([a, b], k) => { lines[3 * k] = 2; lines[3 * k + 1] = a; lines[3 * k + 2] = b; });
@@ -170,7 +171,7 @@
     });
     // the camera from a corner, the shear plane facing the viewer
     const cam = ren.getActiveCamera();
-    cam.setFocalPoint(L / 2, L / 2, L / 2);
+    cam.setFocalPoint(L / 2, L / 2, (Z[0] + Z[1]) / 2);
     cam.setPosition(L / 2 + 0.9 * L, L / 2 + 0.7 * L, L / 2 + 2.3 * L);
     cam.setViewUp(0, 1, 0);
     ren.resetCameraClippingRange();

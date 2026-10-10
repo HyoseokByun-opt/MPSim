@@ -118,6 +118,18 @@ def init_backend(prefer="auto", log=None):
     raise RuntimeError(f"Taichi could not start ({last})")
 
 
+def release():
+    """Frees every Taichi field (the backend starts again on the next use)."""
+    import taichi as ti
+    if _TI["arch"] is None:
+        return
+    try:
+        ti.reset()
+    except Exception:                                          # noqa: BLE001
+        pass
+    _TI["arch"] = None
+
+
 def fall_back_to_cpu(reason, log=None):
     """A run on the GPU failed: the CPU from now on in this process."""
     import taichi as ti
@@ -130,9 +142,14 @@ def fall_back_to_cpu(reason, log=None):
     return init_backend("auto", log)
 
 
-def _kernels(n, maxn):
+class NeighbourOverflow(RuntimeError):
+    """A particle has more neighbours than its list holds."""
+
+
+def _kernels(n, maxn, nc=0):
     """Taichi fields and kernels for n particles with at most maxn
-    higher-index neighbours each."""
+    higher-index neighbours each; nc cells per box edge for the neighbour
+    search (below 3 every pair is checked)."""
     import taichi as ti
     vec = ti.types.vector(3, ti.f64)
     F3 = lambda shape: ti.Vector.field(3, ti.f64, shape=shape)        # noqa: E731
@@ -158,6 +175,15 @@ def _kernels(n, maxn):
     pfc = F3((n, maxn))
     sig = ti.field(ti.f64, shape=8)
     par = ti.field(ti.f64, shape=16)
+    # the cell grid of the neighbour search: particles sorted by cell
+    # (counting sort), a cell at least as wide as the longest pair kept
+    use_cells = nc >= 3
+    ncell = nc * nc * nc if use_cells else 1
+    ccount = ti.field(ti.i32, shape=ncell)
+    cstart = ti.field(ti.i32, shape=ncell)
+    cfill = ti.field(ti.i32, shape=ncell)
+    corder = ti.field(ti.i32, shape=n)
+    cellof = ti.field(ti.i32, shape=n)
     # par: 0 L, 1 Lees-Edwards offset, 2 roughness delta, 3 h_min, 4 (unused),
     #      5 k_n, 6 k_t, 7 mu_f, 8 neighbour gap / mean radius, 10 van der Waals range,
     #      12 adhesion W / (mu gd a0)
@@ -194,6 +220,94 @@ def _kernels(n, maxn):
                         c += 1
                     else:
                         over[None] = 1
+            nbc2[i] = c
+
+    @ti.func
+    def cell_index(v, cs):
+        L = par[0]
+        c = int(ti.floor((v - ti.floor(v / L) * L) / cs))
+        return ti.min(ti.max(c, 0), nc - 1)
+
+    @ti.kernel
+    def bin_count():
+        for c in range(ncell):
+            ccount[c] = 0
+            cfill[c] = 0
+        for i in range(n):
+            cs = par[0] / nc
+            c = (cell_index(x[i][0], cs) * nc + cell_index(x[i][1], cs)) * nc + cell_index(x[i][2], cs)
+            cellof[i] = c
+            ti.atomic_add(ccount[c], 1)
+
+    @ti.kernel
+    def bin_scan():
+        acc = 0
+        ti.loop_config(serialize=True)
+        for c in range(ncell):
+            cstart[c] = acc
+            acc += ccount[c]
+
+    @ti.kernel
+    def bin_fill():
+        for i in range(n):
+            c = cellof[i]
+            k = ti.atomic_add(cfill[c], 1)
+            corder[cstart[c] + k] = i
+
+    @ti.kernel
+    def find_pairs_cells():
+        """find_pairs on the cell grid: the 27 cells around a particle; across
+        the sheared faces (y) the cells are those under the image shifted by
+        the Lees-Edwards offset. Lists in ascending index, as find_pairs."""
+        over[None] = 0
+        for i in range(n):
+            cs = par[0] / nc
+            p = x[i]
+            cy0 = cell_index(p[1], cs)
+            cz0 = cell_index(p[2], cs)
+            c = 0
+            for a in range(3):
+                jy = cy0 + a - 1
+                xs = p[0]
+                if jy < 0:
+                    jy += nc
+                    xs += par[1]
+                elif jy >= nc:
+                    jy -= nc
+                    xs -= par[1]
+                cx0 = cell_index(xs, cs)
+                for b in range(3):
+                    jx = (cx0 + b - 1 + nc) % nc
+                    for e in range(3):
+                        jz = (cz0 + e - 1 + nc) % nc
+                        cc = (jx * nc + jy) * nc + jz
+                        for k in range(cstart[cc], cstart[cc] + ccount[cc]):
+                            j = corder[k]
+                            if j > i:
+                                h = sep(i, j).norm() - rad[i] - rad[j]
+                                if h < par[8] * 0.5 * (rad[i] + rad[j]):
+                                    if c < maxn:
+                                        nb2[i, c] = j
+                                        c += 1
+                                    else:
+                                        over[None] = 1
+            for q0 in range(1, c):                   # insertion sort: ascending j
+                v = nb2[i, q0]
+                q = q0
+                while q > 0:
+                    if nb2[i, q - 1] > v:
+                        nb2[i, q] = nb2[i, q - 1]
+                        q -= 1
+                    else:
+                        break
+                nb2[i, q] = v
+            for m2 in range(c):
+                j = nb2[i, m2]
+                old = vec(0.0, 0.0, 0.0)
+                for m in range(nbc[i]):
+                    if nb[i, m] == j:
+                        old = xi[i, m]
+                xi2[i, m2] = old
             nbc2[i] = c
 
     @ti.kernel
@@ -531,12 +645,20 @@ class Suspension:
         self.L = ((4.0 / 3.0) * math.pi * np.sum(r ** 3) / phi) ** (1.0 / 3.0)
         self.phi = phi
         self.r = r
+        # pairs are kept to a surface gap of `gap` mean radii of the pair
+        gap = max(LUB_CUT, 2.0 * vdw_range) + 0.05
         if maxn is None:
-            # a sphere among smaller ones has up to ~ (shell volume / small volume) neighbours
-            ratio = 1.0 / r.min()
-            maxn = int(min(512, max(48, 24 * ratio ** 2)))
+            # the largest sphere (radius 1) packed round with the smallest
+            # (rmin): the centres within (1 + rmin)(1 + gap/2) at most at the
+            # densest packing, 0.74, with half again for the random start
+            rmin = float(r.min())
+            shell = (((1.0 + 0.5 * gap) * (1.0 + rmin)) ** 3 - 1.0) / rmin ** 3
+            maxn = int(min(4096, max(48, 1.5 * 0.74 * shell)))
         self.maxn = maxn
-        self.K = K = _kernels(n, maxn)
+        # cells at least as wide as the longest pair kept, 2 + gap (largest radius 1)
+        self.nc = int(self.L // (2.0 + gap))
+        self.memory_bytes = n * maxn * 168 + n * 700 + 12 * self.nc ** 3
+        self.K = K = _kernels(n, maxn, self.nc)
         K["rad"].from_numpy(r)
         rng = np.random.default_rng(seed)
         K["x"].from_numpy(rng.random((n, 3)) * self.L)
@@ -561,7 +683,7 @@ class Suspension:
         self.par[7] = mu_f
         self.par[10] = vdw_range
         self.par[12] = adhesion
-        self.par[8] = max(LUB_CUT, 2.0 * vdw_range) + 0.05
+        self.par[8] = gap
         K["par"].from_numpy(self.par)
         self.strain = 0.0
 
@@ -570,9 +692,15 @@ class Suspension:
 
     def neighbours(self):
         K = self.K
-        K["find_pairs"]()
+        if K["use_cells"]:
+            K["bin_count"]()
+            K["bin_scan"]()
+            K["bin_fill"]()
+            K["find_pairs_cells"]()
+        else:
+            K["find_pairs"]()
         if K["over"][None]:
-            raise RuntimeError(f"more than {self.maxn} neighbours for a particle")
+            raise NeighbourOverflow(f"more than {self.maxn} neighbours for a particle")
         K["swap_pairs"]()
 
     def pack(self, tol=1e-4, max_iter=200000):
@@ -768,13 +896,29 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
     r = r0 + float(bound_m)
     phi = float(phi) * float(np.sum(r ** 3) / np.sum(r0 ** 3))
     a0 = float(r.max())
-    s = Suspension(r / a0, phi, seed=seed, backend=backend, log=log, delta=roughness_m / a0,
-                   hmin=max(hmin_m, 1e-12) / a0, hamaker=np.asarray(hamaker_J, float) / (mu_resin * gd * a0 ** 3),
-                   mu_f=mu_f, adhesion=float(adhesion_J_m2) / (mu_resin * gd * a0))
-    s.pack()
-    # frames of the last strain for the viewer (frames=0: none)
-    out = s.run(strain, every=0.02, progress=progress, should_stop=should_stop,
-                frames=min(1.0, strain / 2) if frames is None else frames)
+    maxn = None
+    while True:
+        # the fields of an earlier run are freed first (Taichi keeps every
+        # field until it is reset)
+        release()
+        s = Suspension(r / a0, phi, seed=seed, backend=backend, log=log, delta=roughness_m / a0,
+                       hmin=max(hmin_m, 1e-12) / a0, hamaker=np.asarray(hamaker_J, float) / (mu_resin * gd * a0 ** 3),
+                       mu_f=mu_f, adhesion=float(adhesion_J_m2) / (mu_resin * gd * a0), maxn=maxn)
+        if log and len(r) >= 20000:
+            log(f"    {len(r)} spheres, {s.maxn} neighbour slots each, cell grid {s.nc}³: about "
+                f"{s.memory_bytes / 2 ** 30:.2f} GB on the {'GPU' if s.backend == 'cuda' else 'CPU'}")
+        try:
+            s.pack()
+            # frames of the last strain for the viewer (frames=0: none)
+            out = s.run(strain, every=0.02, progress=progress, should_stop=should_stop,
+                        frames=min(1.0, strain / 2) if frames is None else frames)
+            break
+        except NeighbourOverflow:
+            if s.maxn >= 4096:
+                raise
+            maxn = min(4096, 2 * s.maxn)
+            if log:
+                log(f"    a particle had more than {s.maxn} neighbours: restarted with {maxn}")
     st, e = np.asarray(out["strain"]), np.asarray(out["eta"])
     m = st >= settle
     blocks = [b.mean() for b in np.array_split(e[m], 8) if len(b)]

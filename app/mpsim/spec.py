@@ -405,7 +405,7 @@ def normalize(form):
             # 2011: 20.7 at 50 vol%, 103 at 55 vol%; mu_f 0.2 gave 19.6 / 70,
             # 0.3 20.3 / 165); 0 reproduces Krieger-Dougherty with phi_m 0.64.
             "dem": {"on": bool(dem.get("on", True)),
-                    "n": int(_num(dem.get("n", 500), "number of particles", 50, 200000)),
+                    "n": int(_num(dem.get("n", 500), "number of particles", 50, 10_000_000)),
                     "strain": _num(dem.get("strain", 5.0), "sheared strain", 1.0, 100.0),
                     "roughness_nm": _num(dem.get("roughness_nm", 5.0), "surface roughness", 0.01, 1e4),
                     "hmin_nm": _num(dem.get("hmin_nm", 1.0), "closest approach of the surfaces", 0.1, 1e3),

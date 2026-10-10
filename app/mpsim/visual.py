@@ -439,14 +439,24 @@ class ViewWriter:
             "speed_label": speed_label, "speed_unit": speed_unit})
 
     def add_particles_anim(self, radii_um, phase_of, frames_um, speeds, box_um, strain_step, names, colors,
-                           mu_r=None):
+                           mu_r=None, max_show=40000):
         """The particle dynamics of the viscosity analysis for the viewer: its
         own sheared box (not the RVE), the sphere radii and phase of every
         particle, and frames of the positions (um) and of the speed relative
         to the shear flow (in units of the shear rate times the largest
-        radius), float32, frame after frame."""
+        radius), float32, frame after frame. A box of more than max_show
+        spheres is shown as a slab across z (the vorticity direction, which
+        the shear does not carry particles along), max_show spheres thick."""
         fr = np.asarray(frames_um, np.float32)
         sp = np.asarray(speeds, np.float32)
+        radii_um, phase_of = np.asarray(radii_um), np.asarray(phase_of)
+        n_total, slab = int(fr.shape[1]), None
+        if n_total > max_show:
+            t = float(box_um) * max_show / n_total
+            z0 = np.mod(fr[0, :, 2], float(box_um))
+            keep = np.abs(z0 - 0.5 * float(box_um)) < 0.5 * t
+            fr, sp, radii_um, phase_of = fr[:, keep], sp[:, keep], radii_um[keep], phase_of[keep]
+            slab = [0.5 * float(box_um) - 0.5 * t, 0.5 * float(box_um) + 0.5 * t]
         fr.tofile(os.path.join(self.dir, "dem_pos.f32"))
         sp.tofile(os.path.join(self.dir, "dem_speed.f32"))
         np.asarray(radii_um, np.float32).tofile(os.path.join(self.dir, "dem_radii.f32"))
@@ -455,7 +465,7 @@ class ViewWriter:
                             "strain_step": float(strain_step), "pos": "dem_pos.f32", "speed": "dem_speed.f32",
                             "radii": "dem_radii.f32", "phase": "dem_phase.u8", "names": list(names),
                             "colors": list(colors), "speed_p99": float(np.percentile(sp, 99)) if sp.size else 1.0,
-                            "mu_r": mu_r}
+                            "mu_r": mu_r, "n_total": n_total, "slab_um": slab}
 
     def add_network(self, view):
         if not view:
