@@ -1241,7 +1241,9 @@
     if (!state.active || polling) return;
     polling = true;
     try {
-      const ev = await api("GET", `/api/jobs/${state.active}/events?after=${state.seq}`);
+      const jid = state.active;
+      const ev = await api("GET", `/api/jobs/${jid}/events?after=${state.seq}`);
+      if (state.active !== jid) return;              // another run was attached meanwhile
       const con = $("#console"), pane = $("#d-console");
       const nearBottom = pane.scrollTop + pane.clientHeight > pane.scrollHeight - 40;
       let text = "", liveDirty = false, partialDirty = false;
@@ -1300,7 +1302,7 @@
     if (!box) return;
     const running = ["running", "queued"].includes(st || state.activeState);
     const figs = state.liveFigs || [];
-    const showing = running && state.active && (state.viewerJob !== state.active);
+    const showing = !!(running && state.active);
     if (!showing) { box.hidden = true; liveStop(); return; }
     const url = (f) => `/api/jobs/${state.active}/figures/${encodeURIComponent(f.name)}?t=${f.seconds || 0}`;
     const pick = figs.find((f) => f.name === state.livePick) || figs[figs.length - 1];
@@ -1459,6 +1461,11 @@
     // the ribbon is not rebuilt under the pointer every four seconds.
     const inflight = running + queued;
     if (inflight !== state._inflight) { state._inflight = inflight; renderRibbon(); }
+    // a run going on (started in another tab, a study, or before this page
+    // loaded) is followed when the one followed here has finished: its live
+    // solve, console and result then appear here as for a run started here
+    const live = state.jobs.find((j) => ["running", "queued"].includes(j.state) && j.kind !== "calibration" && !j.doe);
+    if (live && live.id !== state.active && !["running", "queued"].includes(state.activeState || "")) attach(live.id, !(live.analyses || []).length);
     // the limit is read from the live setting, not from the value the server
     // happened to start with, or the status bar contradicts the Home tab
     const st = state.settings;
@@ -2980,9 +2987,17 @@
   }
   const hasDem = (r) => !!(r && r.properties && r.properties.viscosity && r.properties.viscosity.dem && r.properties.viscosity.dem.anim);
   async function openViewer(prefer) {
+    // a finished run followed here whose result the page has not loaded yet
+    if (!state.result && state.active && state.activeState === "done") await loadResult(state.active);
     const id = state.resultJob;
     const info = $("#vInfo");
-    if (id && state.result && !state.result.view && hasDem(state.result)) {
+    let viewDem = false;
+    if (id && state.result && !state.result.view) {
+      // no voxel view: the particle dynamics may be the run's view
+      try { viewDem = !!(await (await fetch(`/api/jobs/${id}/view/meta.json`, { cache: "no-store" })).json()).dem; } catch (e) { viewDem = false; }
+    }
+    $("#vDemSec").style.display = viewDem ? "" : "none";
+    if (id && state.result && !state.result.view && (viewDem || hasDem(state.result))) {
       // no voxel RVE in this run: the particle dynamics is the view
       $("#vField").innerHTML = `<optgroup label="Particle dynamics"><option value="@dem">Sheared particles (the particle-dynamics box)</option></optgroup>`;
       $("#vField").value = "@dem";
