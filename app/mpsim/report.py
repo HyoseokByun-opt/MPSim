@@ -38,7 +38,7 @@ h1{font-size:25px;margin:0 0 4px;color:#0d1117}h2{font-size:18px;margin:38px 0 1
 h3{font-size:15px;margin:22px 0 6px;color:#0d1117}.sub{color:#59636e;font-size:12.5px}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin:16px 0}
 .card{background:#f6f8fa;border:1px solid #d8dee4;border-radius:8px;padding:10px 12px}
-.card .v{font:600 20px Consolas,monospace;color:#0d1117}.card .l{color:#0b62c4;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.card .v{font:600 20px Consolas,monospace;color:#0d1117}.card .l{color:#0b62c4;font-size:11.5px;font-weight:700;letter-spacing:.01em}
 .card .d{color:#59636e;font-size:11.5px}
 table{border-collapse:collapse;width:100%;background:#fff;margin:6px 0 14px;font-size:13px}
 th,td{border:1px solid #d8dee4;padding:5px 8px;text-align:left;vertical-align:top}th{background:#f6f8fa;font-weight:600}
@@ -54,6 +54,7 @@ svg{max-width:100%}
 
 
 def _fmt(v, unit=""):
+    unit = "" if unit == "-" else unit           # dimensionless: no unit shown
     if v is None:
         return "—"
     if isinstance(v, (list, tuple)):
@@ -158,7 +159,7 @@ def write(out_dir, r):
     for h in r["headline"]:
         d = ("xx/yy/zz " + " / ".join(_fmt(x) for x in h["diag"])) if h.get("diag") else (h.get("sub") or "")
         P.append(f"<div class='card'><div class='l'>{e(h['label'])}</div><div class='v'>{_fmt(h['value'])}</div>"
-                 f"<div class='d'>{e(h['unit'])} {e(d)}</div></div>")
+                 f"<div class='d'>{e(h['unit'] if h['unit'] != '-' else '')} {e(d)}</div></div>")
     P.append("</div>")
 
     # ---------------------------------------------------------------- input

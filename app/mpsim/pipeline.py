@@ -192,7 +192,9 @@ def _generator_phases(spec):
 #    of half their thickness through their whole body (v5.2): the 40-sphere
 #    template covered a thin platelet in patches, and the exact-shape repair
 #    then shrank nearly every particle (alumina + BN at 55 vol% reached 31.5)
-STRUCTURE_VERSION = 4
+# 5: thick ribbons pack as two layers of spheres; the exact-shape repair grows
+#    the particles it shrank back where they fit (v5.2.1)
+STRUCTURE_VERSION = 5
 
 
 def structure_key(gen_phases, plan, contacts, seed, want_cf):
@@ -763,7 +765,7 @@ def dem_intrinsic(spec, solid, given=None):
     """[eta] of the filler for the particle dynamics' own stresslet of its
     particles (volume-weighted), and where it comes from: the closed forms
     (Einstein, Simha, cubes), else `given` (the analysis' dilute RVE of the
-    same particles), else the sphere value."""
+    same particles), else the sphere value. `given` may be (value, basis)."""
     w, etas = [], []
     for i in solid:
         p = spec["phases"][i]
@@ -776,8 +778,21 @@ def dem_intrinsic(spec, solid, given=None):
     if all(e is not None for e in etas):
         return float(np.dot(w, etas) / w.sum()), "closed form"
     if given is not None:
-        return float(given), "dilute RVE"
+        v_, b_ = given if isinstance(given, (tuple, list)) else (given, "dilute RVE")
+        return float(v_), str(b_)
     return 2.5, "sphere value (no closed form for this shape here)"
+
+
+def _eta_closed(spec, solid):
+    """Volume-weighted [eta] of the solid phases from the closed forms
+    (VI.intrinsic_viscosity), or None when a phase has none."""
+    etas = [VI.intrinsic_viscosity(spec["phases"][i]["shape"],
+                                   G.aspect_ratio(spec["phases"][i]["shape"], spec["phases"][i]["size_um"]))
+            for i in solid]
+    if not solid or any(e is None for e in etas):
+        return None
+    w = np.array([spec["phases"][i]["vf"] for i in solid], float)
+    return float(np.dot(w, etas) / w.sum())
 
 
 def dem_hamaker(spec, solid, do):
@@ -901,7 +916,12 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
            "eta_contact": float(np.mean(np.asarray(out["eta_contact"])[st >= s0])),
            "contacts_per_particle": float(np.mean(np.asarray(out["contacts_per_particle"])[st >= s0])),
            "settle": s0,
-           "max_overlap": float(max(out["max_overlap"])),
+           # over the strain the viscosity is averaged on: a start from the RVE
+           # overlaps by up to a voxel (its particles are apart voxel by voxel),
+           # which the contacts push apart before that
+           "max_overlap": float(np.max(np.asarray(out["max_overlap"])[st >= s0])) if np.any(st >= s0)
+           else float(max(out["max_overlap"])),
+           "max_overlap_start": float(out["max_overlap"][0]),
            "roughness_nm": do["roughness_nm"], "hmin_nm": do["hmin_nm"], "mu_f": do["mu_f"],
            "bound_nm": do["bound_nm"], "adhesion_mJ_m2": do["adhesion_mJ_m2"], "phi_effective": out["phi_effective"],
            "hamaker": [{"phase": spec["phases"][i]["name"], "J": a, "basis": b} for i, a, b in zip(solid, hks, hk_basis)],
@@ -991,7 +1011,7 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     dv.add_particles_anim = lambda *a, **k: V.ViewWriter.add_particles_anim(dv, *a, **k)
     try:
         res["viscosity_dem"] = _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, dv,
-                                              eta_int=vx["eta"])
+                                              eta_int=(vx["eta"], vx["eta_basis"]))
     except InterruptedError:
         raise
     except Exception as e:                                               # noqa: BLE001
@@ -1238,18 +1258,31 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
     phi_m = float(vx.get("phi_m", vo["phi_m"]))
     eta = float(vx.get("eta", 2.5))
     kd = float(VI.krieger_dougherty(phi, phi_m, eta))
+    dem = results_first.get("viscosity_dem")
+    dem_ok = bool(dem) and not dem.get("error")
     if phi >= 0.97 * phi_m:
-        checks.append({"id": "visc_phim", "group": "Viscosity", "label": "Filler fraction below the maximum packing fraction",
-                       "value": phi, "target": phi_m, "unit": "", "status": "fail",
-                       "note": "At or above φm the compound does not flow (jammed paste); Krieger-Dougherty diverges"})
+        if dem_ok:
+            # the RVE holds these particles at phi: a jammed packing estimate
+            # below it is too low (platelets and other clumps creep toward
+            # jamming and stop at the step limit), and the particle dynamics
+            # has the value Krieger-Dougherty cannot give here
+            lower = bool((vx.get("jamming") or {}).get("step_limited"))
+            checks.append({"id": "visc_phim", "group": "Viscosity", "label": "Filler fraction below the maximum packing fraction",
+                           "value": phi, "target": phi_m, "unit": "", "status": "warn",
+                           "note": f"The maximum packing fraction of the jammed packing, {phi_m:.3f}"
+                                   + (" (a lower estimate: its step limit was reached)" if lower else "")
+                                   + f", is not above the filler fraction {phi:.3f} the RVE holds: Krieger-Dougherty is "
+                                     "not defined here. The particle dynamics gives the viscosity."})
+        else:
+            checks.append({"id": "visc_phim", "group": "Viscosity", "label": "Filler fraction below the maximum packing fraction",
+                           "value": phi, "target": phi_m, "unit": "", "status": "fail",
+                           "note": "At or above φm the compound does not flow (jammed paste); Krieger-Dougherty diverges"})
     # the same curve for frictional (or frictionless) particles, as a range
     phi_m_alt = (float(vx.get("phi_m_rcp", phi_m)) if vx.get("friction") else phi_m * VI.FRICTION_FACTOR)
     kd_alt = float(VI.krieger_dougherty(phi, phi_m_alt, eta)) if phi < 0.995 * phi_m_alt else None
     mp = float(VI.maron_pierce(phi, phi_m))
     touching = int(v0.get("touching_pairs") or 0)
     resolved = phi <= 0.35 and touching == 0
-    dem = results_first.get("viscosity_dem")
-    dem_ok = bool(dem) and not dem.get("error")
     if resolved and mu_r is not None:
         best, basis = mu_r, "RVE flow solve"
     elif dem_ok:
@@ -1338,7 +1371,10 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
         checks.append({"id": "visc_dem_overlap", "group": "Viscosity", "label": "Contact overlap in the particle dynamics",
                        "value": dem["max_overlap"], "target": 0.05, "unit": "radii",
                        "status": "pass" if dem["max_overlap"] <= 0.05 else "warn",
-                       "note": "The stiff contact springs let surfaces overlap by this much of the largest radius"})
+                       "note": "The stiff contact springs let surfaces overlap by this much of the largest radius "
+                               "while the viscosity is averaged"
+                               + (f" (at the start {dem['max_overlap_start']:.3f}: the RVE's particles are apart voxel by "
+                                  "voxel, not exactly)" if dem.get("max_overlap_start", 0) > dem["max_overlap"] else "")})
     elif dem and dem.get("error"):
         checks.append({"id": "visc_dem", "group": "Viscosity", "label": "Particle dynamics", "value": None, "target": None,
                        "unit": "", "status": "warn", "note": dem["error"]})
@@ -1537,11 +1573,17 @@ def thermal_aniso(spec, labels, ginfo, gen_phases, h, log=None):
     A particle phase's k_x, k_y, k_z act along each particle's own axes,
     turned with it (the generator's rotation, rows = the particle axes:
     K = R^T diag(k) R); the matrix's along the box axes. A shell keeps its
-    scalar k."""
+    scalar k. A phase of stacked platelets (stack_layers n > 1) has, through
+    each particle's thickness, its n layers and the n - 1 plate-plate
+    contact resistances R_c in series: k_z = t / (t / k_z + (n - 1) R_c),
+    t the particle's own thickness."""
     table = spec["labels"]
     label_axes, core_of = {}, {}
     for li, t in enumerate(table):
         ax = M.k_axes(t["props"])
+        ph_ = spec["phases"][t["phase"]] if t["kind"] == "core" and t["phase"] is not None else None
+        if ax is None and ph_ is not None and int(ph_.get("stack_layers", 1) or 1) > 1:
+            ax = [float(t["props"]["k"])] * 3
         if ax is None:
             continue
         if t["kind"] == "matrix":
@@ -1562,7 +1604,19 @@ def thermal_aniso(spec, labels, ginfo, gen_phases, h, log=None):
             sel = np.flatnonzero(ph_of == ip)
             if not len(sel):
                 continue
-            Ks.append(np.einsum("nji,jk,nkl->nil", Rp[sel], np.diag(ax), Rp[sel]))
+            d = np.tile(np.asarray(ax, float), (len(sel), 1))
+            nl = int(spec["phases"][ip].get("stack_layers", 1) or 1)
+            if nl > 1:
+                # each particle's thickness along its own z: spheroid / cylinder 2 P1, cuboid / superellipsoid 2 P2
+                cds, Pp = np.asarray(parts["codes"])[sel], np.asarray(parts["P"], float)[sel]
+                thick = np.where(np.isin(cds, (4, 5)), 2.0 * Pp[:, 2], 2.0 * Pp[:, 1]) * 1e-6
+                rc = float(spec["phases"][ip].get("r_contact", 0.0) or 0.0)
+                d[:, 2] = thick / (thick / ax[2] + (nl - 1) * rc)
+                if log:
+                    log(f"   stacked platelets: {spec['phases'][ip]['name']} as stacks of {nl}, through the thickness "
+                        f"k {float(np.median(d[:, 2])):.3g} W/m·K ({nl} layers of {ax[2]:g} and {nl - 1} contacts of "
+                        f"{rc:g} m²K/W in series), in the plane {ax[0]:g} / {ax[1]:g}")
+            Ks.append(np.einsum("nj,nji,njl->nil", d, Rp[sel], Rp[sel]))
             lut = np.full(len(ph_of) + 1, -1, np.int32)
             lut[sel + 1] = row + np.arange(len(sel))
             m = labels == li
@@ -3323,9 +3377,14 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 vworkers = -1
             dem_job = None
             if first and visc_plan["concurrent"]:
+                # [eta] for the stresslet before the analysis has its own: the
+                # closed forms of the particle dynamics, else those of the
+                # analysis (a platelet stack of aspect 10 took 2.5 here)
                 eta_c, eta_cb = dem_intrinsic(spec, solid_v)
+                if eta_cb != "closed form" and _eta_closed(spec, solid_v) is not None:
+                    eta_c, eta_cb = _eta_closed(spec, solid_v), "closed form"
                 dem_job = _DemProcess(spec, solid_v, float(sum(spec["phases"][i]["vf"] for i in solid_v)), vo,
-                                      viewer, log, eta_int=eta_c if eta_cb == "closed form" else None,
+                                      viewer, log, eta_int=(eta_c, eta_cb) if eta_cb == "closed form" else None,
                                       start=_dem_start(ginfo))
                 log("    the particle dynamics runs on the GPU in its own process, at the same time as the flow "
                     "solve below on the CPU cores")
@@ -3406,12 +3465,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                     prog.end()
                 else:
                     vx["phi_m"] = vo["phi_m"]
-                etas = [VI.intrinsic_viscosity(spec["phases"][i]["shape"],
-                                               G.aspect_ratio(spec["phases"][i]["shape"], spec["phases"][i]["size_um"]))
-                        for i in solid]
-                if solid and all(e is not None for e in etas):
-                    w = np.array([spec["phases"][i]["vf"] for i in solid], float)
-                    vx["eta"], vx["eta_basis"] = float(np.dot(w, etas) / w.sum()), "closed form"
+                eta_cf = _eta_closed(spec, solid)
+                if eta_cf is not None:
+                    vx["eta"], vx["eta_basis"] = eta_cf, "closed form"
                 elif solid and vo["dilute_rve"]:
                     prog.stage("Viscosity · intrinsic viscosity", "dilute RVE of the same particles", units=1.0)
                     try:
@@ -3451,9 +3507,10 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                 dem_job = None
                         if dem_job is None:
                             try:
-                                res_r["viscosity_dem"] = _dem_viscosity(spec, solid, phi_s, vo_run, log, event, prog,
-                                                                        should_stop, viewer if first else None,
-                                                                        eta_int=vx.get("eta"), start=_dem_start(ginfo))
+                                res_r["viscosity_dem"] = _dem_viscosity(
+                                    spec, solid, phi_s, vo_run, log, event, prog, should_stop, viewer if first else None,
+                                    eta_int=(vx["eta"], vx.get("eta_basis", "dilute RVE")) if vx.get("eta") is not None
+                                    else None, start=_dem_start(ginfo))
                             except InterruptedError:
                                 raise
                             except Exception as e:                       # noqa: BLE001

@@ -57,7 +57,7 @@
     emi: { title: "EMI shielding", icon: "emi", color: "var(--c-mag)", solver: "PuMA σ, ε, μ → scikit-rf", out: "SE(f) with reflection, absorption and multiple-reflection terms" },
     cte: { title: "Elasticity and CTE", icon: "cte", color: "var(--c-mech)", solver: "Voxel FE with an FFT preconditioner (FANS) · 6 strains + ΔT", out: "C and S matrices · E, G, ν · α tensor · thermal stress fields" },
     permeability: { title: "Permeability", icon: "permeability", color: "var(--c-flow)", solver: "NASA PuMA · Stokes finite elements", out: "K tensor · flow resistivity · Kozeny constant · velocity field", pores: true },
-    moisture: { title: "Moisture uptake and swelling", icon: "tortuosity", color: "var(--c-flow)", solver: "Periodic FV on the activity c/c_sat (permeability D·c_sat) · FANS eigenstrain for swelling", out: "Effective moisture diffusivity · saturated uptake · uptake curve of the part · hygroscopic swelling and CME" },
+    moisture: { title: "Moisture uptake and swelling", short: "Moisture and swelling", icon: "tortuosity", color: "var(--c-flow)", solver: "Periodic FV on the activity c/c_sat (permeability D·c_sat) · FANS eigenstrain for swelling", out: "Effective moisture diffusivity · saturated uptake · uptake curve of the part · hygroscopic swelling and CME" },
     viscosity: { title: "Viscosity and flowability", icon: "permeability", color: "var(--c-flow)", solver: "Voxel FE creeping flow (B-bar, FFT-preconditioned CG) · particle dynamics of the fillers (lubrication, contacts, friction, van der Waals; CPU or CUDA GPU) · Krieger–Dougherty with the jammed packing fraction", out: "Relative viscosity · flow curve of the compound · maximum packing fraction · underfill filling time · settling" },
     filtration: { title: "Filtration efficiency", icon: "pores", color: "var(--c-flow)", solver: "Particle tracking in the PuMA Stokes field", out: "Efficiency per particle size · most penetrating size · pressure drop · quality factor", pores: true },
     tortuosity: { title: "Diffusion", icon: "tortuosity", color: "var(--c-diff)", solver: "NASA PuMA · continuum tortuosity", out: "τ · D_eff/D₀ · formation factor · Knudsen diffusion", pores: true },
@@ -93,7 +93,7 @@
     simulation: ["solver", "Simulation", "Effective properties from full-field solves"],
     doe: ["preset", "DOE", "Parameter studies: ranges, queued runs, collected results"],
     optimization: ["optimize", "Optimization", "Key design factors, a surrogate model and the optimum"],
-    calibration: ["calibrate", "Calibration", "Unknown material values from measured effective properties"],
+    calibration: ["calibrate", "Calibration", "Unknown material values from measurements"],
     results: ["table", "Results", "Runs, downloads and figures"],
   };
 
@@ -159,10 +159,19 @@
   function secs(s) { if (!s) return "0 s"; if (s < 90) return `${s.toFixed(0)} s`; if (s < 5400) return `${(s / 60).toFixed(1)} min`; return `${(s / 3600).toFixed(1)} h`; }
   const u = (unit) => ({ nm: "nm", um: "µm", mm: "mm" }[unit] || "µm");
   function tbl(head, rows, cls = "") {
+    // a value cell is a figure (monospace, on one line) unless it carries a
+    // sentence: then it wraps in the text font, so that a narrow column
+    // neither clips it nor squeezes the quantity beside it
+    const cell = (c, i) => {
+      if (!i) return `<td>${c ?? "—"}</td>`;
+      const text = typeof c === "string" && c.replace(/<[^>]+>/g, "").length > 26;
+      return `<td class="${text ? "nt" : "n"}">${c ?? "—"}</td>`;
+    };
     return `<div class="tablewrap"><table class="grid ${cls}"><tr>${head.map((h, i) => `<th class="${i ? "n" : ""}">${h}</th>`).join("")}</tr>` +
-      rows.map((r) => `<tr class="${r._cls || ""}">${r.map((c, i) => `<td class="${i ? "n" : ""}">${c ?? "—"}</td>`).join("")}</tr>`).join("") + "</table></div>";
+      rows.map((r) => `<tr class="${r._cls || ""}">${r.map(cell).join("")}</tr>`).join("") + "</table></div>";
   }
-  const kv = (rows) => tbl(["Quantity", "Value"], rows.filter((r) => r));
+  const kv = (rows) => tbl(["Quantity", "Value"], rows.filter((r) => r), "kv");
+  const unitTxt = (u) => (u && u !== "-" ? u : "");
   const withUnit = (v, unit) => (v === null || v === undefined || (typeof v === "number" && !isFinite(v)) ? "—" : `${fmt(v)}${unit ? " " + unit : ""}`);
 
   /* ================================================================ materials and form */
@@ -212,7 +221,7 @@
   function propsEditor(path, props, ref) {
     const row = ([k, lab, unit]) => {
       const mod = ref && props && Number(props[k]) !== Number(ref[k]);
-      return `<label class="prop"><span>${lab}<em>${unit}</em></span><input type="number" step="any" class="${mod ? "mod" : ""}" data-k="${path}.${k}" data-num data-ref="${ref ? (ref[k] ?? "") : ""}"></label>`;
+      return `<label class="prop"><span>${lab}<em>${unitTxt(unit)}</em></span><input type="number" step="any" class="${mod ? "mod" : ""}" data-k="${path}.${k}" data-num data-ref="${ref ? (ref[k] ?? "") : ""}"></label>`;
     };
     const anyOpt = OPT_PROPS.some(([k]) => props && props[k] !== undefined && props[k] !== null && props[k] !== "");
     return `<div class="props">` + PROPS.map(row).join("") + "</div>" +
@@ -298,7 +307,7 @@
   const RB = (id, icon, label, extra = {}) => ({ id, icon, label, ...extra });
   function ribbonGroups() {
     const f = state.form, an = f.analyses || {};
-    const toggle = (k) => RB("an:" + k, AN[k].icon, AN[k].title, { on: !!an[k], dis: !!disabledReason(k), color: AN[k].color, tip: `${AN[k].title} — ${AN[k].out}` });
+    const toggle = (k) => RB("an:" + k, AN[k].icon, AN[k].short || AN[k].title, { on: !!an[k], dis: !!disabledReason(k), color: AN[k].color, tip: `${AN[k].title} — ${AN[k].out}` });
     const running = ["running", "queued"].includes(state.activeState);
     // building belongs to the two stages that build something - the geometry on
     // Structure, the voxel grid on Domain - so Execute only runs and stops
@@ -364,7 +373,7 @@
       results: [
         { group: "Views", items: [RB("c:vis", "view3d", "3D / 2D view", { on: state.center === "vis" }), RB("c:res", "table", "Result Viewer", { on: state.center === "res" }), RB("c:rep", "report", "Report", { on: state.center === "rep" })] },
         { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob })] },
-        { group: "Figures", items: [RB("shot", "camera", "Screen capture"), RB("render", "image", "High-resolution figure")] },
+        { group: "Figures", items: [RB("shot", "camera", "Screen capture"), RB("render", "image", "Hi-res figure", { tip: "High-resolution figure rendered on the server (PyVista)" })] },
       ],
     };
     return G[state.tab];
@@ -520,7 +529,7 @@
   /* ================================================================ left panel */
   function renderLeft() {
     const [icon, title, sub] = TABS[state.tab];
-    $("#lhead").innerHTML = `${I(icon)}<div><b>${title}</b><small>${sub}</small></div>`;
+    $("#lhead").innerHTML = `${I(icon)}<div><b>${title}</b><small title="${String(sub).replace(/"/g, "&quot;")}">${sub}</small></div>`;
     const body = $("#lbody");
     const top = body.scrollTop;
     body.innerHTML = { home: leftHome, material: leftMaterial, structure: leftStructure, domain: leftDomain, analysis: leftAnalysis, simulation: leftSimulation, doe: leftDoe, optimization: leftOptimization, calibration: leftCalibration, results: leftResults }[state.tab]();
@@ -570,8 +579,8 @@
     return `<div class="sec"><div class="sh">${I("open")}Workspace<small>root of every work folder</small></div><div class="sb">
         <select data-wspick>${opts}</select>
         <div class="g2" style="margin-top:6px">
-          <div><label class="f">Another workspace <span class="u">full path, any disk</span></label>
-            <input type="text" data-wsnew placeholder="D:\\SimData\\MPSim"></div>
+          <div><label class="f">Another workspace</label>
+            <input type="text" data-wsnew placeholder="full path, e.g. D:\\SimData\\MPSim" title="Full path of the workspace, on any disk"></div>
           <div style="align-self:end"><button class="btn sm" data-wsmake>${I("open")}Use this workspace</button></div>
         </div>
         <div class="hint">The root of all work, like the work directory of a simulation project: work folders given by name, their cases and runs, and the DOE studies are all created under it. The choice is kept for the next start; runs in progress finish where they started.</div>
@@ -692,9 +701,10 @@
       if (!ms.length) continue;
       list += `<div class="mgrp">${esc(groupLabel(g))}</div>` + ms.map((x) => `<div class="prow m ${x.id === id ? "on" : ""}" data-libsel="${x.id}"><div class="nm">${esc(x.name)}${isOverride(x.id) ? ' <span class="chip">edited</span>' : ""}${isUserMat(x.id) ? ' <span class="chip">user</span>' : ""}<small>k ${kText(x.props)} · E ${fmt(x.props.E)} GPa · α ${fmt(x.props.alpha)} ppm/K · εr ${fmt(x.props.eps_r)}</small></div><span class="vf">${inCase.has(x.id) ? "in case" : ""}</span></div>`).join("");
     }
+    const unset = (v) => v === undefined || v === null || v === "";
     const lrow = ([k, lab, unit]) => {
-      const mod = base && Number(m.props[k]) !== Number(base.props[k]);
-      return `<label class="prop"><span>${lab}<em>${unit}</em></span><input type="number" step="any" class="${mod ? "mod" : ""}" data-lk="props.${k}" value="${m.props[k] ?? ""}" title="${base ? `library value ${base.props[k] ?? "not set"}` : ""}"></label>`;
+      const mod = base && !(unset(m.props[k]) && unset(base.props[k])) && Number(m.props[k]) !== Number(base.props[k]);
+      return `<label class="prop"><span>${lab}<em>${unitTxt(unit)}</em></span><input type="number" step="any" class="${mod ? "mod" : ""}" data-lk="props.${k}" value="${m.props[k] ?? ""}" title="${base ? `library value ${base.props[k] ?? "not set"}` : ""}"></label>`;
     };
     const an = isAniso(m.props);
     const props = `<div class="props">` + PROPS.map(lrow).join("") + "</div>" +
@@ -718,7 +728,7 @@
       <div class="sec"><div class="sh">${I("matrix")}<span>${esc(m.name)}</span><div class="grow"></div>${isOverride(id) ? '<span class="chip">edited library entry</span>' : isUserMat(id) ? '<span class="chip">user material</span>' : '<span class="chip">library</span>'}</div><div class="sb">
         <label class="f">Name</label><input data-lk="name" value="${esc(m.name)}">
         ${isUserMat(id) ? `<label class="f">Group</label><select data-lk="group">${state.lib.groups.map((g) => `<option value="${g.id}" ${g.id === m.group ? "selected" : ""}>${esc(g.label)}</option>`).join("")}<option value="custom" ${!state.lib.groups.some((g) => g.id === m.group) ? "selected" : ""}>User materials</option></select>` : ""}
-        <label class="f">Note or source</label><input data-lk="note" value="${esc(m.note || "")}">
+        <label class="f">Note or source</label><textarea data-lk="note" rows="${(m.note || "").length > 120 ? 4 : 2}">${esc(m.note || "")}</textarea>
         ${props}
         <div class="row wrap" style="gap:6px;margin-top:9px">${isOverride(id) ? `<button class="btn sm" data-act="libReset">${I("reset")}Restore library values</button>` : ""}${isUserMat(id) ? `<button class="btn sm danger" data-act="libDel">${I("delete")}Delete</button>` : ""}</div>
         <div class="hint" style="margin-top:6px">${base ? "Values that differ from the built-in library are highlighted. " : ""}${uses.length ? `Used in this case by <b>${uses.map((x) => esc(x.label)).join(", ")}</b>: a change applies there at once.` : "Not used in this case. The Structure tab assigns a material to the matrix and to every phase."}</div></div></div>
@@ -786,7 +796,7 @@
       <label class="f">Shape</label><div class="shapes">${Object.entries(SHAPES).map(([k, s]) => `<button class="shape ${ph.shape === k ? "on" : ""}" data-shape="${k}" title="${s.hint}">${I(s.icon)}<span>${s.label}</span></button>`).join("")}</div>
       <div class="hint" style="margin-top:3px">${SHAPES[ph.shape].hint}</div>
       <div class="g2">
-        <div><label class="f">Content</label><div class="row" style="gap:4px"><input type="number" step="any" data-k="phases.${i}.fraction.value" data-num><select data-k="phases.${i}.fraction.basis" style="width:74px"><option value="vol">vol %</option><option value="wt">wt %</option></select></div></div>
+        <div><label class="f">Content</label><div class="row uin"><input type="number" step="any" data-k="phases.${i}.fraction.value" data-num><select data-k="phases.${i}.fraction.basis"><option value="vol">vol %</option><option value="wt">wt %</option></select></div></div>
         <div><label class="f">Length unit</label><select data-k="phases.${i}.size.unit"><option value="nm">nm</option><option value="um">µm</option><option value="mm">mm</option></select></div>
         <div><label class="f">${sizeLabel(ph.shape)} <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.d" data-num></div>
         ${ph.shape === "spheroid" ? `<div><label class="f">Aspect ratio c/a</label><input type="number" step="any" data-k="phases.${i}.size.aspect" data-num></div>` : ""}
@@ -805,7 +815,9 @@
         ${orientable ? `<div><label class="f">Orientation</label><select data-k="phases.${i}.orientation.mode"><option value="iso">Random 3D</option><option value="x">Aligned with x</option><option value="y">Aligned with y</option><option value="z">Aligned with z</option><option value="xy">Random in the xy plane</option></select></div>
           <div><label class="f">Orientation spread <span class="u">°</span></label><input type="number" step="any" data-k="phases.${i}.orientation.spread_deg" data-num></div>` : ""}
         ${!isNet && !ph.overlap ? `<div><label class="f">Minimum gap <span class="u">× d</span></label><input type="number" step="0.01" data-k="phases.${i}.gap_frac" data-num></div>` : ""}
+        ${["spheroid", "cylinder", "cuboid", "superellipsoid"].includes(ph.shape) && !vd ? `<div><label class="f">Stacked platelets <span class="u">layers</span></label><input type="number" min="1" max="100" step="1" data-k="phases.${i}.stack_layers" data-num placeholder="1"></div>` : ""}
       </div>
+      ${["spheroid", "cylinder", "cuboid", "superellipsoid"].includes(ph.shape) && !vd && (+ph.stack_layers || 1) > 1 ? `<div class="hint">Each particle is a stack of ${+ph.stack_layers} platelets bonded face to face along its own z axis (its thickness: edge c of a box, the axis of a spheroid or disc). Through the thickness the thermal solve puts the ${+ph.stack_layers} layers and ${+ph.stack_layers - 1} plate–plate contacts R<sub>c</sub> in series; in the plane the platelets conduct side by side.</div>` : ""}
       ${!vd ? `<div class="subh">Interfacial thermal resistance</div><div class="g2">
           <div><label class="f">R<sub>int</sub> filler–matrix <span class="u">m²K/W</span></label><input type="number" step="any" data-k="phases.${i}.r_int" data-num></div>
           ${!isNet ? `<div><label class="f">R<sub>c</sub> filler–filler <span class="u">m²K/W</span></label><input type="number" step="any" data-k="phases.${i}.r_contact" data-num></div>` : ""}</div>
@@ -827,7 +839,7 @@
   // edited once, in the library on the Material tab
   function matSummary(path, entry) {
     const own = differs(entry);
-    return `<div class="props">${PROPS.map(([k, lab, unit]) => `<div class="prop"><span>${lab}<em>${unit}</em></span><b class="mono pv">${fmt(entry.props[k])}</b></div>`).join("")}</div>
+    return `<div class="props">${PROPS.map(([k, lab, unit]) => `<div class="prop"><span>${lab}<em>${unitTxt(unit)}</em></span><b class="mono pv">${fmt(entry.props[k])}</b></div>`).join("")}</div>
       <div class="row wrap" style="gap:6px;margin-top:7px"><button class="btn sm" data-editmat="${entry.material_id}">${I("matrix")}Edit this material</button>${own ? `<button class="btn sm" data-uselib="${path}">${I("reset")}Use library values</button>` : ""}</div>
       <div class="hint">${own ? "This case carries its own values for this material (from a preset or an older input); they differ from the library. " : ""}Properties are edited on the Material tab and apply to every region that uses the material.</div>`;
   }
@@ -873,10 +885,10 @@
       if (i === j) return `<td><input type="number" step="any" data-k="phases.${i}.r_contact" data-num title="R_c between two particles of ${esc(f.phases[i].name)}"></td>`;
       const a = Math.min(i, j), b = Math.max(i, j);
       const mean = 0.5 * ((+f.phases[a].r_contact || 0) + (+f.phases[b].r_contact || 0));
-      if (i > j) { const v = f.contact_rc[`${a}-${b}`]; return `<td class="n hint">${v !== undefined && v !== "" && v !== null ? fmt(+v) : fmt(mean)}</td>`; }
-      return `<td><input type="number" step="any" data-k="contact_rc.${a}-${b}" data-num placeholder="${fmt(mean)} (mean)" title="R_c between ${esc(f.phases[a].name)} and ${esc(f.phases[b].name)}"></td>`;
+      if (i > j) { const v = f.contact_rc[`${a}-${b}`]; return `<td><input type="text" class="mirror" readonly tabindex="-1" value="${v !== undefined && v !== "" && v !== null ? fmt(+v) : fmt(mean)}" title="The same pair as above the diagonal"></td>`; }
+      return `<td><input type="number" step="any" data-k="contact_rc.${a}-${b}" data-num placeholder="${fmt(mean)}" title="R_c between ${esc(f.phases[a].name)} and ${esc(f.phases[b].name)} (empty: the mean of their own values, ${fmt(mean)})"></td>`;
     };
-    return `<div class="sec"><div class="sh">${I("grains")}Contact resistance between fillers<small>R<sub>c</sub>, m²K/W</small></div><div class="sb">
+    return `<div class="sec"><div class="sh">${I("grains")}Contact resistance between fillers<small class="u">R<sub>c</sub>, m²K/W</small></div><div class="sb">
       <table class="grid rcgrid"><tr><th></th>${idx.map((j) => `<th>${esc(f.phases[j].name)}</th>`).join("")}</tr>
         ${idx.map((i) => `<tr><th>${esc(f.phases[i].name)}</th>${idx.map((j) => cell(i, j)).join("")}</tr>`).join("")}</table>
       <div class="hint">Acts on the voxel faces where two particles touch (thermal conductivity). The diagonal is a filler against itself; an empty cell between two fillers takes the mean of their own values. The result lists how many contact faces each pair has.</div></div></div>`;
@@ -915,15 +927,15 @@
         <div class="hint" style="margin-top:6px">${QUALITY_HINT[f.rve.quality]}</div></div></div>
       <div class="sec"><div class="sh">${I("cube")}Domain</div><div class="sb">
         <div class="seg" id="domainSeg"><button data-film="0" class="${f.rve.film ? "" : "on"}">Periodic bulk</button><button data-film="1" class="${f.rve.film ? "on" : ""}">Thin film</button></div>
-        ${f.rve.film ? `<div class="g2" style="margin-top:6px"><div><label class="f">Film thickness (z)</label><div class="row"><input type="number" step="any" data-k="rve.T_um" data-uk="rve.T_unit" data-num style="flex:1"><select data-k="rve.T_unit" style="width:70px">${unitOpts()}</select></div></div>
+        ${f.rve.film ? `<div class="g2" style="margin-top:6px"><div><label class="f">Film thickness (z)</label><div class="row uin"><input type="number" step="any" data-k="rve.T_um" data-uk="rve.T_unit" data-num style="flex:1"><select data-k="rve.T_unit">${unitOpts()}</select></div></div>
             <div><label class="f">Grid through the thickness</label><div class="hint" style="padding-top:6px"><b>${pl && pl.film ? `${pl.Nz} voxels` : "—"}</b>${pl && pl.film ? ` (${fmt(pl.T_um / LEN_UNITS[f.rve.T_unit || "um"])} ${LEN_LABEL[f.rve.T_unit || "um"]})` : ""}</div></div></div>
           <div class="g2" style="margin-top:4px"><div><label class="f">Matrix skin at each face <span class="u">empty = 1 voxel</span></label><div class="row"><input type="number" step="any" min="0" data-k="rve.skin_um" data-uk="rve.T_unit" data-num placeholder="1 voxel" style="flex:1"><span class="hint" style="padding-top:6px">${LEN_LABEL[f.rve.T_unit || "um"]}</span></div></div><div></div></div>
           <div class="hint">x and y repeat periodically; z is the real film thickness. Every particle lies wholly inside the film: none is cut by the faces or continues through them, and a thin matrix skin stays at each face (0 lets particles touch the faces - the electrode plates of the through-thickness solve, through contacts whose area depends on the voxel size). Conduction and permittivity: along the film (x, y) the two faces are insulated; through it (z) two plates on the faces drive the flux, as in a measurement across the film. z is solved and displayed first.</div>`
           : `<div class="hint" style="margin-top:6px">The RVE repeats in x, y and z: a bulk material, or a layer much thicker than its particles.</div>`}</div></div>
       <div class="sec"><div class="sh">${I("auto")}Grid</div><div class="sb">
         <label class="chk"><span class="switch"><input type="checkbox" data-k="rve.auto"><span></span></span> Automatic voxel size and RVE size</label>
-        ${!f.rve.auto ? `<div class="g2"><div><label class="f">${f.rve.film ? "Lateral edge length (x, y)" : "RVE edge length"}</label><div class="row"><input type="number" step="any" data-k="rve.L_um" data-uk="rve.L_unit" data-num style="flex:1"><select data-k="rve.L_unit" style="width:70px">${unitOpts()}</select></div></div>
-            <div><label class="f">Voxel size</label><div class="row"><input type="number" step="any" data-k="rve.voxel_um" data-uk="rve.h_unit" data-num style="flex:1"><select data-k="rve.h_unit" style="width:70px">${unitOpts()}</select></div></div></div>
+        ${!f.rve.auto ? `<div class="g2"><div><label class="f">${f.rve.film ? "Lateral edge length (x, y)" : "RVE edge length"}</label><div class="row uin"><input type="number" step="any" data-k="rve.L_um" data-uk="rve.L_unit" data-num style="flex:1"><select data-k="rve.L_unit">${unitOpts()}</select></div></div>
+            <div><label class="f">Voxel size</label><div class="row uin"><input type="number" step="any" data-k="rve.voxel_um" data-uk="rve.h_unit" data-num style="flex:1"><select data-k="rve.h_unit">${unitOpts()}</select></div></div></div>
             <div class="hint" style="margin-top:4px">Grid size (computed): <b>${pl ? gridTxt(pl) : "—"}</b>${pl ? ` · ${fmt(nVox(pl) / 1e6)} M voxels · ${fmt(pl.h_um / LEN_UNITS[f.rve.h_unit || "um"])} ${LEN_LABEL[f.rve.h_unit || "um"]}/voxel` : ""}</div>
           <div class="hint">The grid size follows from the two: edge length ÷ voxel size, rounded to an even number of voxels. A grid-size variable remains in the DOE tab for convergence studies.</div>` : ""}
         <label class="chk"><input type="checkbox" data-k="rve.auto_enlarge"> Enlarge the RVE when the criteria are not met</label>
@@ -1050,7 +1062,7 @@
     let sel = '<div class="hint">No completed run is selected.</div>';
     if (r) {
       sel = `<div style="font-weight:700">${esc(r.name)}</div><div class="hint">${esc(r.created)} · ${secs(r.elapsed_s)} · ${backendTxt(r)}</div>
-        <div class="tiles">${(r.headline || []).filter((h) => !h.dir).slice(0, 8).map((h) => `<div class="tile"><div class="v">${fmt(h.value)}</div><div class="l">${esc(h.label)}</div><div class="d">${esc(h.unit)}</div></div>`).join("")}</div>
+        <div class="tiles">${(r.headline || []).filter((h) => !h.dir).slice(0, 8).map((h) => `<div class="tile"><div class="v">${fmt(h.value)}</div><div class="l">${esc(h.label)}</div><div class="d">${esc(unitTxt(h.unit))}</div></div>`).join("")}</div>
         <div class="row wrap">${pill("pass")} ${r.check_counts.pass} ${pill("warn")} ${r.check_counts.warn} ${pill("fail")} ${r.check_counts.fail}</div>
         <div class="row wrap" style="margin-top:8px"><button class="btn sm primary" data-center="res">${I("table")}Result Viewer</button><button class="btn sm" data-center="vis">${I("view3d")}3D view</button><button class="btn sm" data-center="rep">${I("report")}Report</button><button class="btn sm" data-editspec>${I("open")}Edit this input</button></div>`;
     }
@@ -1076,7 +1088,7 @@
       }
     });
   }
-  const RERENDER = /(\.shape|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|porosimetry\.fluid|\.props\.E|\.name)$/;
+  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|porosimetry\.fluid|\.props\.E|\.name)$/;
   function onField(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
@@ -1582,7 +1594,7 @@
     }).join("");
   }
   function tiles(headline) {
-    return `<div class="big">${headline.map((h) => `<div class="tile"><div class="l">${esc(h.label)}</div><div class="v">${fmt(h.value)} <span style="font-size:12px;color:var(--muted)">${esc(h.unit)}</span></div>
+    return `<div class="big">${headline.map((h) => `<div class="tile"><div class="l">${esc(h.label)}</div><div class="v">${fmt(h.value)} <span style="font-size:12px;color:var(--muted)">${esc(unitTxt(h.unit))}</span></div>
       <div class="d">${h.diag ? "xx / yy / zz " + h.diag.map(fmt).join(" / ") : esc(h.sub || "")}</div>${h.fv ? `<div class="d" title="Same RVE, independent periodic finite-volume discretisation">periodic FV ${fmt(h.fv)} (${h.value / h.fv >= 1 ? "+" : ""}${fmt(100 * (h.value / h.fv - 1))} %)</div>` : ""}</div>`).join("")}</div>`;
   }
   function secOverview(r) {
@@ -1771,7 +1783,7 @@
       ${v.phi_m_mode === "manual" ? num("options.viscosity.phi_m", "φm", "") : `<label class="f">Particle friction (for the Krieger–Dougherty φm; the particle dynamics has its own friction coefficient below)</label><select data-k="options.viscosity.friction"><option value="none">Frictionless or lubricated: φm = random close packing (default)</option><option value="frictional">Frictional: φm × 0.585/0.64 (Boyer et al. 2011)</option></select>`}
       <div class="hint">Farr–Groot maps the sphere size distribution (several fillers, log-normal spreads, coatings included) onto rods on a line; it reproduced 3D packings of bidisperse spheres to within 0.01 up to a 1:10 size ratio, and gives 0.6435 for equal spheres. Other shapes are packed by the structure generator itself until they jam. Frictional particles jam in shear earlier; the result shows the other case as a range.</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dilute_rve"><span></span></span> Intrinsic viscosity of non-spherical fillers from a dilute RVE</label>
-      <div class="subh">Particle dynamics (spherical fillers)</div>
+      <div class="subh">Particle dynamics</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dem.on"><span></span></span> Shear the fillers as moving particles (on by default)</label>
       <div class="g3">${num("options.viscosity.dem.n", "Particles", "", "1")}${num("options.viscosity.dem.strain", "Sheared strain", "")}${num("options.viscosity.dem.mu_f", "Friction coefficient", "")}</div>
       <div class="hint">More particles narrow the scatter between runs (about 2.5 / √(particles × strain): 6 % at 500 and a strain of 5, 0.6 % at 50 000) and are needed for blends of very different sizes. The neighbour search grows with the count, not its square: the time per step grows in proportion, and the memory is about 2 GB per 100 000 particles, on the GPU or in RAM. Hundreds of thousands are for an NVIDIA GPU; a laptop CPU took 2.3 s per step at 128 000.</div>
@@ -2325,7 +2337,7 @@
         <div class="hint">Value in the case: ${cur === null || cur === undefined ? "—" : fmt(cur)} ${esc(u.unit || "")}${kz && kz.dmm ? ` · theory for a perfect interface (phonon mismatch): DMM ${fmt(kz.dmm)}, AMM ${fmt(kz.amm)} m²K/W — a real interface lies at or above <button class="btn xs" data-cutheory="${i}" title="Centre the prior one decade wide on the DMM value">use as prior</button>` : ""}</div></div>`;
     }).join("");
     const runs = state.jobs.filter((j) => j.kind === "calibration").map((j) => `<div class="run ${j.id === c.resultJob ? "on" : ""}" data-open="${j.id}"><i class="dot ${j.state}"></i><div class="nm">${esc(j.name)}<small>${STATE[j.state] || j.state} · ${secs(j.elapsed_s)}</small></div><div class="acts"></div></div>`).join("") || '<div class="hint">No calibration yet.</div>';
-    const theoryRows = ((c.theory || {}).pairs || []).filter((p) => p.kapitza).map((p) => `<tr><td>${esc(p.name)}</td><td class="n">${fmt(p.kapitza.dmm)}</td><td class="n">${fmt(p.kapitza.amm)}</td><td class="n">${fmt(p.kapitza_radius_um)}</td><td class="n">${fmt(p.d_crit_um)}</td></tr>`).join("");
+    const theoryRows = ((c.theory || {}).pairs || []).filter((p) => p.kapitza).map((p) => [esc(p.name), fmt(p.kapitza.dmm), fmt(p.kapitza.amm), fmt(p.d_crit_um)]);
     return `<div class="sec"><div class="sh">${I("calibrate")}Problem</div><div class="sb">
         <div class="hint">The case in the editor is the base: matrix, fillers, structure and RVE. Each measurement is a sample of it — the case itself or with its content, particle size or another entry changed — and the value measured on it. The unknowns are found so that the RVE reproduces every measurement.</div>
         <label class="f">Name</label><input data-cal="name" value="${esc(c.name || "")}" placeholder="${esc(state.form.name)} · calibration">
@@ -2335,14 +2347,15 @@
       <div class="sec"><div class="sh">${I("surrogate")}Unknowns (up to 3)</div><div class="sb">${unk || '<div class="hint">No unknown yet.</div>'}
         <button class="btn sm" data-act="calAddU">${I("plus")}Add unknown</button>
         <div class="hint">Whatever theory, the data sheet or an MD/DFT result already gives is better entered in the case than calibrated: every extra unknown needs more measurements. Two unknowns from one measurement have a curve of solutions, not one — the identifiability check shows it before any solve.</div></div></div>
-      ${theoryRows ? `<div class="sec"><div class="sh">${I("info")}Theory: phonon-limited interfacial resistance</div><div class="sb">
-        <table class="tbl"><tr><th>Filler</th><th>DMM [m²K/W]</th><th>AMM</th><th>Kapitza radius [µm]</th><th>Critical d [µm]</th></tr>${theoryRows}</table>
+      ${theoryRows.length ? `<div class="sec"><div class="sh">${I("info")}Theory: phonon-limited interfacial resistance</div><div class="sb">
+        ${tbl(["Filler", "DMM", "AMM", "Critical d"], theoryRows, "tight")}
+        <div class="hint">DMM and AMM in m²K/W; critical diameter in µm, 2 R k<sub>m</sub> k<sub>p</sub> / (k<sub>p</sub> − k<sub>m</sub>) with the DMM value.</div>
         <div class="hint">Acoustic and diffuse mismatch models from the sound speeds (E, ν, ρ) and the matrix heat capacity (Swartz and Pohl 1989): the resistance of a perfect interface. Particles smaller than the critical diameter conduct worse than the matrix around them (Hasselman and Johnson 1987).</div></div></div>` : ""}
       <div class="sec"><div class="sh">${I("solver")}Settings</div><div class="sb">
         <div class="g2"><div><label class="f">RVE model uncertainty ± %</label><input type="number" step="any" min="0" data-calopt="model_unc" value="${esc(c.options.model_unc)}"></div>
         <div><label class="f">Refinement rounds</label><input type="number" min="0" max="6" data-calopt="refine_rounds" value="${esc(c.options.refine_rounds)}"></div></div>
         <div class="hint">The model uncertainty covers what one RVE realisation and its voxel size leave open (about 2 % for a converged RVE). Each refinement round solves the RVE at a few more parameter sets where the answer lies. A viscosity measurement adds the statistical error of its particle-dynamics runs.</div>
-        <div class="row gap" style="margin-top:8px"><button class="btn" data-act="calPreview">${I("checks")}Check identifiability</button><button class="btn primary" data-act="calRun">${I("play")}Calibrate on the RVE</button></div>
+        <div class="row gap" style="margin-top:8px;flex-wrap:wrap"><button class="btn" data-act="calPreview">${I("checks")}Check identifiability</button><button class="btn primary" data-act="calRun">${I("play")}Calibrate on the RVE</button></div>
       </div></div>
       <div class="sec"><div class="sh">${I("runs")}Calibrations</div><div class="sb">${runs}</div></div>`;
   }
@@ -2563,8 +2576,8 @@
         ${d.design === "lhs" ? `<div class="g2"><div><label class="f">Samples</label><input type="number" min="2" max="64" data-doe="samples" value="${d.samples}"></div>
           <div><label class="f">Random seed</label><input type="number" min="0" data-doe="seed" value="${d.seed}"></div></div>` : ""}
         <label class="f">Grid of the cases</label><select data-doe="grid">
-          <option value="adaptive" ${d.grid !== "fixed" ? "selected" : ""}>Adaptive — each case planned for its own particles (default)</option>
-          <option value="fixed" ${d.grid === "fixed" ? "selected" : ""}>Fixed — every case on one grid</option></select>
+          <option value="adaptive" ${d.grid !== "fixed" ? "selected" : ""}>Adaptive: each case its own grid (default)</option>
+          <option value="fixed" ${d.grid === "fixed" ? "selected" : ""}>Fixed: one grid for every case</option></select>
         ${d.grid === "fixed" ? (() => {
           const pl = state.plan && state.plan.plan;
           const L = d.gridL ?? (pl ? pl.L_um : null), H = d.gridH ?? (pl ? pl.h_um : null);

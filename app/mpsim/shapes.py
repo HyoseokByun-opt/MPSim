@@ -490,7 +490,14 @@ def dem_template(code, P, planes, nfaces, max_spheres=256):
             r = min(P[0], P[1])
             span = np.array([P[0] - r, P[0] - r, P[1] - r]) if P[1] < P[0] else np.array([0.0, 0.0, P[1] - r])
         else:
-            r = t
+            # a thin plate: spheres of its half thickness. A thick ribbon (its
+            # cross-section less than 3:1) would leave its four long edges
+            # uncovered by such spheres - a 300 x 200 nm stack of platelets
+            # lost a fifth of its cross-section there, and the exact-shape
+            # repair shrank 761 of 970 particles - so it takes two layers of
+            # spheres of a quarter of its thickness
+            mid = float(np.sort(half)[1])
+            r = t if mid >= 3.0 * t else 0.5 * t
             span = np.maximum(half - r, 0.0)
         sp = r
         while True:

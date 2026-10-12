@@ -217,6 +217,9 @@ def parameter_catalogue(form):
                     {"path": f"phases.{i}.size.lz", "label": f"{name}: edge c", "unit": un, "group": g}]
         if ph.get("shape") == "superellipsoid":
             out.append({"path": f"phases.{i}.size.n", "label": f"{name}: blockiness n", "unit": "-", "group": g})
+        if ph.get("shape") in ("spheroid", "cylinder", "cuboid", "superellipsoid"):
+            out.append({"path": f"phases.{i}.stack_layers", "label": f"{name}: stacked platelets (layers)", "unit": "-",
+                        "group": g})
         if ph.get("shape") == "helix":
             out += [{"path": f"phases.{i}.size.coil_d", "label": f"{name}: coil diameter", "unit": un, "group": g},
                     {"path": f"phases.{i}.size.pitch", "label": f"{name}: pitch", "unit": un, "group": g},

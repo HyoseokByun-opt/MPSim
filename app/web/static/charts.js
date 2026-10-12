@@ -76,10 +76,24 @@
     if (o.ylabel) { g.save(); g.translate(13, T + (h - T - B) / 2); g.rotate(-Math.PI / 2); g.fillText(o.ylabel, 0, 0); g.restore(); }
   }
 
-  function legend(g, series, L, y) {
+  // the legend wraps onto further rows where it would run past the chart (W)
+  function legendRows(g, series, L, W) {
+    let lx = L + 6, rows = 1;
+    series.forEach((s) => {
+      if (!s.label) return;
+      const iw = g.measureText(s.label).width + 40;
+      if (lx > L + 6 && lx + iw - 19 > W - 4) { rows++; lx = L + 6; }
+      lx += iw;
+    });
+    return rows;
+  }
+
+  function legend(g, series, L, y, W) {
     let lx = L + 6;
     series.forEach((s) => {
       if (!s.label) return;
+      const iw = g.measureText(s.label).width + 40;
+      if (W && lx > L + 6 && lx + iw - 19 > W - 4) { y += 16; lx = L + 6; }
       g.strokeStyle = s.color || C.PALETTE[0]; g.lineWidth = 2.5; g.setLineDash(s.dash || []);
       if (s.marker && s.width === 0) {
         // points only: a point in the legend too
@@ -88,7 +102,7 @@
       } else { g.beginPath(); g.moveTo(lx, y - 3); g.lineTo(lx + 16, y - 3); g.stroke(); }
       g.setLineDash([]);
       g.fillStyle = INK; g.textAlign = "left"; g.fillText(s.label, lx + 21, y + 1);
-      lx += g.measureText(s.label).width + 40;
+      lx += iw;
     });
   }
 
@@ -96,6 +110,7 @@
   C.line = function (canvas, o) {
     const { g, w, h } = setup(canvas);
     const box = { L: 62, R: 16, T: 26, B: 38 };
+    box.T += 16 * (legendRows(g, o.series, box.L, w) - 1);
     const xs = [], ys = [];
     o.series.forEach((s) => s.x.forEach((x, i) => {
       const y = s.y[i];
@@ -140,7 +155,7 @@
       }
     });
     g.restore();
-    legend(g, o.series, box.L, 14);
+    legend(g, o.series, box.L, 14, w);
   };
 
   /* probability map (a joint posterior): {x:[nx], y:[ny], p:[ny][nx] in 0..1,

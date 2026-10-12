@@ -185,6 +185,12 @@ def normalize(form):
             # filler-filler contact; typical 1e-9..1e-6
             r_int = _num(ph.get("r_int", 0.0) or 0.0, f"interfacial thermal resistance of {where}", 0.0, 1e-2)
             r_contact = _num(ph.get("r_contact", 0.0) or 0.0, f"contact resistance of {where}", 0.0, 1e-2)
+            # stacked platelets (v5.2.1): each particle is a stack of this many
+            # platelets bonded face to face along its own z axis (thickness)
+            layers = int(round(_num(ph.get("stack_layers", 1) or 1, f"stacked layers of {where}", 1, 100)))
+            if layers > 1 and shape not in ("spheroid", "cylinder", "cuboid", "superellipsoid"):
+                raise ValueError(f"{where}: stacked layers need a platelet shape (spheroid, cylinder, cuboid or "
+                                 f"superellipsoid - the stack lies along the particle's z axis)")
             phases.append({
                 "name": ph.get("name") or ph.get("material_name") or f"Phase {i+1}",
                 "material_id": ph.get("material_id"),
@@ -193,7 +199,7 @@ def normalize(form):
                 "fraction": fraction, "orientation": orientation,
                 "overlap": bool(ph.get("overlap")) and shape != G.NETWORK,
                 "gap_frac": _num(ph.get("gap_frac", 0.0) or 0.0, f"minimum gap of {where}", 0.0, 1.0),
-                "shell": shell, "r_int": r_int, "r_contact": r_contact,
+                "shell": shell, "r_int": r_int, "r_contact": r_contact, "stack_layers": layers,
             })
         except ValueError as e:
             errors.append(str(e))

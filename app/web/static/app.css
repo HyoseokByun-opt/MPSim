@@ -62,7 +62,7 @@ button,input,select,textarea{font:inherit}
 .rcap{font-size:10.5px;color:var(--muted);text-align:center;padding:3px 0 5px;white-space:nowrap}
 .rbtn{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;width:76px;min-height:64px;padding:6px 3px 5px;border:1px solid transparent;border-radius:6px;background:none;cursor:pointer;color:var(--ink);font-size:11.3px;line-height:1.15;text-align:center}
 .rbtn .ico{width:30px;height:30px}
-.rbtn span{display:block;min-height:27px}
+.rbtn span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:27px;max-height:27px}
 .rbtn:hover{background:var(--accent-lt);border-color:var(--accent-md)}
 .rbtn.on{background:var(--accent-lt);border-color:var(--accent)}
 .rbtn.on::after{content:"";position:absolute;right:5px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px #fff}
@@ -79,7 +79,8 @@ button,input,select,textarea{font:inherit}
 .phead{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);min-height:44px}
 .phead .ico{width:22px;height:22px}
 .phead b{display:block;font-size:13.5px;color:#0d1117}
-.phead small{display:block;color:var(--muted);font-size:11.3px;line-height:1.3}
+.phead>div{min-width:0}
+.phead small{display:block;color:var(--muted);font-size:11.3px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pscroll{flex:1;min-height:0;overflow:auto;padding:10px 12px 24px}
 .center{display:flex;flex-direction:column;min-width:0;min-height:0;background:#fff}
 .ctabs,.rptabs,.dtabs{display:flex;align-items:stretch;gap:0;background:var(--sub);border-bottom:1px solid var(--line);min-height:33px;padding:0 6px}
@@ -125,9 +126,14 @@ label.f .u{color:var(--muted);font-weight:400;margin-left:4px}
 .chk{display:flex;align-items:center;gap:7px;margin:6px 0;font-size:12.5px;cursor:pointer}
 .chk.inline{display:inline-flex;margin:0 10px 0 0}
 .row{display:flex;align-items:center;gap:8px}
+/* a number with its unit in a half-width column: the number keeps the room */
+.row.uin{gap:4px}
+.row.uin input{min-width:0}
+.row.uin select{width:62px;flex:none;padding:4px 2px 4px 5px}
 .row.wrap{flex-wrap:wrap}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
 .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:0 8px}
+.g2>div,.g3>div{display:flex;flex-direction:column;justify-content:flex-end;min-width:0}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--line2);background:#fff;border-radius:5px;cursor:pointer;color:var(--ink);font-weight:600;font-size:12px;white-space:nowrap;text-decoration:none}
 .btn .ico{width:14px;height:14px;color:currentColor}
 .btn:hover{background:var(--sub);border-color:#afb8c1}
@@ -199,12 +205,17 @@ label.f .u{color:var(--muted);font-weight:400;margin-left:4px}
 .livestrip img{width:140px;height:105px;object-fit:contain;background:#fff;border:1px solid var(--line,#d0d7de);border-radius:4px}
 .livestrip figcaption{font-size:11px;line-height:1.25;color:#1f2328;max-height:42px;overflow:hidden}
 .livewait{margin:auto;display:flex;gap:14px;align-items:center;max-width:520px;color:#424a53;font-size:13px}
-.rcgrid input{width:100%;min-width:72px;font-size:12px;padding:2px 4px}
-.rcgrid th{font-size:11.5px;font-weight:600;white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis}
+/* fixed columns: the matrix fits the panel whatever the filler names (they wrap) */
+.rcgrid{table-layout:fixed}
+.rcgrid th,.rcgrid td{padding:4px 4px}
+.rcgrid tr:first-child th:first-child{width:30%}
+.rcgrid input{width:100%;min-width:0;font-size:12px;padding:2px 4px}
+.rcgrid th{font-size:11.5px;font-weight:600;white-space:normal;overflow-wrap:anywhere;line-height:1.25;vertical-align:middle}
+.sec>.sh small.u{margin-left:auto;white-space:nowrap}
 .rtags{display:flex;flex-wrap:wrap;gap:3px;margin:3px 0 1px}
 .rtag{font-size:10.5px;line-height:15px;padding:0 6px;border-radius:8px;color:#1f2328;background:color-mix(in srgb,var(--c) 16%,#fff);border:1px solid color-mix(in srgb,var(--c) 45%,#fff)}
 .rtag.struct{--c:#8c959f;font-weight:600}
-.rtags .rgrid{font-size:10.5px;line-height:15px;padding:0 5px;color:#57606a;font-family:Consolas,monospace}
+.rtags .rgrid{display:inline-block;font-size:10.5px;line-height:15px;padding:0 5px;color:#57606a;font-family:Consolas,monospace}
 .run small.rstruct,.run small.rvars{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;color:#424a53}
 .run small.rvars{font-family:Consolas,monospace;color:#0b62c4}
 .note.bad{border-left-color:var(--red);background:#ffebe9}
@@ -264,6 +275,10 @@ table.grid{width:100%;border-collapse:collapse;font-size:12px}
 table.grid th{background:var(--sub);text-align:left;font-weight:600;color:var(--ink2);padding:5px 7px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:1}
 table.grid td{padding:4px 7px;border-bottom:1px solid var(--line);color:var(--ink);vertical-align:top}
 table.grid td.n,table.grid th.n{text-align:right;font-family:var(--mono);white-space:nowrap}
+table.grid td.nt{text-align:right;white-space:normal}
+table.grid td.nt .mono,table.grid td.nt b{font-family:var(--mono)}
+table.grid.kv td:first-child{width:42%}
+table.grid.tight th,table.grid.tight td{padding:4px 4px}
 table.grid tr:hover td{background:#fafbfc}
 table.grid tr.sum td{font-weight:700;background:var(--sub)}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:6px}
@@ -280,7 +295,9 @@ table.grid tr.sum td{font-weight:700;background:var(--sub)}
 /* ------------------------------------------------------------ viewer */
 .vtoolbar{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--line);flex-wrap:wrap;background:#fff}
 .vtoolbar select{width:auto;height:26px;font-size:12px}
-.vtoolbar #vField{min-width:180px;max-width:250px}
+.vtoolbar #vField{min-width:150px;max-width:220px;flex:0 1 auto}
+.vtoolbar .vright{display:flex;align-items:center;gap:2px;margin-left:auto}
+.vtoolbar .vright .ibtn{width:26px}
 .vstage.mquad .vhud,.vstage.mquad .vfoot{display:none}
 .vsep{width:1px;height:20px;background:var(--line);margin:0 3px}
 .ibtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;border:1px solid transparent;border-radius:5px;background:none;cursor:pointer;color:var(--ink2);font:600 11px var(--font)}
@@ -314,6 +331,7 @@ table.grid tr.sum td{font-weight:700;background:var(--sub)}
 .vtip{position:absolute;background:rgba(31,35,40,.92);color:#fff;font:11.5px var(--mono);padding:5px 8px;border-radius:5px;pointer-events:none;white-space:pre;z-index:20}
 .slrow{display:grid;grid-template-columns:46px 1fr 62px;align-items:center;gap:6px;margin:3px 0}
 .slrow span{font:11px var(--mono);color:var(--ink2);text-align:right}
+.slrow span:first-child{font-family:var(--font);font-size:11.5px}
 .phtog{display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;cursor:pointer}
 .phtog i{width:12px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,.2);display:inline-block}
 /* a swatch beside the phase it belongs to; the name is given the room it needs
@@ -363,7 +381,7 @@ table.grid tr.sum td{font-weight:700;background:var(--sub)}
 .big{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-bottom:12px}
 .big .tile{border-left:3px solid var(--accent);padding:9px 11px}
 .big .tile .v{font-size:20px}
-.big .tile .l{font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--accent)}
+.big .tile .l{font-size:11.5px;font-weight:600;letter-spacing:.01em;color:var(--accent)}
 canvas.chart{display:block;width:100%}
 .figs{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
 .figs figure{margin:0;border:1px solid var(--line);border-radius:8px;padding:5px;background:#fff}
@@ -418,3 +436,5 @@ canvas.chart{display:block;width:100%}
 .btn.xs{padding:0 6px;font-size:10.5px;height:18px;line-height:16px}
 .calg{margin-top:4px}.calg label{display:block;font-size:10.8px;color:var(--ink2);margin-bottom:2px}.calg select,.calg input{width:100%}
 .optprops{margin:4px 0 2px}.optprops>summary{cursor:pointer;font-size:11.3px;color:var(--ink2);padding:3px 0}.optprops .props{margin-top:4px}
+/* the cell below the diagonal of a symmetric matrix: the value above it, read-only */
+input.mirror{background:var(--sub);color:var(--muted);border-color:transparent;cursor:default}

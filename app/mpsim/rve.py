@@ -538,11 +538,17 @@ def post_checks(plan_, gen_info, quality="standard"):
         checks.append({"id": "shrunk", "group": "Generated structure",
                        "label": "Particles shrunk to clear corner overlaps",
                        "value": shr["n"] / n_all, "target": 0.0, "unit": "rel",
-                       "status": "warn" if shr["min"] >= 0.9 else "fail",
+                       # a few particles a step below 90 % (two caught at the
+                       # repair's floor both shrink once more) are a warning;
+                       # many of them, or one far below, fail
+                       "status": "warn" if (shr["min"] >= 0.9 or (shr["min"] >= 0.85 and
+                                                                  shr.get("below_90", 0) <= 0.01 * n_all)) else "fail",
                        "note": f"{shr['n']} of {n_all} particles, to {100 * shr['min']:.0f} % of their size at most "
-                               f"({100 * shr['mean']:.1f} % on average), shape and orientation kept: their corners "
-                               f"were caught in each other and pushing and turning did not free them. The volume "
-                               f"fraction table shows what the phases reached."})
+                               f"({100 * shr['mean']:.1f} % on average"
+                               + (f"; {shr['below_90']} below 90 %" if shr.get("below_90") else "")
+                               + "), shape and orientation kept: their corners were caught in each other and pushing "
+                                 "and turning did not free them. The volume fraction table shows what the phases "
+                                 "reached."})
     ps = gen_info.get("pack_scale")
     if ps is not None and ps < 1.0:
         checks.append({"id": "pack", "group": "Generated structure", "label": "Particle size reached by the dense packing",

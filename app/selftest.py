@@ -989,8 +989,9 @@ def t_blend_overlap():
         shared = int(GEN._raster_track(owner, phase_of, np.zeros(len(phases) + 1, np.uint8), float(h),
                                        np.ascontiguousarray(p["codes"]), np.ascontiguousarray(p["centers"]),
                                        np.ascontiguousarray(p["R"]), np.ascontiguousarray(p["P"]), planes, nf,
-                                       np.ascontiguousarray(p["phase"]), 1, cs, cc, fs, ts,
-                                       np.empty(int(math.ceil(ext / h) + 4) ** 3, np.int64), False))
+                                       np.ascontiguousarray(p["phase"]), 1, cs, cc, fs, ts, np.ones(n),
+                                       np.ones(n), 0.9, np.zeros(n, np.int64), np.empty(int(math.ceil(ext / h) + 4) ** 3, np.int64),
+                                       False))
         expect(shared == 0, f"{name}: {shared} voxels inside two particles")
         expect(info["voxel_conflicts"] == 0, f"{name}: {info['voxel_conflicts']} voxels kept by the first particle")
         pairs = 0
@@ -1339,7 +1340,7 @@ def t_doe():
 
 
 @check("Anisotropic conduction: a turned tensor is returned exactly, a tilted laminate converges to the laminate "
-       "formula, energy balance exact, an isotropic tensor = the plain solve")
+       "formula, energy balance exact, an isotropic tensor = the plain solve, stacked platelets in series")
 def t_cond_aniso():
     from mpsim.solvers import conduction as CD
 
@@ -1385,8 +1386,32 @@ def t_cond_aniso():
     plain = CD.solve_direction(lab, [0.2, 30.0], 0, tol=1e-10, rpair=rp)["k_eff"]
     iso = CD.solve_direction(lab, [0.2, 30.0], 0, tol=1e-10, rpair=rp, aniso={"aid": aid, "K": (30.0 * np.eye(3))[None]})["k_eff"]
     expect(abs(iso / plain - 1) < 1e-9, f"isotropic tensor {iso} against the plain solve {plain}")
+    # stacked platelets: through a stack of n layers its n - 1 contacts are in
+    # series with the layers, k_z = t / (t / k_z + (n - 1) R_c); in the plane
+    # the layers conduct side by side
+    from mpsim import pipeline as PL, spec as S
+    import mpsim.generate as GEN_
+    spec = S.normalize({"name": "stack", "matrix": {"material_id": "epoxy"},
+                        "phases": [{"material_id": "hbn_platelet", "name": "BN", "shape": "cuboid",
+                                    "size": {"d": 2.0, "ly": 0.3, "lz": 0.2, "unit": "um"}, "fraction": {"value": 10, "basis": "vol"},
+                                    "stack_layers": 4, "r_contact": 1.2e-8}],
+                        "rve": {"auto": False, "L_um": 4, "voxel_um": 0.25}, "analyses": {"thermal": True}})
+    lab = np.zeros((4, 4, 4), np.uint8)
+    lab[1:3, 1:3, 1:3] = 1
+    ginfo = {"particles": {"codes": np.array([4]), "P": np.array([[1.0, 0.15, 0.1, 0, 0, 0]]), "R": np.eye(3)[None],
+                           "phase": np.array([0]), "centers": np.array([[2.0, 2.0, 2.0]])}}
+    real = GEN_.rasterize_owner
+    GEN_.rasterize_owner = lambda *a, **k: ((lab > 0).astype(np.int32), None)
+    try:
+        an = PL.thermal_aniso(spec, lab, ginfo, None, 1.0)
+    finally:
+        GEN_.rasterize_owner = real
+    kz = 0.2e-6 / (0.2e-6 / 30.0 + 3 * 1.2e-8)
+    got = np.diag(an["K"][0])
+    expect(np.allclose(got, [300.0, 300.0, kz], rtol=1e-12), f"stack tensor diagonal {got} (k_z {kz:.4f} expected)")
     return (f"turned tensor exact ({e_hom:.0e}); laminate error {100 * errs[0]:.1f} % at 8 cells, {100 * errs[1]:.1f} % at 16 "
-            f"(first order); energy balance {gapmax:.0e}; isotropic tensor = plain solve")
+            f"(first order); energy balance {gapmax:.0e}; isotropic tensor = plain solve; a 4-layer stack conducts "
+            f"{kz:.2f} W/m·K through its thickness")
 
 
 @check("DOE: a filler's share with the total kept, a fixed grid for every case")

@@ -201,12 +201,17 @@ def raster_all(owner, phase_of, overlap_of, net_of, h, codes, centers, Rs, Ps, p
 
 @njit(cache=True)
 def _raster_track(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces,
-                  phase_arr, pid0, csum, ccnt, fsum, tsum, buf, zwall=False):
+                  phase_arr, pid0, csum, ccnt, fsum, tsum, size, fac, floor, loser, buf, zwall=False):
     """Rasterise all particles; for every voxel two particles both claim,
     add its position to both particles' conflict sums (for the repair step),
     and a unit push along the line between the two centres - with the torque
     it exerts at that voxel - to their force and torque sums. A voxel
-    beyond a film face pushes back into the film."""
+    beyond a film face pushes back into the film. loser counts, per particle,
+    the shared voxels it should give way on when pushing is not enough: the
+    clearly smaller of the two (size, volume less than 2/3 of the other's),
+    the later one when their sizes are alike - unless one more 2 % step would
+    take it below `floor` of its size (fac, the size factor so far): then the
+    other, and both when neither can."""
     n0, n1, n2 = owner.shape
     L0 = n0 * h
     Lz0 = n2 * h
@@ -246,6 +251,7 @@ def _raster_track(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes
                         csum[m, 1] += dy
                         csum[m, 2] += dz
                         ccnt[m] += 1
+                        loser[m] += 1
                         wz = 1.0 if k < 0 else -1.0
                         fsum[m, 2] += wz
                         tsum[m, 0] += dy * wz
@@ -276,6 +282,24 @@ def _raster_track(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes
                         csum[om, 1] += oy
                         csum[om, 2] += oz
                         ccnt[om] += 1
+                        can_m = fac[m] * 0.98 >= floor
+                        can_o = fac[om] * 0.98 >= floor
+                        if can_m != can_o:
+                            if can_m:
+                                loser[m] += 1
+                            else:
+                                loser[om] += 1
+                        elif not can_m:
+                            loser[m] += 1
+                            loser[om] += 1
+                        elif size[m] < 0.67 * size[om]:
+                            loser[m] += 1
+                        elif size[om] < 0.67 * size[m]:
+                            loser[om] += 1
+                        elif m > om:
+                            loser[m] += 1
+                        else:
+                            loser[om] += 1
                         # unit push from the other centre towards this one
                         ux = cx - centers[om, 0]
                         uy = cy - centers[om, 1]
@@ -367,9 +391,15 @@ def _rotate_rows(Rs, idx, axis, ang):
     Rs[idx] = np.stack([x, np.cross(z, x), z], axis=1)
 
 
+# the size a particle keeps at least while the repair can shrink the other
+# one of a pair: 0.98^4, a step above the 0.9 down to which the check
+# 'Particles shrunk' warns (two particles both there still shrink once more)
+SHRINK_FLOOR = 0.92
+
+
 def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nfaces, ph_arr, pid0,
                     log=None, max_rounds=160, net_of=None, apart=False, apart_rounds=300, zwall=False,
-                    rotmode=None, shrink=True):
+                    rotmode=None, shrink=True, names=None):
     """Push and turn particles off the voxels they share until no voxel is
     claimed twice; what pushing cannot clear is cleared by shrinking.
 
@@ -409,7 +439,7 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
     buf = np.empty(int(math.ceil(ext / h) + 4) ** 3, np.int64)
     rg = np.array([SH.circumradius(int(c), P) for c, P in zip(codes, Ps)])
     rot = np.full(n, -1, np.int64) if rotmode is None else np.asarray(rotmode, np.int64)
-    no_shrink = {"n": 0, "min": 1.0, "mean": 1.0}
+    no_shrink = {"n": 0, "min": 1.0, "mean": 1.0, "below_90": 0}
     conf = 0
     best = None                      # (touching pairs, C, Rs) of the best overlap-free state
     fewest = None                    # (shared voxels, C, Rs) while none is overlap-free
@@ -418,44 +448,27 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
     rnd = 0
     last_gain = 0
 
+    # which of two particles gives way when pushing cannot clear a voxel:
+    # the clearly smaller one (box volume of its shape, as generated)
+    size = np.array([float(np.prod(SH.local_half_extents(int(c), P, planes, nfaces))) for c, P in zip(codes, Ps)])
+    lost = [np.zeros(n, np.int64)]
+    fac = np.ones(n)                 # size factor of every particle (shrinking below)
+
     def track():
         owner[:] = 0
         cs = np.zeros((n, 3))
         cc = np.zeros(n, np.int64)
         fs = np.zeros((n, 3))
         ts = np.zeros((n, 3))
+        lo = np.zeros(n, np.int64)
         c_ = int(_raster_track(owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces,
-                               ph_arr, pid0, cs, cc, fs, ts, buf, zwall))
+                               ph_arr, pid0, cs, cc, fs, ts, size, fac, SHRINK_FLOOR, lo, buf, zwall))
+        lost[0] = lo
         return c_, cs, cc, fs, ts
 
-    for rnd in range(4 * max_rounds + (apart_rounds if apart else 0)):
-        conf, csum, ccnt, fsum, tsum = track()
-        step_max = 0.5
-        if conf == 0:
-            if not apart:
-                return owner, 0, rnd, -1, no_shrink
-            touch = int(_touch_track(owner, phase_of, overlap_of, net_of, pid0, n, float(h), C, csum, ccnt,
-                                     _FWD26, not zwall))
-            if best is None or touch < best[0]:
-                best = (touch, C.copy(), Rs.copy())
-                stale = 0
-            else:
-                stale += 1
-            if touch == 0 or since_clean >= apart_rounds or stale >= 10:
-                break
-            step_max = 0.25
-        else:
-            if best is None and (fewest is None or conf < fewest[0]):
-                fewest = (conf, C.copy(), Rs.copy())
-                last_gain = rnd
-            if best is not None:
-                stale += 1
-                if stale >= 10 or since_clean >= apart_rounds:
-                    break
-            elif rnd >= max_rounds and (rnd - last_gain >= 40 or rnd >= 4 * max_rounds - 1):
-                break
-        if best is not None:
-            since_clean += 1
+    def push_step(conf, csum, ccnt, fsum, tsum, step_max):
+        """One round: push the particles with shared (or touching) voxels apart
+        and turn them by the torque of the push."""
         hit = ccnt > 0
         idx = np.flatnonzero(hit)
         away = -csum[hit] / ccnt[hit][:, None]
@@ -490,6 +503,36 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
             turn = (rm >= 0) & (tn > 1e-12) & (ang > 1e-5)
             if turn.any():
                 _rotate_rows(Rs, idx[turn], T[turn], ang[turn])
+
+    for rnd in range(4 * max_rounds + (apart_rounds if apart else 0)):
+        conf, csum, ccnt, fsum, tsum = track()
+        step_max = 0.5
+        if conf == 0:
+            if not apart:
+                return owner, 0, rnd, -1, no_shrink
+            touch = int(_touch_track(owner, phase_of, overlap_of, net_of, pid0, n, float(h), C, csum, ccnt,
+                                     _FWD26, not zwall))
+            if best is None or touch < best[0]:
+                best = (touch, C.copy(), Rs.copy())
+                stale = 0
+            else:
+                stale += 1
+            if touch == 0 or since_clean >= apart_rounds or stale >= 10:
+                break
+            step_max = 0.25
+        else:
+            if best is None and (fewest is None or conf < fewest[0]):
+                fewest = (conf, C.copy(), Rs.copy())
+                last_gain = rnd
+            if best is not None:
+                stale += 1
+                if stale >= 10 or since_clean >= apart_rounds:
+                    break
+            elif rnd >= max_rounds and (rnd - last_gain >= 40 or rnd >= 4 * max_rounds - 1):
+                break
+        if best is not None:
+            since_clean += 1
+        push_step(conf, csum, ccnt, fsum, tsum, step_max)
         if log is not None and rnd % 10 == 9:
             log(f"    overlap repair round {rnd+1}: {conf:,} shared voxels"
                 + (f", {touch:,} touching voxel pairs" if touch >= 0 else ""))
@@ -505,18 +548,75 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
         conf = track()[0]
     if not (conf and shrink):
         return owner, conf, rnd + 1, touch, no_shrink
-    # the last shared voxels: shrink the particles involved, 2 % a step
-    fac = np.ones(n)
+    # the last shared voxels: shrink the particles involved, 2 % a step, with
+    # a few pushes after each step so that the smaller particles settle. Of
+    # two particles only one shrinks, the clearly smaller one (or the later
+    # one of two alike): shrinking both took a platelet stack 2 % for every
+    # sphere caught on it, and the BN of the MUF example lost a tenth of its
+    # volume (12.4 instead of 13.75 vol%) while the alumina lost 1.6 %. A
+    # particle at SHRINK_FLOOR of its size gives way no further: the other
+    # one then shrinks (alone, the smaller particles went down to 82 %)
     for _ in range(60):
         conf, csum, ccnt, fsum, tsum = track()
         if conf == 0:
             break
-        for m in np.flatnonzero(ccnt > 0):
+        for m in np.flatnonzero(lost[0] > 0):
             Ps[m, _linear_slots(int(codes[m]))] *= 0.98
             fac[m] *= 0.98
-    shr = fac < 1.0
+        for _k in range(4):
+            conf, csum, ccnt, fsum, tsum = track()
+            if conf == 0:
+                break
+            push_step(conf, csum, ccnt, fsum, tsum, 0.5)
+    # ... and grow them back, 1 % a step, every particle as far as it goes
+    # without a shared voxel. Shrinking every particle of a shared voxel until
+    # none was left lost what the packing had won: 4-plate BN stacks with
+    # alumina at 55 vol% came out at 47.7 vol%, three particles in four shrunk
+    # Two particles that grow into each other both stay as they were, so the
+    # larger particles take their turn first and each size class grows in two
+    # random halves: a stack and the spheres beside it, or two spheres, do
+    # not block each other for good
+    if conf == 0 and (fac < 1.0).any():
+        rng_g = np.random.default_rng(5)
+        for _ in range(80):
+            cand = np.flatnonzero(fac < 1.0)
+            if not len(cand):
+                break
+            sz = size[cand]
+            big = sz >= math.sqrt(sz.min() * sz.max()) if sz.max() > 1.5 * sz.min() else np.ones(len(cand), bool)
+            grew = False
+            for cls in (cand[big], cand[~big]):
+                half = rng_g.random(len(cls)) < 0.5
+                for grp in (cls[half], cls[~half]):
+                    if not len(grp):
+                        continue
+                    g = np.minimum(1.0 / fac[grp], 1.01)
+                    for m, gm in zip(grp, g):
+                        Ps[m, _linear_slots(int(codes[m]))] *= gm
+                    conf, csum, ccnt, fsum, tsum = track()
+                    bad = ccnt[grp] > 0
+                    for m, gm in zip(grp[bad], g[bad]):
+                        Ps[m, _linear_slots(int(codes[m]))] /= gm
+                    fac[grp[~bad]] *= g[~bad]
+                    grew = grew or bool((~bad).any())
+            if not grew:
+                break
+        conf = track()[0]
+        if log is not None:
+            shr_ = fac < 1.0 - 1e-9
+            per = []
+            for q in np.unique(ph_arr):
+                sel = ph_arr == q
+                if shr_[sel].any():
+                    nm = names[int(q)] if names is not None and int(q) < len(names) else f"phase {int(q)}"
+                    per.append(f"{nm}: {int(shr_[sel].sum())} of {int(sel.sum())}, volume "
+                               f"{100 * float(np.sum(fac[sel] ** 3 * size[sel]) / np.sum(size[sel])):.1f} %")
+            log(f"  particles shrunk to clear the last shared voxels grown back where they fit: {int(shr_.sum())} of "
+                f"{n} stay smaller ({'; '.join(per)})")
+    shr = fac < 1.0 - 1e-9
     return owner, conf, rnd + 1, touch, {"n": int(shr.sum()), "min": float(fac.min()),
-                                         "mean": float(fac[shr].mean()) if shr.any() else 1.0}
+                                         "mean": float(fac[shr].mean()) if shr.any() else 1.0,
+                                         "below_90": int(np.sum(fac < 0.9 - 1e-9))}
 
 
 @njit(cache=True)
@@ -1963,14 +2063,15 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 phase_of = grown
             owner, conflicts, rounds, touch, shr = repair_overlaps(
                 owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces, ph_arr, pid, log=log,
-                net_of=net_of, apart=contacts == "apart", zwall=film, rotmode=rotm)
+                net_of=net_of, apart=contacts == "apart", zwall=film, rotmode=rotm,
+                names=[ph.get("name") or f"phase {i}" for i, ph in enumerate(phases)])
             log(f"  exact-shape overlap repair (push and turn): {rounds} round(s), {conflicts:,} shared voxels left"
                 + (f", {touch:,} touching voxel pairs" if touch >= 0 else ""))
             info["shrunk"] = shr
             if shr["n"]:
                 log(f"  !! {shr['n']} of {len(codes)} particles were caught in each other at their corners and "
                     f"were shrunk (shape kept) to clear the overlap: to {100 * shr['min']:.0f} % of their size at "
-                    f"most, {100 * shr['mean']:.1f} % on average")
+                    f"most, {100 * shr['mean']:.1f} % on average, {shr.get('below_90', 0)} below 90 %")
             pid += len(codes)
             for i in part_idx:
                 n_placed[i] = int(np.count_nonzero(ph_arr == i))

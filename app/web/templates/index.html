@@ -62,7 +62,7 @@
           <select id="vCmap" title="Colour map"><option value="jet">Jet</option><option value="turbo">Turbo</option><option value="viridis">Viridis</option><option value="coolwarm">Cool–warm</option><option value="gray">Grey</option></select>
           <select id="vRange" title="Colour range"><option value="auto">1–99 %</option><option value="full">Min–max</option><option value="manual">Manual</option></select>
           <label class="chk inline" title="Logarithmic colour scale"><input type="checkbox" id="vLog"> Log</label>
-          <div class="grow"></div>
+          <div class="vright">
           <button class="ibtn" data-cam="iso" title="Isometric view">ISO</button>
           <button class="ibtn" data-cam="x" title="View along +X">+X</button>
           <button class="ibtn" data-cam="y" title="View along +Y">+Y</button>
@@ -72,6 +72,7 @@
           <button class="ibtn" id="vShot" title="Save a screen capture"></button>
           <button class="ibtn" id="vGif" title="Save an animated GIF: one loop of the moving field lines or route, otherwise a turn around the RVE"></button>
           <button class="ibtn" id="vRender" title="Render a high-resolution figure on the server (PyVista)"></button>
+          </div>
         </div>
         <div class="vstage m3d" id="vStage">
           <div class="vpane v3d" id="v3d">
