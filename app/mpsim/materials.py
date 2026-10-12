@@ -36,7 +36,23 @@ OPTIONAL_META = {
     "tg":     ("glass transition temperature", "°C", -150.0, 600.0),
     "E_r":    ("Young's modulus above Tg (rubbery)", "GPa", 0.0, 100.0),
     "alpha2": ("CTE above Tg", "ppm/K", -100.0, 2000.0),
+    # anisotropic thermal conductivity (v5.2): along the particle's own axes
+    # (a cuboid's edges d, ly, lz; the symmetry axis z of a spheroid,
+    # cylinder or platelet), along the box axes for the matrix. Any one set
+    # makes the material anisotropic; k is then the orientation average the
+    # closed-form estimates use.
+    "k_x":    ("thermal conductivity along x (particle axes)", "W/m·K", 0.0, 1e5),
+    "k_y":    ("thermal conductivity along y (particle axes)", "W/m·K", 0.0, 1e5),
+    "k_z":    ("thermal conductivity along z (particle axes)", "W/m·K", 0.0, 1e5),
 }
+
+
+def k_axes(props):
+    """(k_x, k_y, k_z) of an anisotropic material, None for an isotropic one
+    (an axis not given takes k)."""
+    if not any(props.get(a) not in (None, "") for a in ("k_x", "k_y", "k_z")):
+        return None
+    return [float(props[a]) if props.get(a) not in (None, "") else float(props["k"]) for a in ("k_x", "k_y", "k_z")]
 
 
 def load_library():

@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.1.0-0b62c4" alt="version 5.1.0">
+  <img src="https://img.shields.io/badge/version-5.2.0-0b62c4" alt="version 5.2.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-58%20checks-2da44e" alt="58 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-61%20checks-2da44e" alt="61 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -63,13 +63,15 @@ Its capabilities include:
 - **Thin films.** x and y periodic, z the real film thickness, particles ending inside the film.
 - **Conduction.** Thermal, electrical, dielectric and magnetic conduction with a periodic finite-volume solver
   (multi-core, FFT-preconditioned), with NASA PuMA's finite elements as the alternative; interfacial thermal resistance
-  between filler and matrix and at filler–filler contacts is placed on the voxel faces.
+  between filler and matrix and at filler–filler contacts is placed on the voxel faces; anisotropic fillers (h-BN
+  platelets: in-plane against through-thickness k) carry their conductivity tensor turned with every particle.
 - **Mechanics.** Stiffness, engineering constants and the thermal-expansion tensor from FANS — the periodic voxel finite
   elements of NASA PuMA solved with an FFT preconditioner whose iteration count does not grow with the grid
   (7 loads on 96³ in 49 s, 11× faster than MINRES on the same discretisation) — optionally above the glass transition.
 - **Rheology.** Effective viscosity of underfills, moulding compounds and pastes from a creeping-flow solve on the RVE
-  and, for dense spherical fillers, a particle dynamics in which every filler moves, turns and collides in the sheared
-  resin (lubrication, friction, van der Waals; NVIDIA GPU first, CPU otherwise) — which also gives the particle-size effect and, run at
+  and, for dense fillers of any shape, a particle dynamics in which every filler moves, turns and collides in the sheared
+  resin (lubrication, friction, van der Waals; cubes, platelets and rods as rigid clumps of spheres; NVIDIA GPU first,
+  CPU otherwise) — which also gives the particle-size effect and, run at
   several shear rates, the shear thinning that attraction causes; Krieger–Dougherty with the maximum packing fraction of
   the actual size distribution, flow curves, capillary underfill filling time and settling; the resin flow and the
   moving particles are shown.
@@ -85,8 +87,9 @@ Its capabilities include:
   bound resin layer or adhesion of a filler surface — from measured effective properties, viscosity included: phonon-
   mismatch theory first, an identifiability check, a Bayesian calibration on an RVE or particle-dynamics surrogate with
   credible intervals, and the next measurement that would add the most information.
-- **Studies.** DOE (full factorial, one factor at a time, Latin hypercube), Gaussian-process surrogates, Sobol sensitivity
-  indices, single-objective optima and NSGA-II trade-off fronts.
+- **Studies.** DOE (full factorial, one factor at a time, Latin hypercube; a filler's share of a fixed filler content as a
+  factor; one fixed grid for every case or each case planned on its own), Gaussian-process surrogates, Sobol
+  sensitivity indices, single-objective optima and NSGA-II trade-off fronts.
 - **All cores in use.** Every solve that does not need another one — each property and direction, each Stokes and
   diffusion direction, each EMI frequency, the structure analyses — runs side by side on the cores given to a run, within
   the free memory, and several runs share the PC at once (a porous RVE with permeability, diffusion and the structure
@@ -137,7 +140,7 @@ bounds (Wiener, Hashin–Shtrikman, Schapery); a value outside a rigorous bound 
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **58 problems whose answers are known** (39 in the quick set) and compares the results.
+`5_SELF_TEST.bat` solves **61 problems whose answers are known** (41 in the quick set) and compares the results.
 Among them:
 
 | Check | Reference | Result |
@@ -154,12 +157,15 @@ Among them:
 | FANS elasticity against PuMA (corrected) | same discretisation | 3.5e-9 |
 | Dilute rigid sphere in a viscous liquid | Einstein [η] = 2.5 | within 15 % (voxelised sphere) |
 | Particle dynamics, frictionless spheres at 50 vol% | Krieger–Dougherty with random close packing, 11.4 | 12.6 (200 spheres, strain 2) |
+| Particle dynamics of cubes (rigid multi-sphere particles) | dissipated power = shear stress × rate | within 0.1 % |
+| Anisotropic conduction: turned tensor; tilted anisotropic laminate | exact; laminate formula | 2e-15; 2.6 % at 16 cells per layer (first order) |
 | Maximum packing of bidisperse spheres | Farr–Groot simulations, 27 cases | within 0.011 |
 | Impermeable sphere, moisture diffusion | Maxwell 2/(2+φ) | within 2 % |
 | Calibration of R_int and filler k from two particle sizes | known values 2e-7 m²K/W, 2.0 W/m·K | 2.0e-7, 2.01 |
 | Calibration of a bound resin layer from a viscosity (particle dynamics) | known value 10 nm | 10.6 nm (95 % 8.8–12.5) |
 | Blends: two sphere sizes at 55 vol%, cubes with flakes at 45 vol% | no voxel inside two particles | 0 shared voxels, none trimmed |
 | Complete pipelines: filled RVE, thin film, porous RVE, viscosity with live results | all files, all analyses | passed |
+| DOE: a filler's share with the total kept; fixed grid | 5–50 % of 55 vol%, 160³ on every case | passed |
 
 **RVE size.** The 7× and 10× criteria come from repeated runs on independent random structures, evaluated with the
 statistical method of Kanit et al. (2003). The random scatter of one realisation (95 % interval) was ±0.12 % / ±0.14 %
@@ -340,7 +346,7 @@ More cases are listed in appendix D of the user guide.
 If you use MPSim in published work, please cite the software (GitHub shows the citation under
 **Cite this repository**, from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.1.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.2.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

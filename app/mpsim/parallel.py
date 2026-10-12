@@ -237,10 +237,13 @@ def cond_task(t):
         r.pop("q", None)
     else:
         cm = np.load(t["cmask"]) if t.get("cmask") else None
+        an = t.get("aniso")
+        if an:
+            an = dict(an, aid=np.load(an["aid"]) if an.get("aid") else None)
         r = CD.solve_direction(labels, t["vals"], "xyz".index(t["d"]), tol=t["tol"], rpair=t.get("rpair"),
                                cmask=cm, rcpair=t.get("rcpair"), callback=rep,
-                               flux_h=t["voxel_m"] if t["fields"] else None, film=bool(t.get("film")))
-        r["method"] = ("fv-film" if t.get("film") else
+                               flux_h=t["voxel_m"] if t["fields"] else None, film=bool(t.get("film")), aniso=an)
+        r["method"] = ("fv-film" if t.get("film") else "fv-anisotropic" if an else
                        "fv-interface" if (t.get("rpair") is not None or t.get("rcpair") is not None) else "fv-periodic")
         if check == "fe":
             try:

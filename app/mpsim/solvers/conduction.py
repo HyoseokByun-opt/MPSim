@@ -22,6 +22,11 @@ Additions over the TIM solver:
   tangent of a composite dielectric (first order in tan delta) and a built-in
   Hill-Mandel check: the phase energies must add up to k_eff exactly;
 * a periodic percolation test for the contrast policy;
+* anisotropic conductivity (v5.2): a particle's tensor in its own axes,
+  turned with the particle; the diagonal on the faces (harmonic, with the
+  interface resistances), the off-diagonal terms inside each particle by a
+  positive one-sided-difference form (_cross_flux), so the operator stays
+  symmetric positive definite;
 * a film (v4): periodic in x and y, the real thickness in z. In-plane the top
   and bottom faces are insulated (no flux through them); through the
   thickness the two faces are held at fixed potentials, as between the plates
@@ -92,6 +97,206 @@ def _faces(labels, vals, rpair, cmask, rcpair, use_c, axis, out):
                 if use_c and (cmask[i, j, k] >> axis) & 1:
                     res += rcpair[a, b]
                 out[i, j, k] = 1.0 / res
+
+
+@njit(parallel=True, cache=True)
+def _faces_v(labels, kv, rpair, cmask, rcpair, use_c, axis, out):
+    """_faces with a value per voxel along this axis (anisotropic phases):
+    the two half cells in series, plus the interface resistances."""
+    n0, n1, n2 = labels.shape
+    for i0 in prange(n0):
+        i = np.int64(i0)
+        for j in range(n1):
+            for k in range(n2):
+                ni, nj, nk = i, j, k
+                if axis == 0:
+                    ni = i + 1 if i + 1 < n0 else 0
+                elif axis == 1:
+                    nj = j + 1 if j + 1 < n1 else 0
+                else:
+                    nk = k + 1 if k + 1 < n2 else 0
+                a = labels[i, j, k]
+                b = labels[ni, nj, nk]
+                res = 0.5 / kv[i, j, k] + 0.5 / kv[ni, nj, nk]
+                if a != b:
+                    res += rpair[a, b]
+                if use_c and (cmask[i, j, k] >> axis) & 1:
+                    res += rcpair[a, b]
+                out[i, j, k] = 1.0 / res
+
+
+@njit(parallel=True, cache=True)
+def _cross_flux(u, aid, koff, direction, add, F):
+    """The off-diagonal part of an anisotropic particle's tensor, cell by cell.
+
+    The diagonal part of every tensor sits on the faces (_faces_v, harmonic,
+    with the interface resistances). The off-diagonal part k_de (d != e) acts
+    inside each particle only: a cell's gradient is taken from its one-sided
+    differences D_d+ = u(+d) - u, D_d- = u - u(-d) towards neighbours of the
+    same particle, each side weighted 1/2, and its energy
+        E_c = 1/2 sum over side choices s of (prod of weights) sum_{d != e} k_de D_d^s D_e^s
+    is added. With the diagonal of the same weighted sum this is a positive
+    form, and no face carries more of it than the face term holds, so the
+    operator stays symmetric positive definite (the CG converges) whatever
+    the tensor. A layer one cell thick in a direction has no difference
+    there: its cross terms in that direction drop out.
+    F[2d + 0/1] = dE_c / dD_d+ / dD_d- (direction: the unit gradient `add`
+    is part of the differences along it). aid: the particle's row in koff
+    (rows kxy, kxz, kyz), -1 for every other cell."""
+    n0, n1, n2 = u.shape
+    for i0 in prange(n0):
+        i = np.int64(i0)
+        ip = i + 1 if i + 1 < n0 else 0
+        im = i - 1 if i > 0 else n0 - 1
+        for j in range(n1):
+            jp = j + 1 if j + 1 < n1 else 0
+            jm = j - 1 if j > 0 else n1 - 1
+            for k in range(n2):
+                kp = k + 1 if k + 1 < n2 else 0
+                km = k - 1 if k > 0 else n2 - 1
+                p = aid[i, j, k]
+                if p < 0:
+                    for q in range(6):
+                        F[q, i, j, k] = 0.0
+                    continue
+                c = u[i, j, k]
+                # weights of the two sides of each direction and the weighted difference
+                wp0 = 0.5 if aid[ip, j, k] == p else 0.0
+                wm0 = 0.5 if aid[im, j, k] == p else 0.0
+                wp1 = 0.5 if aid[i, jp, k] == p else 0.0
+                wm1 = 0.5 if aid[i, jm, k] == p else 0.0
+                wp2 = 0.5 if aid[i, j, kp] == p else 0.0
+                wm2 = 0.5 if aid[i, j, km] == p else 0.0
+                g0 = add if direction == 0 else 0.0
+                g1 = add if direction == 1 else 0.0
+                g2 = add if direction == 2 else 0.0
+                A0 = wp0 * (u[ip, j, k] - c + g0) + wm0 * (c - u[im, j, k] + g0)
+                A1 = wp1 * (u[i, jp, k] - c + g1) + wm1 * (c - u[i, jm, k] + g1)
+                A2 = wp2 * (u[i, j, kp] - c + g2) + wm2 * (c - u[i, j, km] + g2)
+                W0 = wp0 + wm0
+                W1 = wp1 + wm1
+                W2 = wp2 + wm2
+                kxy = koff[p, 0]
+                kxz = koff[p, 1]
+                kyz = koff[p, 2]
+                s0 = kxy * A1 * W2 + kxz * A2 * W1
+                s1 = kxy * A0 * W2 + kyz * A2 * W0
+                s2 = kxz * A0 * W1 + kyz * A1 * W0
+                F[0, i, j, k] = wp0 * s0
+                F[1, i, j, k] = wm0 * s0
+                F[2, i, j, k] = wp1 * s1
+                F[3, i, j, k] = wm1 * s1
+                F[4, i, j, k] = wp2 * s2
+                F[5, i, j, k] = wm2 * s2
+
+
+@njit(parallel=True, cache=True)
+def _cross_gather(F, out, sign):
+    """out += sign * dE_cross/du: each cell's own sides and its neighbours'."""
+    n0, n1, n2 = out.shape
+    for i0 in prange(n0):
+        i = np.int64(i0)
+        ip = i + 1 if i + 1 < n0 else 0
+        im = i - 1 if i > 0 else n0 - 1
+        for j in range(n1):
+            jp = j + 1 if j + 1 < n1 else 0
+            jm = j - 1 if j > 0 else n1 - 1
+            for k in range(n2):
+                kp = k + 1 if k + 1 < n2 else 0
+                km = k - 1 if k > 0 else n2 - 1
+                g = (-F[0, i, j, k] + F[1, i, j, k] - F[2, i, j, k] + F[3, i, j, k] - F[4, i, j, k] + F[5, i, j, k]
+                     + F[0, im, j, k] - F[1, ip, j, k] + F[2, i, jm, k] - F[3, i, jp, k]
+                     + F[4, i, j, km] - F[5, i, j, kp])
+                out[i, j, k] += sign * g
+
+
+@njit(cache=True)
+def _cross_energy(u, aid, F, labels, direction, nlab):
+    """The cross terms' part of sum q g per label (as _energy counts the faces,
+    twice the energy): sum D F, the form being quadratic."""
+    n0, n1, n2 = u.shape
+    E = np.zeros(nlab)
+    for i in range(n0):
+        ip = i + 1 if i + 1 < n0 else 0
+        im = i - 1 if i > 0 else n0 - 1
+        for j in range(n1):
+            jp = j + 1 if j + 1 < n1 else 0
+            jm = j - 1 if j > 0 else n1 - 1
+            for k in range(n2):
+                if aid[i, j, k] < 0:
+                    continue
+                kp = k + 1 if k + 1 < n2 else 0
+                km = k - 1 if k > 0 else n2 - 1
+                c = u[i, j, k]
+                g0 = 1.0 if direction == 0 else 0.0
+                g1 = 1.0 if direction == 1 else 0.0
+                g2 = 1.0 if direction == 2 else 0.0
+                e = (F[0, i, j, k] * (u[ip, j, k] - c + g0) + F[1, i, j, k] * (c - u[im, j, k] + g0)
+                     + F[2, i, j, k] * (u[i, jp, k] - c + g1) + F[3, i, j, k] * (c - u[i, jm, k] + g1)
+                     + F[4, i, j, k] * (u[i, j, kp] - c + g2) + F[5, i, j, k] * (c - u[i, j, km] + g2))
+                E[labels[i, j, k]] += e
+    return E
+
+
+@njit(cache=True)
+def _energy_v(u, kx, ky, kz, labels, vx, vy, vz, direction, nlab):
+    """_energy with a value per voxel along each axis (anisotropic solve)."""
+    n0, n1, n2 = u.shape
+    E = np.zeros(nlab)
+    e_int = 0.0
+    for i in range(n0):
+        ip = i + 1 if i + 1 < n0 else 0
+        for j in range(n1):
+            jp = j + 1 if j + 1 < n1 else 0
+            for k in range(n2):
+                kp = k + 1 if k + 1 < n2 else 0
+                a = labels[i, j, k]
+                c = u[i, j, k]
+                for ax in range(3):
+                    if ax == 0:
+                        ni, nj, nk = ip, j, k
+                        kf = kx[i, j, k]
+                        va, vb = vx[i, j, k], vx[ni, nj, nk]
+                    elif ax == 1:
+                        ni, nj, nk = i, jp, k
+                        kf = ky[i, j, k]
+                        va, vb = vy[i, j, k], vy[ni, nj, nk]
+                    else:
+                        ni, nj, nk = i, j, kp
+                        kf = kz[i, j, k]
+                        va, vb = vz[i, j, k], vz[ni, nj, nk]
+                    if kf == 0.0:
+                        continue
+                    b = labels[ni, nj, nk]
+                    g = u[ni, nj, nk] - c
+                    if ax == direction:
+                        g += 1.0
+                    q2 = (kf * g) ** 2
+                    E[a] += 0.5 * q2 / va
+                    E[b] += 0.5 * q2 / vb
+                    extra = 1.0 / kf - 0.5 / va - 0.5 / vb
+                    if extra > 0.0:
+                        e_int += q2 * extra
+    return E, e_int
+
+
+def aniso_axes(labels, vals, aniso, scale):
+    """The value of every voxel along x, y, z (scaled) for an anisotropic
+    solve: the label values, a label's own axes where its material is
+    anisotropic in the box frame (the matrix), and every anisotropic
+    particle's tensor diagonal in its cells."""
+    kv = [vals[labels] for _ in range(3)]
+    for li, ax in (aniso.get("label_axes") or {}).items():
+        m = labels == int(li)
+        for d in range(3):
+            kv[d][m] = float(ax[d]) / scale
+    aid = aniso.get("aid")
+    if aid is not None:
+        K = np.asarray(aniso["K"], float)
+        m = aid >= 0
+        for d in range(3):
+            kv[d][m] = K[aid[m], d, d] / scale
+    return kv
 
 
 @njit(parallel=True, cache=True)
@@ -242,7 +447,7 @@ def _threads():
 
 def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000,
                     callback=None, should_stop=None, workers=None, cmask=None, rcpair=None,
-                    flux_h=None, film=False):
+                    flux_h=None, film=False, aniso=None):
     """Periodic cell problem for a unit macroscopic gradient along `direction`.
 
     labels : (n0,n1,n2) uint8 phase map;  vals : value per label (> 0)
@@ -256,9 +461,16 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
              thickness (direction 2) this calls solve_film_z; in-plane the
              faces between the top and bottom layers carry nothing, so the
              two film faces are insulated.
+    aniso  : anisotropic materials, or None: {"aid": int32 map of the
+             anisotropic particle in each cell (-1 none), "K": (n, 3, 3)
+             tensor of each such particle in the box frame, "label_axes":
+             {label: (kx, ky, kz)} for a material anisotropic along the box
+             axes (the matrix)} - in the units of vals. Not for films.
     Returns a dict with the effective column, the energy split, the field and
     solver statistics.
     """
+    if aniso is not None and film:
+        aniso = None                       # films: the label values (see solve_film_z)
     if film and direction == 2:
         return solve_film_z(labels, vals, rpair=rpair, tol=tol, maxiter=maxiter, callback=callback,
                             should_stop=should_stop, workers=workers, cmask=cmask, rcpair=rcpair,
@@ -278,12 +490,28 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
     cm = np.ascontiguousarray(cmask, dtype=np.uint8) if use_c else np.zeros((1, 1, 1), np.uint8)
     shape = labels.shape
     kf = [np.empty(shape) for _ in range(3)]
-    for ax in range(3):
-        _faces(labels, v, rp, cm, rc, use_c, ax, kf[ax])
+    aid = koff = Fx = kv = None
+    if aniso is not None:
+        kv = aniso_axes(labels, v, aniso, scale)
+        for ax in range(3):
+            _faces_v(labels, kv[ax], rp, cm, rc, use_c, ax, kf[ax])
+        if aniso.get("aid") is not None and len(aniso["K"]):
+            K = np.asarray(aniso["K"], float) / scale
+            koff = np.ascontiguousarray(np.stack([K[:, 0, 1], K[:, 0, 2], K[:, 1, 2]], axis=1))
+            if np.any(koff != 0.0):
+                aid = np.ascontiguousarray(aniso["aid"], dtype=np.int32)
+                Fx = np.empty((6,) + shape)
+    else:
+        for ax in range(3):
+            _faces(labels, v, rp, cm, rc, use_c, ax, kf[ax])
     if film:
         kf[2][:, :, -1] = 0.0              # the insulated film faces
     b = np.empty(shape)
     _rhs(kf[direction], direction, b)
+    if aid is not None:
+        # minus the cross terms of the unit gradient alone
+        _cross_flux(np.zeros(shape), aid, koff, direction, 1.0, Fx)
+        _cross_gather(Fx, b, -1.0)
     b -= b.mean()
 
     fpos = [k[k > 0] for k in kf]
@@ -309,6 +537,9 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
     if not converged:
         for it in range(1, maxiter + 1):
             _apply(p, kf[0], kf[1], kf[2], Ap)
+            if aid is not None:
+                _cross_flux(p, aid, koff, direction, 0.0, Fx)
+                _cross_gather(Fx, Ap, 1.0)
             Ap -= Ap.mean()
             pAp = float(np.vdot(p, Ap))
             if pAp <= 0:
@@ -339,7 +570,16 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
 
     col = np.array([_mean_flux(u, kf[ax], ax, 1.0 if ax == direction else 0.0)
                     for ax in range(3)]) * scale
-    E, e_int = _energy(u, kf[0], kf[1], kf[2], labels, v, direction, nlab)
+    if kv is not None:
+        E, e_int = _energy_v(u, kf[0], kf[1], kf[2], labels, kv[0], kv[1], kv[2], direction, nlab)
+        del kv
+        if aid is not None:
+            # the cross terms' share of the mean flux and of the energy
+            _cross_flux(u, aid, koff, direction, 1.0, Fx)
+            col += np.array([float(Fx[2 * ax].sum() + Fx[2 * ax + 1].sum()) for ax in range(3)]) / u.size * scale
+            E = E + _cross_energy(u, aid, Fx, labels, direction, nlab)
+    else:
+        E, e_int = _energy(u, kf[0], kf[1], kf[2], labels, v, direction, nlab)
     q = None
     if flux_h is not None:
         # face flux k_f (du + unit gradient) averaged onto the cells; the RVE
@@ -352,6 +592,8 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
                 g += 1.0
             qf = kf[ax] * g
             q[..., ax] = -0.5 * (qf + np.roll(qf, 1, axis=ax)) * (scale / (n * flux_h))
+            if aid is not None:
+                q[..., ax] -= (Fx[2 * ax] + Fx[2 * ax + 1]) * (scale / (n * flux_h))
             del g, qf
     ncell = float(labels.size)
     E_total = (float(E.sum()) + e_int) / ncell            # = k_eff/scale

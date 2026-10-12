@@ -59,6 +59,24 @@ class DOEStore:
         """Expand the design, validate every case and queue the runs."""
         base = copy.deepcopy(payload.get("form") or {})
         base.pop("_limits", None)
+        # the grid of the cases: adaptive (each case planned for its own
+        # particles, as a single run) or one fixed grid for every case, so
+        # that only the varied parameters differ between them
+        grid = payload.get("grid") or {}
+        if grid.get("mode") == "fixed":
+            try:
+                L_um, h_um = float(grid["L_um"]), float(grid["voxel_um"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("A fixed grid needs the RVE edge length and the voxel size")
+            if not (L_um > 0 and h_um > 0 and L_um / h_um >= 8):
+                raise ValueError("A fixed grid needs an RVE edge of at least 8 voxels")
+            rv = base.setdefault("rve", {})
+            rv.update(auto=False, L_um=L_um, voxel_um=h_um, auto_enlarge=False, N=None)
+            if grid.get("seeds"):
+                rv["n_seeds"] = int(grid["seeds"])
+            grid = {"mode": "fixed", "L_um": L_um, "voxel_um": h_um, "N": int(round(L_um / h_um))}
+        else:
+            grid = {"mode": "adaptive"}
         parameters = payload.get("parameters") or []
         design = payload.get("design") if payload.get("design") in ("full", "oat", "lhs") else "full"
         cases = DOE.expand(parameters, design, int(payload.get("samples", 12)), int(payload.get("seed", 1)))
@@ -73,6 +91,7 @@ class DOEStore:
         study = {"id": sid, "name": payload.get("name") or (base.get("name") or "DOE study"),
                  "created": time.time(), "owner": owner, "design": design,
                  "parameters": parameters, "samples": payload.get("samples"), "seed": payload.get("seed"),
+                 "grid": grid,
                  "analyses": [k for k, v in (base.get("analyses") or {}).items() if v],
                  "base_form": base, "cases": []}
         for form, case in zip(forms, cases):
@@ -121,6 +140,7 @@ class DOEStore:
             counts[r["state"]] = counts.get(r["state"], 0) + 1
         return {"id": study["id"], "name": study["name"], "created": study["created"],
                 "design": study["design"], "n_cases": len(study["cases"]), "counts": counts,
+                "grid": study.get("grid") or {"mode": "adaptive"},
                 "parameters": [{"path": p["path"], "label": p.get("label") or p["path"], "unit": p.get("unit", "")}
                                for p in study["parameters"]],
                 "analyses": study.get("analyses") or [], "metrics": metrics, "rows": rows}

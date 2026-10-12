@@ -2,7 +2,9 @@
 
 A DOE varies numeric entries of the job form - filler content, particle size,
 aspect ratio, interfacial resistance, voxel size, a material property - over
-ranges and produces one complete form per case. The cases are ordinary runs,
+ranges and produces one complete form per case. "mix.<i>" is the share of
+phase i in the filler (% of the filler) with the total filler content kept:
+the other fillers take the rest in their own proportions. The cases are ordinary runs,
 so every result, figure and report of a DOE case is the same as for a case
 entered by hand.
 
@@ -115,11 +117,61 @@ def expand(parameters, design="full", samples=12, seed=1):
     return out
 
 
+def _fillers(form):
+    """Indices of the filler phases (solid particles, not pores or networks)."""
+    out = []
+    for k, ph in enumerate(form.get("phases") or []):
+        props = ph.get("props") or {}
+        if ph.get("shape") == "network" or (props.get("E") is not None and float(props["E"]) <= 0):
+            continue
+        out.append(k)
+    return out
+
+
+def filler_share(form, i):
+    """Share of phase i in the filler content (%), or None."""
+    fill = _fillers(form)
+    if i not in fill or len(fill) < 2:
+        return None
+    vals = [float(get_path(form, f"phases.{k}.fraction.value") or 0.0) for k in fill]
+    tot = sum(vals)
+    return 100.0 * vals[fill.index(i)] / tot if tot > 0 else None
+
+
+def set_filler_share(form, i, share):
+    """Phase i takes `share` % of the filler; the total filler content stays
+    and the other fillers share the rest in their present proportions."""
+    fill = _fillers(form)
+    if i not in fill or len(fill) < 2:
+        raise ValueError(f"Phase {i + 1} is not one of two or more fillers; its share cannot be set")
+    bases = {(form["phases"][k].get("fraction") or {}).get("basis", "vol") for k in fill}
+    if len(bases) > 1:
+        raise ValueError("A filler share needs every filler content on the same basis (all vol% or all wt%)")
+    share = float(share)
+    if not 0.0 <= share <= 100.0:
+        raise ValueError(f"A share of the filler must lie between 0 and 100 % ({share:g})")
+    vals = {k: float(form["phases"][k]["fraction"]["value"]) for k in fill}
+    tot = sum(vals.values())
+    others = [k for k in fill if k != i]
+    rest_old = sum(vals[k] for k in others)
+    new_i = tot * share / 100.0
+    form["phases"][i]["fraction"]["value"] = round(new_i, 9)
+    for k in others:
+        w = vals[k] / rest_old if rest_old > 0 else 1.0 / len(others)
+        form["phases"][k]["fraction"]["value"] = round((tot - new_i) * w, 9)
+
+
 def apply_case(base_form, case, index=None):
     """Complete form of one case (the base form with the parameters set)."""
     form = copy.deepcopy(base_form)
+    mix = []
     for path, value in case["values"].items():
-        set_path(form, path, value)
+        if path.startswith("mix."):
+            mix.append((int(path.split(".")[1]), value))
+        else:
+            set_path(form, path, value)
+    for i, value in mix:                       # after the contents themselves
+        set_filler_share(form, i, value)
     base_name = (base_form.get("name") or "DOE case").strip()
     form["name"] = f"{base_name} · {case['label']}" if case.get("label") else base_name
     if index is not None:
@@ -142,6 +194,12 @@ def parameter_catalogue(form):
         {"path": "matrix.props.E", "label": "Matrix Young's modulus", "unit": "GPa", "group": "Matrix"},
         {"path": "matrix.props.eps_r", "label": "Matrix permittivity", "unit": "-", "group": "Matrix"},
     ]
+    for i in _fillers(form):
+        sh = filler_share(form, i)
+        if sh is not None:
+            name = form["phases"][i].get("name") or f"Phase {i+1}"
+            out.append({"path": f"mix.{i}", "label": f"{name}: share of the filler (total kept)", "unit": "% of filler",
+                        "group": "Filler mix", "current": sh})
     for i, ph in enumerate(form.get("phases") or []):
         name = ph.get("name") or f"Phase {i+1}"
         g = f"{name}"
@@ -176,5 +234,6 @@ def parameter_catalogue(form):
             {"path": f"phases.{i}.props.E", "label": f"{name}: Young's modulus", "unit": "GPa", "group": g},
         ]
     for p in out:
-        p["current"] = get_path(form, p["path"])
+        if not p["path"].startswith("mix."):
+            p["current"] = get_path(form, p["path"])
     return out

@@ -495,6 +495,60 @@ def t_dem_kd():
     return msg + "; no NVIDIA GPU here - the GPU comparison was skipped"
 
 
+@check("Particle dynamics of other shapes: one-sphere rigid particles reproduce the spheres; for cubes the "
+       "dissipated power equals the stress work (rigid multi-sphere particles)", quick=False)
+def t_dem_rigid():
+    # (1) the rigid-particle kernels with every particle one sphere at its
+    # centre are the sphere kernels: the same start sheared the same way
+    # gives the same viscosity (to the CG tolerance). (2) Cubes as rigid
+    # clumps of spheres, lubrication only: the power the particles dissipate
+    # (pair films and drag) must equal the shear stress times the rate -
+    # this holds only if the forces, the torques about the particle centres
+    # and the stress from the centre-to-centre vectors are consistent.
+    from mpsim.solvers import suspension as SU
+    from mpsim import shapes as SH
+    SU.init_backend("cpu")
+    rng = np.random.default_rng(3)
+    r = np.clip(rng.lognormal(0, 0.15, 120), 0.6, 1.5)
+    r /= r.max()
+    s1 = SU.Suspension(r, 0.45, seed=4, backend="cpu", mu_f=0.5)
+    s1.pack()
+    x0 = s1.K["x"].to_numpy()
+    e1 = np.asarray(s1.run(0.2, every=0.02)["eta"])
+    SU.release()
+    n = len(r)
+    s2 = SU.RigidSuspension(np.zeros((n, 3)), r, np.arange(n), x0, np.tile(np.eye(3), (n, 1, 1)), r, s1.L, 0.45,
+                            backend="cpu", mu_f=0.5)
+    s2.pack()
+    e2 = np.asarray(s2.run(0.2, every=0.02)["eta"])
+    SU.release()
+    m = min(len(e1), len(e2))
+    d12 = float(np.max(np.abs(e1[:m] - e2[:m]) / e1[:m]))
+    expect(d12 < 1e-3, f"one-sphere rigid particles differ from spheres by {d12:.1e}")
+    q, rq = SH.clump_template(4, np.array([1.0, 1.0, 1.0, 0, 0, 0]), *SH.EMPTY_PLANES, max_spheres=40, coverage=0.98)
+    nb = 60
+    bodies = {"templates": [(q * 1e-6, rq * 1e-6)], "tpl": np.zeros(nb, int), "scale": np.ones(nb),
+              "rot": SH.sample_rotations(nb, "iso", 0, rng), "rotmode": np.zeros(nb, int),
+              "circ": np.full(nb, math.sqrt(3) * 1e-6), "vol": np.full(nb, 8e-18), "area": np.full(nb, 24e-12),
+              "phase": np.zeros(nb, int)}
+    # packed with a 20 nm layer that is then taken off: no contact, films only
+    rig = SU.pack_clumps(bodies, 0.40, bound_m=2e-8, seed=2)
+    s3 = SU.RigidSuspension(rig["mq"], rig["mr"] - 2e-8 / rig["a0"], rig["mb"], rig["X"], rig["Rot"], rig["a_eq"],
+                            rig["L"], 0.40, intrinsic=3.1, backend="cpu", mu_f=0.0)
+    s3.neighbours()
+    s3.K["geometry"](1e-3)
+    s3.solve(tol=1e-10, maxit=20000)
+    s3.K["stress"]()
+    sig = s3.K["sig"].to_numpy()
+    diss = s3.K["dissipation"]()
+    SU.release()
+    gap = abs(sig[0] - diss) / diss
+    expect(sig[2] == 0, f"{int(sig[2])} contacts in a contact-free start")
+    expect(gap < 5e-3, f"stress work {sig[0]:.5g} against dissipation {diss:.5g} ({gap:.1e})")
+    return (f"one-sphere particles = spheres to {d12:.1e}; 60 cubes of {len(rq)} spheres: dissipation = stress work "
+            f"to {gap:.1e} (the films' gaps the only difference)")
+
+
 @check("Viscosity closed forms: Krieger-Dougherty and Maron-Pierce limits, intrinsic viscosity of rods and discs; the particle-dynamics flow curve")
 def t_visc_forms():
     from mpsim.solvers import viscosity as VI
@@ -1282,6 +1336,101 @@ def t_doe():
     expect(form["phases"][0]["fraction"]["value"] == 50 and form["phases"][0]["size"]["d"] == 5, f"applied {form}")
     expect(base["phases"][0]["fraction"]["value"] == 20, "the base form was modified")
     return f"full {len(full)}, OAT {len(oat)}, LHS {len(lhs)} cases; last case '{full[-1]['label']}'"
+
+
+@check("Anisotropic conduction: a turned tensor is returned exactly, a tilted laminate converges to the laminate "
+       "formula, energy balance exact, an isotropic tensor = the plain solve")
+def t_cond_aniso():
+    from mpsim.solvers import conduction as CD
+
+    def rot(ax, deg):
+        a = math.radians(deg)
+        c, s = math.cos(a), math.sin(a)
+        return (np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]]) if ax == "y"
+                else np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]))
+    R = rot("z", 30) @ rot("y", 40)
+    Kw = R @ np.diag([300.0, 300.0, 30.0]) @ R.T
+    lab = np.ones((10, 10, 10), np.uint8)
+    aid = np.zeros(lab.shape, np.int32)
+    cols = np.column_stack([CD.solve_direction(lab, [1.0, 100.0], d, tol=1e-12, aniso={"aid": aid, "K": Kw[None]})["column"]
+                            for d in range(3)])
+    e_hom = float(np.abs(cols - Kw).max() / np.abs(Kw).max())
+    expect(e_hom < 1e-10, f"homogeneous turned tensor: error {e_hom:.1e}")
+    # laminate normal to z: half the turned tensor, half resin 0.2
+    Kr = 0.2 * np.eye(3)
+    kzz = 1.0 / (0.5 / Kw[2, 2] + 0.5 / Kr[2, 2])
+    ref = np.zeros((3, 3))
+    ref[2, 2] = kzz
+    for a in range(2):
+        ref[2, a] = ref[a, 2] = kzz * 0.5 * (Kw[a, 2] / Kw[2, 2] + Kr[a, 2] / Kr[2, 2])
+        for b in range(2):
+            ref[a, b] = (0.5 * (Kw[a, b] - Kw[a, 2] * Kw[2, b] / Kw[2, 2]) + 0.5 * (Kr[a, b] - Kr[a, 2] * Kr[2, b] / Kr[2, 2])
+                         + kzz * 0.5 * (Kw[a, 2] / Kw[2, 2] + Kr[a, 2] / Kr[2, 2]) * 0.5 * (Kw[2, b] / Kw[2, 2] + Kr[2, b] / Kr[2, 2]))
+    errs, gapmax = [], 0.0
+    for t in (8, 16):
+        lab = np.zeros((4, 4, 2 * t), np.uint8)
+        lab[:, :, :t] = 1
+        aid = np.full(lab.shape, -1, np.int32)
+        aid[:, :, :t] = 0
+        rs = [CD.solve_direction(lab, [0.2, 100.0], d, tol=1e-12, aniso={"aid": aid, "K": Kw[None]}) for d in range(3)]
+        cols = np.column_stack([r_["column"] for r_ in rs])
+        errs.append(float(np.abs(cols - ref).max() / np.abs(ref).max()))
+        gapmax = max(gapmax, max(r_["hill_mandel_gap"] for r_ in rs))
+        expect(abs(cols[0, 2] - cols[2, 0]) < 1e-9 * abs(ref).max(), "the effective tensor is not symmetric")
+    expect(errs[1] < 0.035 and errs[1] < 0.6 * errs[0], f"laminate errors {errs} (first order expected)")
+    expect(gapmax < 1e-9, f"energy balance gap {gapmax:.1e}")
+    lab = _sphere_lab(24, 6.0)
+    aid = np.where(lab > 0, 0, -1).astype(np.int32)
+    rp = np.array([[0, 0.3], [0.3, 0]])
+    plain = CD.solve_direction(lab, [0.2, 30.0], 0, tol=1e-10, rpair=rp)["k_eff"]
+    iso = CD.solve_direction(lab, [0.2, 30.0], 0, tol=1e-10, rpair=rp, aniso={"aid": aid, "K": (30.0 * np.eye(3))[None]})["k_eff"]
+    expect(abs(iso / plain - 1) < 1e-9, f"isotropic tensor {iso} against the plain solve {plain}")
+    return (f"turned tensor exact ({e_hom:.0e}); laminate error {100 * errs[0]:.1f} % at 8 cells, {100 * errs[1]:.1f} % at 16 "
+            f"(first order); energy balance {gapmax:.0e}; isotropic tensor = plain solve")
+
+
+@check("DOE: a filler's share with the total kept, a fixed grid for every case")
+def t_doe_mix_grid():
+    from mpsim import doe as DOE
+    from web.doe import DOEStore
+    base = {"name": "mix", "phases": [
+        {"name": "A", "shape": "sphere", "props": {"E": 380}, "fraction": {"value": 41.25, "basis": "vol"}, "size": {"d": 0.25}},
+        {"name": "B", "shape": "cuboid", "props": {"E": 100}, "fraction": {"value": 13.75, "basis": "vol"}, "size": {"d": 2}},
+        {"name": "pores", "shape": "sphere", "props": {"E": 0}, "fraction": {"value": 2.0, "basis": "vol"}, "size": {"d": 1}}],
+        "rve": {"auto": True}}
+    cat = {c["path"]: c for c in DOE.parameter_catalogue(base)}
+    expect("mix.1" in cat and abs(cat["mix.1"]["current"] - 25.0) < 1e-9, f"catalogue share {cat.get('mix.1')}")
+    cases = DOE.expand([{"path": "mix.1", "label": "B share", "min": 5, "max": 50, "steps": 10}], "full")
+    shares = []
+    for c in cases:
+        f = DOE.apply_case(base, c)
+        a, b = f["phases"][0]["fraction"]["value"], f["phases"][1]["fraction"]["value"]
+        expect(abs(a + b - 55.0) < 1e-9 and f["phases"][2]["fraction"]["value"] == 2.0, f"total {a + b}, pores changed")
+        shares.append(round(100 * b / (a + b), 6))
+    expect(shares == [5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0], f"shares {shares}")
+
+    class _Job:
+        def __init__(self, i):
+            self.id = f"j{i}"
+
+    class _Queue:
+        def __init__(self):
+            self.forms = []
+
+        def submit(self, owner, form, runs_dir, meta, folder=None, case=""):
+            self.forms.append(form)
+            return _Job(len(self.forms))
+    with tempfile.TemporaryDirectory() as d:
+        st, q = DOEStore(d), _Queue()
+        study = st.create(None, {"form": base, "parameters": [{"path": "mix.1", "min": 5, "max": 50, "steps": 3}],
+                                 "grid": {"mode": "fixed", "L_um": 4.0, "voxel_um": 0.025}}, q, d, lambda f: f)
+        rv = [f["rve"] for f in q.forms]
+        expect(all(r_["auto"] is False and r_["L_um"] == 4.0 and r_["voxel_um"] == 0.025 for r_ in rv), f"grids {rv}")
+        expect(study["grid"]["N"] == 160, f"grid {study['grid']}")
+        q2 = _Queue()
+        st.create(None, {"form": base, "parameters": [{"path": "mix.1", "min": 5, "max": 50, "steps": 2}]}, q2, d, lambda f: f)
+        expect(all(f["rve"].get("auto") is True for f in q2.forms), "adaptive: the cases' own plan")
+    return f"shares {shares[0]:g}-{shares[-1]:g} % of 55 vol% with the total kept; fixed grid 160³ on every case"
 
 
 @check("EMI complex homogenisation: complex laminates exact, real values = real solver, dilute spheres = Maxwell-Garnett")

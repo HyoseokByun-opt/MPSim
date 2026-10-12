@@ -465,6 +465,71 @@ def clump_template(code, P, planes, nfaces, max_spheres=40, coverage=0.975, res=
     return np.array(cen), np.array(rad)
 
 
+def dem_template(code, P, planes, nfaces, max_spheres=256):
+    """Spheres whose union is the particle, for the particle dynamics: its
+    lubrication and contacts act between them (multi-sphere particles).
+
+    Compact shapes (longest over shortest extent below 2) and the wire-like
+    ones (spherocylinder, helix) use the packing template, clump_template.
+    Flat and slender shapes - platelets, flakes, rods, fibres - are spheres
+    of half their thickness on a lattice through their middle, one radius
+    apart (the surface then undulates by 13 % of the radius); when that
+    would take more than max_spheres the lattice widens, up to touching
+    beads two radii apart. A cuboid's lattice reaches its edges exactly;
+    other shapes take the deepest point of every lattice cell of their
+    middle region, with the depth there as the radius."""
+    if code == 0:
+        return np.zeros((1, 3)), np.array([P[0]])
+    hx, hy, hz = local_half_extents(code, P, planes, nfaces)
+    half = np.array([hx, hy, hz], float)
+    t = float(half.min())
+    if code in (3, 7) or float(half.max()) < 2.0 * t:
+        return clump_template(code, P, planes, nfaces, max_spheres=40, coverage=0.98)
+    if code == 4 or code == 2:
+        if code == 2:                                     # cylinder: a disc or a rod
+            r = min(P[0], P[1])
+            span = np.array([P[0] - r, P[0] - r, P[1] - r]) if P[1] < P[0] else np.array([0.0, 0.0, P[1] - r])
+        else:
+            r = t
+            span = np.maximum(half - r, 0.0)
+        sp = r
+        while True:
+            n = [max(1, int(round(2.0 * e / sp)) + 1) if e > 1e-12 * r else 1 for e in span]
+            if np.prod(n) <= max_spheres or sp >= 2.0 * r:
+                break
+            sp *= 1.05
+        ax = [np.linspace(-e, e, k) if k > 1 else np.zeros(1) for e, k in zip(span, n)]
+        X, Y, Z = np.meshgrid(*ax, indexing="ij")
+        pts = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
+        if code == 2 and P[1] < P[0]:
+            pts = pts[pts[:, 0] ** 2 + pts[:, 1] ** 2 <= (P[0] - r) ** 2 + 1e-12 * r * r]
+        return pts, np.full(len(pts), r)
+    # any other flat or slender shape: the deepest point of every lattice cell
+    from scipy import ndimage
+    h = t / 4.0
+    ax = [np.arange(-e + 0.5 * h, e, h) for e in half]
+    X, Y, Z = np.meshgrid(*ax, indexing="ij")
+    ins = _inside_grid(code, X.ravel(), Y.ravel(), Z.ravel(), P, planes, nfaces).reshape(X.shape)
+    if not ins.any():
+        return clump_template(code, P, planes, nfaces, max_spheres=40, coverage=0.98)
+    edt = ndimage.distance_transform_edt(np.pad(ins, 1))[1:-1, 1:-1, 1:-1] * h
+    dmax = float(edt.max())
+    mid = ins & (edt >= 0.5 * dmax)
+    pts = np.column_stack([X[mid], Y[mid], Z[mid]])
+    dep = edt[mid]
+    sp = dmax
+    while True:
+        cell = np.floor((pts - pts.min(axis=0)) / sp).astype(np.int64)
+        key = (cell[:, 0] * (cell[:, 1].max() + 1) + cell[:, 1]) * (cell[:, 2].max() + 1) + cell[:, 2]
+        if len(np.unique(key)) <= max_spheres or sp >= 2.0 * dmax:
+            break
+        sp *= 1.05
+    order = np.lexsort((-dep, key))
+    first = np.r_[True, key[order][1:] != key[order][:-1]]
+    pick = order[first]
+    return pts[pick], dep[pick]
+
+
 def _inside_grid(code, x, y, z, P, planes, nfaces):
     out = np.zeros(len(x), bool)
     _inside_many(code, x, y, z, P, planes, nfaces, out)

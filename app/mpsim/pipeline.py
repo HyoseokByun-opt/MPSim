@@ -42,6 +42,7 @@ from . import poro as PO
 from . import rve as R
 from . import spec as S
 from . import live as LV
+from . import materials as M
 from . import visual as V
 from .solvers import complex_cond as CC
 from .solvers import conduction as CD
@@ -187,7 +188,11 @@ def _generator_phases(spec):
 #    target size; before, they could stop short of it on the clock)
 # 3: no particle overlaps or is trimmed (v5.0.1): the clump repair pushes and
 #    turns, shrinks what it cannot free; sphere packings are separated exactly
-STRUCTURE_VERSION = 3
+# 4: flat and slender particles (platelets, rods) pack as a lattice of spheres
+#    of half their thickness through their whole body (v5.2): the 40-sphere
+#    template covered a thin platelet in patches, and the exact-shape repair
+#    then shrank nearly every particle (alumina + BN at 55 vol% reached 31.5)
+STRUCTURE_VERSION = 4
 
 
 def structure_key(gen_phases, plan, contacts, seed, want_cf):
@@ -586,32 +591,193 @@ def _moisture_entry(spec, opts, table, realisations, results_first, checks):
 def _dem_radii(spec, solid, n_target, seed=11):
     """Sphere radii (m) and phase of each particle for the particle dynamics:
     every phase in proportion to its volume fraction, sizes drawn from its
-    distribution. A size spread of at least CV 0.1 is used - equal spheres
-    order into sliding layers under shear, which no real powder does. The
-    largest phase gets at least 40 particles, so the box is several of its
-    diameters wide."""
+    distribution; a particle of another shape has the radius of the sphere
+    of its volume (_dem_bodies gives its shape). A size spread of at least
+    CV 0.1 is used - equal spheres order into sliding layers under shear,
+    which no real powder does. The largest phase gets at least 40
+    particles, so the box is several of its diameters wide, and the box is
+    at least twice as wide as the longest particle (a platelet or a rod
+    would otherwise meet its own periodic image)."""
     rng = np.random.default_rng(seed)
     phases = [spec["phases"][i] for i in solid]
-    dists, mean_v = [], []
+    dists, mean_v, d_eq, ext = [], [], [], []
     for p in phases:
         dd = dict(p.get("dist") or {})
         cv = float(dd.get("cv", 0.0) or 0.0) if dd.get("type") == "lognormal" else 0.0
         dd = {"type": "lognormal", "cv": max(cv, 0.1)}
         dists.append(dd)
+        if p["shape"] == "sphere":
+            d_eq.append(float(p["size_um"]["d"]))
+            ext.append(0.0)                         # the 40 largest set the box
+        else:
+            st = G.phase_size_stats(p["shape"], p["size_um"], dd)
+            d_eq.append(float(st["eqd_median"]))
+            ext.append(float(st["extent_max"]))
         sc = G.sample_scales(20000, dd, rng)
-        mean_v.append(float(np.mean((p["size_um"]["d"] * sc) ** 3)))
+        mean_v.append(float(np.mean((d_eq[-1] * sc) ** 3)))
     vf = np.array([p["vf"] for p in phases], float)
     share = vf / np.array(mean_v)
     share = share / share.sum()
     counts = np.maximum(1, np.round(share * n_target)).astype(int)
-    big = int(np.argmax([p["size_um"]["d"] for p in phases]))
+    big = int(np.argmax(d_eq))
     if counts[big] < 40:
         counts = np.maximum(1, np.round(counts * 40.0 / counts[big])).astype(int)
+    box = (float(np.sum(counts * np.pi / 6.0 * np.array(mean_v))) / float(vf.sum())) ** (1.0 / 3.0)
+    if box < 2.0 * max(ext):
+        counts = np.maximum(1, np.round(counts * (2.0 * max(ext) / box) ** 3)).astype(int)
     radii, owner = [], []
     for k, (p, dd) in enumerate(zip(phases, dists)):
-        radii.append(0.5e-6 * p["size_um"]["d"] * G.sample_scales(int(counts[k]), dd, rng))
+        radii.append(0.5e-6 * d_eq[k] * G.sample_scales(int(counts[k]), dd, rng))
         owner.append(np.full(int(counts[k]), k))
     return np.concatenate(radii), np.concatenate(owner)
+
+
+def _dem_bodies(spec, solid, radii, owner, max_spheres=256, seed=11):
+    """The particles of the particle dynamics that are not spheres (None when
+    all are): each a rigid clump of overlapping spheres (shapes.dem_template:
+    the packing template for compact shapes, a lattice of spheres of half
+    the thickness through flat and slender ones, at most max_spheres),
+    scaled to its volume-equivalent radius from _dem_radii and turned as
+    its phase's orientation says. The format of
+    solvers.suspension.pack_clumps."""
+    from . import shapes as SH
+    phs = [spec["phases"][i] for i in solid]
+    if all(p["shape"] == "sphere" for p in phs):
+        return None
+    rng = np.random.default_rng(seed + 1)
+    nominal, planes, nfaces, meta = GEN.phase_templates(phs, rng)
+    nb = len(radii)
+    tpl = np.zeros(nb, np.int64)
+    scale = np.ones(nb)
+    vol, area, circ = np.zeros(nb), np.zeros(nb), np.zeros(nb)
+    rot = np.zeros((nb, 3, 3))
+    rotmode = np.full(nb, -1, np.int64)
+    templates, info = [], []
+    for k, p in enumerate(phs):
+        sel = np.flatnonzero(owner == k)
+        if not len(sel):
+            continue
+        nom = nominal[k]
+        code = int(nom["code"])
+        ids = list(nom.get("poly_ids") or [0])
+        var = (rng.choice(ids, len(sel)) if code == 6 and len(ids) > 1
+               else np.full(len(sel), ids[0] if code == 6 else -1))
+        nsph = []
+        for t_id in np.unique(var):
+            Pn = nom["P"].copy()
+            if code == 6:
+                Pn[1] = t_id
+            q, r = SH.dem_template(code, Pn, planes, nfaces, max_spheres)
+            v1 = float(SH.volume(code, Pn, meta))
+            a1 = float(SH.surface(code, Pn, meta))
+            req1 = (3.0 * v1 / (4.0 * math.pi)) ** (1.0 / 3.0) * 1e-6
+            m = sel[var == t_id]
+            tpl[m] = len(templates)
+            templates.append((np.asarray(q, float) * 1e-6, np.asarray(r, float) * 1e-6))
+            scale[m] = radii[m] / req1
+            vol[m] = v1 * 1e-18 * scale[m] ** 3
+            area[m] = a1 * 1e-12 * scale[m] ** 2
+            circ[m] = float(SH.circumradius(code, Pn)) * 1e-6
+            nsph.append(len(r))
+        ori = p.get("orientation") or {}
+        mode, spread = ori.get("mode", "iso"), float(ori.get("spread_deg", 0.0) or 0.0)
+        rot[sel] = SH.sample_rotations(len(sel), mode, spread, rng)
+        rotmode[sel] = -1 if code == 0 else GEN._rotmode(mode, spread)
+        info.append({"phase": p["name"], "shape": p["shape"], "spheres": int(max(nsph)), "count": int(len(sel))})
+    return {"templates": templates, "tpl": tpl, "scale": scale, "rot": rot, "rotmode": rotmode, "circ": circ,
+            "vol": vol, "area": area, "phase": np.asarray(owner, np.int64), "info": info}
+
+
+def _dem_from_rve(spec, solid, ginfo, max_spheres=256):
+    """The particle dynamics' particles taken from a generated RVE - its
+    particles where they are, with their sizes and orientations - so that
+    particles of other shapes are not packed a second time (a 4 µm box of
+    alumina and BN platelets is 150,000 member spheres to pack). (radii,
+    owner, bodies) as _dem_radii and _dem_bodies give them, bodies with
+    'X' and 'box_m'; None when the RVE cannot serve: spheres only (their own
+    packing is quick and validated), a film, shells, or a box shorter than
+    1.9 times the longest particle."""
+    from . import shapes as SH
+    if not ginfo or ginfo.get("film") or not ginfo.get("particles"):
+        return None
+    phs = [spec["phases"][i] for i in solid]
+    if all(p["shape"] == "sphere" for p in phs) or any(p.get("shell") for p in phs):
+        return None
+    parts = ginfo["particles"]
+    pha = np.asarray(parts["phase"])
+    sel = np.flatnonzero(np.isin(pha, solid))
+    if not len(sel):
+        return None
+    codes, Pp, Rp, Cp = (np.asarray(parts[k])[sel] for k in ("codes", "P", "R", "centers"))
+    L_um = float(ginfo["L_um"])
+    ext = max(2.0 * SH.circumradius(int(c), P) for c, P in zip(codes, Pp))
+    if L_um < 1.9 * ext:
+        return None
+    planes, nfaces = ginfo["planes"]
+    meta = ginfo.get("poly_meta") or []
+    kmap = {i: k for k, i in enumerate(solid)}
+    owner = np.array([kmap[int(p)] for p in pha[sel]], np.int64)
+    nominal, _, _, _ = GEN.phase_templates([dict(p, size_um=p["size_um"]) for p in phs], np.random.default_rng(1))
+    nb = len(sel)
+    tpl = np.zeros(nb, np.int64)
+    scale, vol, area, circ = np.ones(nb), np.zeros(nb), np.zeros(nb), np.zeros(nb)
+    rotmode = np.full(nb, -1, np.int64)
+    templates, tkey, info = [], {}, []
+    for j in range(nb):
+        k, code, P = int(owner[j]), int(codes[j]), Pp[j]
+        Pn = nominal[k]["P"].copy()
+        t_id = int(P[1]) if code == 6 else -1
+        if code == 6:
+            Pn[1] = t_id
+        key = (k, t_id)
+        if key not in tkey:
+            q, r = SH.dem_template(code, Pn, planes, nfaces, max_spheres)
+            tkey[key] = len(templates)
+            templates.append((np.asarray(q, float) * 1e-6, np.asarray(r, float) * 1e-6))
+        tpl[j] = tkey[key]
+        scale[j] = float(P[0]) / float(Pn[0])
+        vol[j] = float(SH.volume(code, P, meta)) * 1e-18
+        area[j] = float(SH.surface(code, P, meta)) * 1e-12
+        circ[j] = float(SH.circumradius(code, Pn)) * 1e-6
+        if code != 0:
+            ori = phs[k].get("orientation") or {}
+            rotmode[j] = GEN._rotmode(ori.get("mode", "iso"), float(ori.get("spread_deg", 0.0) or 0.0))
+    for k, p in enumerate(phs):
+        m = owner == k
+        if m.any():
+            info.append({"phase": p["name"], "shape": p["shape"], "count": int(m.sum()),
+                         "spheres": int(max(len(templates[t][1]) for t in np.unique(tpl[m])))})
+    radii = (3.0 * vol / (4.0 * math.pi)) ** (1.0 / 3.0)
+    bodies = {"templates": templates, "tpl": tpl, "scale": scale, "rot": np.asarray(Rp, float), "rotmode": rotmode,
+              "circ": circ, "vol": vol, "area": area, "phase": owner, "info": info,
+              "X": np.mod(np.asarray(Cp, float), L_um) * 1e-6, "box_m": L_um * 1e-6}
+    return radii, owner, bodies
+
+
+# [eta] of shapes without a closed form in viscosity.intrinsic_viscosity:
+# cubes 3.1 (Mallavajula, Archer and Koch, Phys. Rev. E 88 (2013) 052302)
+_ETA_SHAPE = {"cube": 3.1}
+
+
+def dem_intrinsic(spec, solid, given=None):
+    """[eta] of the filler for the particle dynamics' own stresslet of its
+    particles (volume-weighted), and where it comes from: the closed forms
+    (Einstein, Simha, cubes), else `given` (the analysis' dilute RVE of the
+    same particles), else the sphere value."""
+    w, etas = [], []
+    for i in solid:
+        p = spec["phases"][i]
+        e = None
+        if p["shape"] in ("sphere", "spheroid", "cylinder", "spherocylinder"):
+            e = VI.intrinsic_viscosity(p["shape"], G.aspect_ratio(p["shape"], p["size_um"]))
+        etas.append(e if e is not None else _ETA_SHAPE.get(p["shape"]))
+        w.append(float(p["vf"]))
+    w = np.asarray(w)
+    if all(e is not None for e in etas):
+        return float(np.dot(w, etas) / w.sum()), "closed form"
+    if given is not None:
+        return float(given), "dilute RVE"
+    return 2.5, "sphere value (no closed form for this shape here)"
 
 
 def dem_hamaker(spec, solid, do):
@@ -637,19 +803,47 @@ def dem_hamaker(spec, solid, do):
     return hks, hk_basis
 
 
-def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=None):
-    """The relative viscosity of the spheres from the particle dynamics at
-    the reference shear rate (solvers/suspension.py)."""
+def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=None, eta_int=None, start=None):
+    """The relative viscosity of the particles from the particle dynamics at
+    the reference shear rate (solvers/suspension.py): spheres, and rigid
+    multi-sphere particles for the other shapes. eta_int: the intrinsic
+    viscosity of the analysis' dilute RVE, for shapes without a closed form.
+    start: the generated RVE's info - particles of other shapes then start
+    where the RVE has them (_dem_from_rve) instead of being packed again."""
     from .solvers import suspension as SU
     do = vo["dem"]
-    radii, owner = _dem_radii(spec, solid, do["n"])
+    rve = None
+    if start is not None:
+        try:
+            rve = _dem_from_rve(spec, solid, start)
+        except Exception as e:                                           # noqa: BLE001
+            log(f"    (the RVE's particles could not be taken over: {e}; the particle dynamics packs its own)")
+    if rve is not None:
+        radii, owner, bodies = rve
+        phi = float(np.sum(bodies["vol"]) / bodies["box_m"] ** 3)
+        log(f"    the particle dynamics starts from the RVE's own {len(radii)} particles (box {1e6 * bodies['box_m']:.4g} µm, "
+            f"φ {phi:.3f}) - no second packing")
+    else:
+        radii, owner = _dem_radii(spec, solid, do["n"])
+        bodies = _dem_bodies(spec, solid, radii, owner)
+    eta_b = None
+    if bodies is not None:
+        bodies["intrinsic"], eta_b = dem_intrinsic(spec, solid, eta_int)
+        for b_ in bodies["info"]:
+            if b_["shape"] != "sphere":
+                log(f"    {b_['phase']}: {b_['count']} rigid {b_['shape']} particles of {b_['spheres']} spheres each "
+                    f"(multi-sphere)")
+        log(f"    their own stresslet: [η] = {bodies['intrinsic']:.3g} ({eta_b})")
     hks, hk_basis = dem_hamaker(spec, solid, do)
     gd = vo["gd_ref"]
     mu_res = float(VI.matrix_flow(vo["model"], [gd])[0])
     tot = do["strain"]
     stage_name = "Viscosity · particle dynamics"
     dev = SU.device_text(do["backend"], log)
-    detail = (f"{len(radii)} spheres sheared in the resin at {gd:g} 1/s on {dev} - lubrication, contacts with "
+    what = (f"{len(radii)} spheres" if bodies is None else
+            f"{len(radii)} particles ({sum(len(bodies['templates'][t][1]) for t in bodies['tpl'])} spheres in rigid "
+            f"clumps)")
+    detail = (f"{what} sheared in the resin at {gd:g} 1/s on {dev} - lubrication, contacts with "
               f"friction {do['mu_f']:g}, van der Waals")
     prog.stage(stage_name, detail, units=3.0)
     last = {"t": 0.0, "s": -1.0}
@@ -664,14 +858,15 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
             last["s"] = math.floor(strain)
             log(f"    strain {strain:.2f}: μr {eta:.4g} (CG {its} iterations)")
     live = _dem_slot("dem", f"Particle dynamics, {gd:g} 1/s", spec, solid, owner, viewer)
-    log(f"    particle dynamics: {len(radii)} spheres, φ {phi:.3f}, resin {mu_res:.4g} Pa·s at {gd:g} 1/s, "
+    log(f"    particle dynamics: {what}, φ {phi:.3f}, resin {mu_res:.4g} Pa·s at {gd:g} 1/s, "
         f"roughness {do['roughness_nm']:g} nm, closest approach {do['hmin_nm']:g} nm, friction {do['mu_f']:g}, "
         f"bound layer {do['bound_nm']:g} nm, adhesion {do['adhesion_mJ_m2']:g} mJ/m², "
         f"Hamaker " + ", ".join(f"{spec['phases'][i]['name']} {a:.3g} J" for i, a in zip(solid, hks)))
     out = SU.shear_viscosity(radii, phi, mu_res, gd, roughness_m=do["roughness_nm"] * 1e-9,
                              hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
                              strain=tot, backend=do["backend"], log=log, progress=cb, should_stop=should_stop,
-                             bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, live=live)
+                             bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, live=live,
+                             bodies=bodies)
     if live is not None:
         live.done(eta=out["eta_mean"])
     prog.end()
@@ -686,7 +881,9 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
             lb = next((lb_ for lb_ in labs if lb_.get("name") == nm), None)
             cols.append(lb["color"] if lb else V.PHASE_COLORS[(k + 1) % len(V.PHASE_COLORS)])
         try:
-            viewer.add_particles_anim(radii * 1e6, owner, out["frames_um"], out["frames_speed"], out["box_um"],
+            # every sphere drawn - the members of a rigid particle with its phase
+            viewer.add_particles_anim(out["anim_radii_m"] * 1e6, owner[out["anim_body"]], out["frames_um"],
+                                      out["frames_speed"], out["box_um"],
                                       out["frame_strain"], [spec["phases"][i]["name"] for i in solid], cols,
                                       mu_r=out["eta_mean"])
             anim = True
@@ -709,12 +906,14 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
            "bound_nm": do["bound_nm"], "adhesion_mJ_m2": do["adhesion_mJ_m2"], "phi_effective": out["phi_effective"],
            "hamaker": [{"phase": spec["phases"][i]["name"], "J": a, "basis": b} for i, a, b in zip(solid, hks, hk_basis)],
            "d_um": [float(2e6 * radii[owner == k].mean()) for k in range(len(solid))],
-           "counts": [int((owner == k).sum()) for k in range(len(solid))], "anim": anim}
+           "counts": [int((owner == k).sum()) for k in range(len(solid))], "anim": anim,
+           "spheres": int(out.get("members") or len(radii)), "rigid": bodies["info"] if bodies is not None else None,
+           "intrinsic": float(out.get("intrinsic", 2.5)), "intrinsic_basis": eta_b or "Einstein (spheres)"}
     # ---- the flow curve: the same particles at other shear rates ---------
     res["rate_curve"] = None
     if do["rates"] > 0:
         res["rate_curve"], res["rate_note"] = _dem_rates(radii, owner, hks, phi, vo, do, mu_res, gd, res, log, event,
-                                                         prog, should_stop)
+                                                         prog, should_stop, bodies=bodies)
     log(f"    particle dynamics: μr {res['mu_r']:.4g} ± {res['se']:.2g} (strain {s0:g}-{tot:g}; lubrication "
         f"{res['eta_lub']:.3g}, contacts {res['eta_contact']:.3g}; {res['contacts_per_particle']:.2f} contacts per particle; "
         f"{out['backend']}, {out['seconds']:.0f} s)")
@@ -722,16 +921,14 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
 
 
 def dem_direct(spec, need):
-    """Viscosity alone, of spheres (no shells, no bubbles) above 35 vol%: the
-    particle dynamics gives the answer and packs its own spheres, so no voxel
-    RVE is needed at all - unless its resin flow is asked for."""
+    """Viscosity alone, of particles (no shells, no bubbles) above 35 vol%:
+    the particle dynamics gives the answer and packs its own particles, so
+    no voxel RVE is needed at all - unless its resin flow is asked for."""
     vo = spec["options"]["viscosity"]
     if set(need) != {"viscosity"} or not vo["dem"]["on"] or vo["rve_with_dem"]:
         return False
     solid = [ph for ph in spec["phases"] if not ph["void"] and ph["shape"] != G.NETWORK]
     if not solid or any(ph["void"] or ph.get("shell") for ph in spec["phases"]):
-        return False
-    if any(ph["shape"] != "sphere" for ph in solid):
         return False
     return float(sum(ph["vf"] for ph in solid)) > 0.35
 
@@ -745,9 +942,10 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     vo = opts["viscosity"]
     solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
     phi = float(sum(spec["phases"][i]["vf"] for i in solid))
-    why = f"spheres at {100 * phi:.0f} vol%"
+    sph = all(spec["phases"][i]["shape"] == "sphere" for i in solid)
+    why = f"{'spheres' if sph else 'particles'} at {100 * phi:.0f} vol%"
     prog.stage("Viscosity · no voxel RVE needed", f"the particle dynamics gives the answer ({why}) and packs its own "
-               f"spheres", units=0.5)
+               f"{'spheres' if sph else 'particles'}", units=0.5)
     prog.end()
     vf = [0.0] * len(table)
     for k, t in enumerate(table):
@@ -763,7 +961,23 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     prog.stage("Viscosity · maximum packing fraction", "random close packing of these particles", units=1.0)
     vx = dict(max_packing([dict(gen_phases[i], void=False) for i in solid], vo, log, should_stop))
     prog.end()
-    vx["eta"], vx["eta_basis"] = 2.5, "closed form"
+    vx["eta"], vx["eta_basis"] = dem_intrinsic(spec, solid)
+    if vx["eta_basis"] != "closed form" and vo["dilute_rve"]:
+        # another shape: [eta] from a dilute RVE of the same particles, as with an RVE
+        prog.stage("Viscosity · intrinsic viscosity", "dilute RVE of the same particles", units=1.0)
+        try:
+            import numba
+            vw = int(numba.get_num_threads())
+        except Exception:                                                # noqa: BLE001
+            vw = -1
+        try:
+            vx["eta"], vx["dilute"] = _dilute_eta([gen_phases[i] for i in solid], log, should_stop, vw)
+            vx["eta_basis"] = "dilute RVE"
+        except InterruptedError:
+            raise
+        except Exception as e:                                           # noqa: BLE001
+            log(f"    dilute RVE failed ({e}); [η] = {vx['eta']:.3g} is used")
+        prog.end()
     res["viscosity_extra"] = vx
     # the animation is the run's view: the player reads it from there
     vdir = os.path.join(out_dir, "view")
@@ -776,7 +990,8 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     dv = types.SimpleNamespace(dir=vdir, meta={"labels": labs, "built": time.time()})
     dv.add_particles_anim = lambda *a, **k: V.ViewWriter.add_particles_anim(dv, *a, **k)
     try:
-        res["viscosity_dem"] = _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, dv)
+        res["viscosity_dem"] = _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, dv,
+                                              eta_int=vx["eta"])
     except InterruptedError:
         raise
     except Exception as e:                                               # noqa: BLE001
@@ -788,7 +1003,7 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     return res, rinfo
 
 
-def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop, live_dir=None):
+def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop, live_dir=None, eta_int=None, start=None):
     """The particle dynamics in a process of its own (see _DemProcess): log
     lines, stage lines and the result go back through the queue; the live
     frames go to the run's live folder as here."""
@@ -810,7 +1025,7 @@ def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop, live_dir=None):
                 self.anim = (a, k)
         col = _Collect() if want_anim else None
         prog = Progress(event, 3.0 + float(vo["dem"]["rates"] or 0))
-        res = _dem_viscosity(spec, solid, phi, vo, log, event, prog, stop.is_set, col)
+        res = _dem_viscosity(spec, solid, phi, vo, log, event, prog, stop.is_set, col, eta_int=eta_int, start=start)
         q.put(("done", res, col.anim if col is not None else None))
     except InterruptedError:
         q.put(("stopped",))
@@ -826,7 +1041,7 @@ class _DemProcess:
     """The particle dynamics running on the GPU in its own process while this
     process solves the RVE flow on the CPU cores."""
 
-    def __init__(self, spec, solid, phi, vo, viewer, log):
+    def __init__(self, spec, solid, phi, vo, viewer, log, eta_int=None, start=None):
         import multiprocessing as mp
         ctx = mp.get_context("spawn")
         self.q = ctx.Queue()
@@ -837,7 +1052,7 @@ class _DemProcess:
         self.t_said = 0.0
         labels = viewer.meta.get("labels") if viewer is not None else None
         self.p = ctx.Process(target=_dem_child, args=(spec, solid, phi, vo, labels, viewer is not None, self.q,
-                                                      self.stop, _LIVE["dir"]), daemon=True)
+                                                      self.stop, _LIVE["dir"], eta_int, start), daemon=True)
         self.p.start()
         _LIVE_DEM.add(self)
 
@@ -913,6 +1128,14 @@ class _DemProcess:
         return res
 
 
+def _dem_start(ginfo):
+    """What the particle dynamics needs of a generated RVE (picklable for its
+    own process): the particle list, the polyhedron planes, the box."""
+    if not ginfo or not ginfo.get("particles"):
+        return None
+    return {k: ginfo.get(k) for k in ("particles", "planes", "poly_meta", "L_um", "film")}
+
+
 def _dem_slot(slot, name, spec, solid, owner, viewer):
     """The live-view slot of a particle-dynamics run (None without a live
     folder): the phase names, colours and the phase of every sphere."""
@@ -936,7 +1159,7 @@ def _dem_slot(slot, name, spec, solid, owner, viewer):
     return s
 
 
-def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, event, prog, should_stop):
+def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, event, prog, should_stop, bodies=None):
     """The particle dynamics at further shear rates, log-spaced over the
     flow curve's range, with the resin's viscosity at each rate. Returns the
     curve {gd, mu_r, se} (the reference rate included) and a note; None when
@@ -957,8 +1180,8 @@ def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, eve
     rates = [float(g) for g in rates if abs(math.log10(g / gd_ref)) > 0.15]
     pts = [(gd_ref, res_ref["mu_r"], res_ref["se"])]
     stage = "Viscosity · particle dynamics, flow curve"
-    prog.stage(stage, f"{len(rates)} further shear rates, {len(radii)} spheres each, on {SU.device_text(do['backend'])}",
-               units=float(len(rates)))
+    prog.stage(stage, f"{len(rates)} further shear rates, {len(radii)} {'spheres' if bodies is None else 'particles'} "
+               f"each, on {SU.device_text(do['backend'])}", units=float(len(rates)))
     for k, g in enumerate(rates):
         mu_g = float(VI.matrix_flow(vo["model"], [g])[0])
         last = {"t": 0.0}
@@ -974,7 +1197,7 @@ def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, eve
                                  hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
                                  strain=do["strain"], backend=do["backend"], progress=cb, should_stop=should_stop,
                                  bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, frames=0.0,
-                                 live=live)
+                                 live=live, bodies=bodies)
         if live is not None:
             live.done(eta=out["eta_mean"])
         pts.append((g, out["eta_mean"], out["eta_se"]))
@@ -1308,6 +1531,59 @@ def thermal_values(spec, gas_factor=None):
     return k
 
 
+def thermal_aniso(spec, labels, ginfo, gen_phases, h, log=None):
+    """Anisotropic thermal conductivities for the FV solve (conduction.
+    solve_direction's `aniso`), or None when every material is isotropic.
+    A particle phase's k_x, k_y, k_z act along each particle's own axes,
+    turned with it (the generator's rotation, rows = the particle axes:
+    K = R^T diag(k) R); the matrix's along the box axes. A shell keeps its
+    scalar k."""
+    table = spec["labels"]
+    label_axes, core_of = {}, {}
+    for li, t in enumerate(table):
+        ax = M.k_axes(t["props"])
+        if ax is None:
+            continue
+        if t["kind"] == "matrix":
+            label_axes[li] = ax
+        elif t["kind"] == "core" and t["phase"] is not None:
+            core_of[li] = (t["phase"], ax)
+    if not label_axes and not core_of:
+        return None
+    out = {"label_axes": label_axes, "aid": None, "K": np.zeros((0, 3, 3))}
+    parts = (ginfo or {}).get("particles")
+    if core_of and parts is not None and len(parts["codes"]):
+        own, _ = GEN.rasterize_owner(labels.shape[0], h, ginfo, gen_phases, labels.shape[2])
+        ph_of = np.asarray(parts["phase"])
+        Rp = np.asarray(parts["R"], float)
+        aid = np.full(labels.shape, -1, np.int32)
+        Ks, row = [], 0
+        for li, (ip, ax) in core_of.items():
+            sel = np.flatnonzero(ph_of == ip)
+            if not len(sel):
+                continue
+            Ks.append(np.einsum("nji,jk,nkl->nil", Rp[sel], np.diag(ax), Rp[sel]))
+            lut = np.full(len(ph_of) + 1, -1, np.int32)
+            lut[sel + 1] = row + np.arange(len(sel))
+            m = labels == li
+            aid[m] = lut[own[m]]
+            row += len(sel)
+            if log:
+                cover = float(np.mean(aid[m] >= 0)) if m.any() else 0.0
+                log(f"   anisotropic thermal conductivity: {spec['phases'][ip]['name']} k {ax[0]:g} / {ax[1]:g} / "
+                    f"{ax[2]:g} W/m·K along the particle axes x / y / z, {len(sel)} particles turned with them "
+                    f"({100 * cover:.1f} % of its voxels)")
+        if Ks:
+            out["aid"], out["K"] = aid, np.concatenate(Ks)
+    if log:
+        for li, ax in label_axes.items():
+            log(f"   anisotropic thermal conductivity: {table[li]['name']} k {ax[0]:g} / {ax[1]:g} / {ax[2]:g} W/m·K "
+                f"along the box axes x / y / z")
+        if spec["rve"].get("film"):
+            log("   (a film: its thermal solves use each material's k - anisotropy is not applied to films)")
+    return out
+
+
 def thermal_interfaces(spec, h_um, area_ratio):
     """Face resistances for the thermal solve, divided by the voxel size.
 
@@ -1383,10 +1659,13 @@ def _cond_backend(spec, backend):
 
 
 def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should_stop,
-                viewer, first, rpair=None, cmask=None, rcpair=None, pre=None):
+                viewer, first, rpair=None, cmask=None, rcpair=None, pre=None, aniso=None):
     info = COND[key]
     iface = rpair is not None or rcpair is not None
     backend = cond_backend(spec, backend)
+    if aniso is not None and not iface:
+        log(f"    {info['title']}: anisotropic materials -> built-in periodic finite volume with their tensors")
+        backend = "fv"
     if iface:
         # An interface resistance lives on voxel faces. The finite-volume
         # operator has faces; PuMA's finite elements share nodes across them
@@ -1448,8 +1727,9 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
                 r = CD.solve_direction(labels, v_used, di, tol=tol, rpair=rpair, cmask=cmask, rcpair=rcpair,
                                        callback=cb_d,
                                        should_stop=should_stop, flux_h=(h_um * 1e-6) if first else None,
-                                       film=bool(spec["rve"].get("film")))
-                r["method"] = "fv-film" if spec["rve"].get("film") else ("fv-interface" if iface else "fv-periodic")
+                                       film=bool(spec["rve"].get("film")), aniso=aniso)
+                r["method"] = ("fv-film" if spec["rve"].get("film") else "fv-anisotropic" if aniso is not None
+                               else ("fv-interface" if iface else "fv-periodic"))
                 if check == "fe":
                     # PuMA's periodic finite elements on the same RVE, as the check
                     try:
@@ -1555,6 +1835,10 @@ def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_rati
             if rcpair is not None:
                 log(f"    resolution check: {COND[key]['title']} skipped (contact resistances need the contact "
                     f"faces of the finer grid)")
+                continue
+            if any(M.k_axes(t["props"]) for t in spec["labels"]):
+                log(f"    resolution check: {COND[key]['title']} skipped (anisotropic materials need the particles' "
+                    f"cells of the finer grid)")
                 continue
         else:
             vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
@@ -1670,7 +1954,7 @@ def _cond_fields(key, viewer, labels, table, vals, pot, flux, d, h_um, with_vect
 # thermo-elasticity
 # =========================================================================
 def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio, contact_mask, first,
-              log, should_stop, log_dir, event=None, flow=None, prog=None, struct=None, rcheck=None):
+              log, should_stop, log_dir, event=None, flow=None, prog=None, struct=None, rcheck=None, aniso=None):
     """Run the independent solves of this realisation side by side.
 
     Everything that does not depend on another solve goes into one pool: the
@@ -1731,7 +2015,8 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
             rpair, rcpair = thermal_interfaces(spec, h, area_ratio)
         else:
             vals = np.array(S.label_values(table, COND[key]["prop"]), float)
-        be = "fv" if (rpair is not None or rcpair is not None) else cond_backend(spec, backend)
+        an = aniso if key == "thermal" else None
+        be = "fv" if (rpair is not None or rcpair is not None or an is not None) else cond_backend(spec, backend)
         film_run = bool(spec["rve"].get("film"))
         cache = {}
         for d in dirs:
@@ -1742,7 +2027,9 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
                  "vals": np.asarray(v_used, float), "voxel_m": h * 1e-6, "tol": opts["tol"],
                  "fields": bool(first), "rpair": rpair, "rcpair": rcpair,
                  "cmask": "use" if (rcpair is not None and contact_mask is not None) else None,
-                 "film": film_run})
+                 "film": film_run,
+                 "aniso": None if an is None else {"label_axes": an["label_axes"], "K": an["K"],
+                                                   "aid": "use" if an.get("aid") is not None else None}})
     if "cte" in need and backend in ("puma", "puma_fv") and opts.get("elastic_method", "fans") == "puma":
         keep = ("free" if opts.get("thermal_bc") == "free" else "th") if first else None
         tol = 1e-5 if spec["rve"]["quality"] == "fast" else 1e-6
@@ -1825,7 +2112,7 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
             if key == "thermal":
                 vals = thermal_values(spec, gas_factor)
                 rpair, rcpair = thermal_interfaces(spec, fine["h"], area_ratio)
-                if rcpair is not None:
+                if rcpair is not None or any(M.k_axes(t["props"]) for t in spec["labels"]):
                     continue
             else:
                 vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
@@ -1878,11 +2165,15 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
     flow_path = pool.share(flow["labels"], "flow") if any(t.get("_flow") for _, t in tasks) else None
     fine_path = pool.share(rcheck["fine"]["labels"], "fine") if any(t.get("_fine") for _, t in tasks) else None
     cm_path = pool.share(contact_mask.astype(np.uint8), "cmask") if contact_mask is not None else None
+    aid_path = (pool.share(aniso["aid"], "aid") if aniso is not None and aniso.get("aid") is not None
+                and any((t.get("aniso") or {}).get("aid") == "use" for _, t in tasks) else None)
     for _, t in tasks:
         t["labels"] = flow_path if t.get("_flow") else fine_path if t.get("_fine") else lab_path
         t["tmp"] = pool.tmp
         if "cmask" in t:
             t["cmask"] = cm_path if t.get("cmask") == "use" else None
+        if (t.get("aniso") or {}).get("aid") == "use":
+            t["aniso"] = dict(t["aniso"], aid=aid_path)
     kinds = {}
     for _, t in tasks:
         kinds[t["_kind"]] = kinds.get(t["_kind"], 0) + 1
@@ -2258,8 +2549,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         log(f"   Continuing this run: {', '.join(sorted(kept))} kept, {', '.join(sorted(need)) or 'nothing'} added.")
     direct = prev is None and not spec.get("preview") and dem_direct(spec, need)
     if direct:
-        log("   Viscosity alone, of spheres above 35 vol%: the particle dynamics gives the answer and packs its own "
-            "spheres, so no voxel RVE is generated (the option 'Also solve the resin flow on the RVE' builds one "
+        log("   Viscosity alone, of particles above 35 vol%: the particle dynamics gives the answer and packs its own "
+            "particles, so no voxel RVE is generated (the option 'Also solve the resin flow on the RVE' builds one "
             "for its 3D resin flow)")
     elif plan.get("film"):
         log(f"   Film {plan['L_um']:.4g} × {plan['L_um']:.4g} µm (periodic in x and y) × {plan['T_um']:.4g} µm thick, "
@@ -2760,6 +3051,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 log(f"   (the structure could not be kept for later runs: {e})")
         labels, area_ratio, notes = build_labels(spec, gen_labels, ginfo, h)
         contact_mask = ginfo.pop("contact_mask", None)
+        aniso_th = (thermal_aniso(spec, labels, ginfo, gen_phases, h, log if first else None)
+                    if "thermal" in need else None)
         pair_faces = contact_pair_counts(gen_labels, contact_mask, len(spec["phases"]))
         del gen_labels
         for n in notes:
@@ -2856,7 +3149,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                      flow={"labels": flow_labels, "void": void_labels, "open": pore_open}
                                      if void_labels else None,
                                      prog=prog, struct={"ginfo": ginfo, "void": void_labels} if first else None,
-                                     rcheck={"fine": rc_fine} if isinstance(rc_fine, dict) else None)
+                                     rcheck={"fine": rc_fine} if isinstance(rc_fine, dict) else None,
+                                     aniso=aniso_th)
 
         # ---- conduction-type properties ----------------------------------
         for key in COND:
@@ -2870,7 +3164,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 vals = np.array(S.label_values(table, COND[key]["prop"]), float)
             out = _cond_solve(key, labels, vals, spec, h, backend, prog, log, event, should_stop,
                               viewer if first else None, first, rpair=rpair,
-                              cmask=contact_mask if rcpair is not None else None, rcpair=rcpair, pre=pre_cond)
+                              cmask=contact_mask if rcpair is not None else None, rcpair=rcpair, pre=pre_cond,
+                              aniso=aniso_th if key == "thermal" else None)
             res_r[key] = out
             samples.setdefault(key, []).append(np.diag(out["tensor"]))
             if first:
@@ -3010,7 +3305,6 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             from .solvers import suspension as SU
             solid_v = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
             dem_possible = (vo["dem"]["on"] and bool(solid_v)
-                            and all(spec["phases"][i]["shape"] == "sphere" for i in solid_v)
                             and not any(ph["void"] for ph in spec["phases"]))
             if first:
                 phi_v = float(sum(v for v, t in zip(vf_labels, table)
@@ -3029,12 +3323,15 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 vworkers = -1
             dem_job = None
             if first and visc_plan["concurrent"]:
+                eta_c, eta_cb = dem_intrinsic(spec, solid_v)
                 dem_job = _DemProcess(spec, solid_v, float(sum(spec["phases"][i]["vf"] for i in solid_v)), vo,
-                                      viewer, log)
+                                      viewer, log, eta_int=eta_c if eta_cb == "closed form" else None,
+                                      start=_dem_start(ginfo))
                 log("    the particle dynamics runs on the GPU in its own process, at the same time as the flow "
                     "solve below on the CPU cores")
             if visc_plan["skip_rve"]:
-                why = (f"spheres at {100 * visc_plan['phi']:.0f} vol%"
+                sph_v = all(spec["phases"][i]["shape"] == "sphere" for i in solid_v)
+                why = (f"{'spheres' if sph_v else 'particles'} at {100 * visc_plan['phi']:.0f} vol%"
                        + (f", {visc_plan['touching']} touching pairs" if visc_plan["touching"] else ""))
                 prog.stage("Viscosity · RVE flow solve not needed",
                            f"the particle dynamics gives the answer ({why}); the option 'Also solve the resin flow on "
@@ -3134,12 +3431,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 if dem_job is not None and not (vo["dem"]["on"] and solid):
                     dem_job.cancel()
                 if vo["dem"]["on"] and solid:
-                    sph = all(spec["phases"][i]["shape"] == "sphere" for i in solid)
                     bubbles_ = any(ph["void"] for ph in spec["phases"])
-                    if not sph:
-                        res_r["viscosity_dem"] = {"error": "the particle dynamics handles spheres; other shapes use the RVE "
-                                                           "flow solve and Krieger-Dougherty"}
-                    elif bubbles_:
+                    if bubbles_:
                         res_r["viscosity_dem"] = {"error": "bubbles are not in the particle dynamics; the RVE flow solve and "
                                                            "Krieger-Dougherty are used"}
                     else:
@@ -3159,7 +3452,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                         if dem_job is None:
                             try:
                                 res_r["viscosity_dem"] = _dem_viscosity(spec, solid, phi_s, vo_run, log, event, prog,
-                                                                        should_stop, viewer if first else None)
+                                                                        should_stop, viewer if first else None,
+                                                                        eta_int=vx.get("eta"), start=_dem_start(ginfo))
                             except InterruptedError:
                                 raise
                             except Exception as e:                       # noqa: BLE001

@@ -31,6 +31,10 @@
     ["D_w", "Moisture diffusivity", "m²/s"], ["c_sat", "Saturated moisture uptake", "wt%"], ["cme", "Moisture expansion CME", "1/mass fr."],
     ["tg", "Glass transition Tg", "°C"], ["E_r", "Young's modulus above Tg", "GPa"], ["alpha2", "CTE above Tg", "ppm/K"],
   ];
+  // anisotropic thermal conductivity: along the particle's own axes (the box axes for the matrix)
+  const ANISO_PROPS = [["k_x", "k along x", "W/m·K"], ["k_y", "k along y", "W/m·K"], ["k_z", "k along z", "W/m·K"]];
+  const isAniso = (p) => !!p && ANISO_PROPS.some(([k]) => p[k] !== undefined && p[k] !== null && p[k] !== "");
+  const kText = (p) => isAniso(p) ? ANISO_PROPS.map(([k]) => fmt(p[k] ?? p.k)).join("/") : fmt(p.k);
   const SHAPES = {
     sphere: { label: "Sphere", icon: "sphere", hint: "Spherical particle." },
     spheroid: { label: "Spheroid", icon: "spheroid", hint: "Aspect ratio c/a (length along the symmetry axis / equatorial diameter): above 1 needle-like, below 1 platelet-like." },
@@ -99,7 +103,7 @@
     result: null, resultJob: null, health: null, viewerJob: null, viewerSig: "",
     tab: "home", center: "vis", rtab: "display", dtab: "console", sel: 0,
     doeCat: [], doeList: [], doeId: null, doeData: null,
-    doe: { name: "", design: "full", samples: 12, seed: 1, parameters: [] },
+    doe: { name: "", design: "full", samples: 12, seed: 1, parameters: [], grid: "adaptive", gridL: null, gridH: null },
     // any input or response on either axis, a third on the colour, a fourth on
     // the size - the way a design study is actually interrogated
     scatter: { x: "", y: "", c: "", s: "" },
@@ -546,7 +550,7 @@
       ["analysis", "Structure analysis", "Porosity, porosimetry, pore network, grains"], ["simulation", "Simulation", "Conduction, mechanics, flow, acoustics, radiation"], ["run", "Run", "Results appear in the viewer and the Result Viewer"]];
     const presets = state.presets.map((p) => {
       const chips = Object.entries(p.form.analyses || {}).filter(([, v]) => v).map(([k]) => AN[k] ? `<span class="chip" style="--ic:${AN[k].color}">${I(AN[k].icon)}${AN[k].title}</span>` : "").join("");
-      return `<div class="preset" data-preset="${p.id}"><div class="pn">${esc(p.name)}</div><div class="pd">${esc(p.description)}</div><div class="chips">${chips}</div></div>`;
+      return `<div class="preset" data-preset="${p.id}"><div class="pn">${esc(p.name)}</div><div class="pd">${esc(p.description)}</div><div class="chips">${p.doe ? `<span class="chip" style="--ic:#8250df">${I("preset")}DOE study</span>` : ""}${chips}</div></div>`;
     }).join("");
     return `<div class="sec"><div class="sh">${I("home")}Workflow</div><div class="sb"><ol class="flow">${steps.map(([k, t, s], i) => `<li data-go="${k}"><b>${i + 1}</b><span>${t}<small>${s}</small></span></li>`).join("")}</ol>
         <div class="hint">Every analysis uses validated open-source codes: NASA PuMA, PoreSpy, OpenPNM, scikit-rf and PyVista. The report lists the method and version behind each number.</div></div></div>
@@ -686,13 +690,18 @@
     for (const g of state.lib.groups.map((x) => x.id).concat(["custom"])) {
       const ms = all.filter((x) => groupOf(x) === g);
       if (!ms.length) continue;
-      list += `<div class="mgrp">${esc(groupLabel(g))}</div>` + ms.map((x) => `<div class="prow m ${x.id === id ? "on" : ""}" data-libsel="${x.id}"><div class="nm">${esc(x.name)}${isOverride(x.id) ? ' <span class="chip">edited</span>' : ""}${isUserMat(x.id) ? ' <span class="chip">user</span>' : ""}<small>k ${fmt(x.props.k)} · E ${fmt(x.props.E)} GPa · α ${fmt(x.props.alpha)} ppm/K · εr ${fmt(x.props.eps_r)}</small></div><span class="vf">${inCase.has(x.id) ? "in case" : ""}</span></div>`).join("");
+      list += `<div class="mgrp">${esc(groupLabel(g))}</div>` + ms.map((x) => `<div class="prow m ${x.id === id ? "on" : ""}" data-libsel="${x.id}"><div class="nm">${esc(x.name)}${isOverride(x.id) ? ' <span class="chip">edited</span>' : ""}${isUserMat(x.id) ? ' <span class="chip">user</span>' : ""}<small>k ${kText(x.props)} · E ${fmt(x.props.E)} GPa · α ${fmt(x.props.alpha)} ppm/K · εr ${fmt(x.props.eps_r)}</small></div><span class="vf">${inCase.has(x.id) ? "in case" : ""}</span></div>`).join("");
     }
     const lrow = ([k, lab, unit]) => {
       const mod = base && Number(m.props[k]) !== Number(base.props[k]);
       return `<label class="prop"><span>${lab}<em>${unit}</em></span><input type="number" step="any" class="${mod ? "mod" : ""}" data-lk="props.${k}" value="${m.props[k] ?? ""}" title="${base ? `library value ${base.props[k] ?? "not set"}` : ""}"></label>`;
     };
+    const an = isAniso(m.props);
     const props = `<div class="props">` + PROPS.map(lrow).join("") + "</div>" +
+      `<details class="optprops" ${an ? "open" : ""}><summary>Anisotropic thermal conductivity <span class="hint">(${an ? "on" : "off: k in every direction"})</span></summary>
+        <label class="chk"><input type="checkbox" data-laniso ${an ? "checked" : ""}> Anisotropic k</label>
+        ${an ? `<div class="props">${ANISO_PROPS.map(lrow).join("")}</div>` : ""}
+        <div class="hint">k along the particle's own axes, turned with every particle in the thermal solve: a cuboid's edges (x = d, y = ly, z = lz) or the symmetry axis z of a spheroid, cylinder or platelet — an h-BN platelet conducts well in its plane (x, y) and poorly through its thickness (z). As the matrix, along the box axes. k above follows their mean, which the closed-form estimates use.</div></details>` +
       `<details class="optprops" open><summary>Moisture and glass transition <span class="hint">(optional; empty = not absorbing, no Tg)</span></summary><div class="props">${OPT_PROPS.map(lrow).join("")}</div></details>`;
     // keep the selected material in view inside the list
     setTimeout(() => {
@@ -714,7 +723,7 @@
         <div class="row wrap" style="gap:6px;margin-top:9px">${isOverride(id) ? `<button class="btn sm" data-act="libReset">${I("reset")}Restore library values</button>` : ""}${isUserMat(id) ? `<button class="btn sm danger" data-act="libDel">${I("delete")}Delete</button>` : ""}</div>
         <div class="hint" style="margin-top:6px">${base ? "Values that differ from the built-in library are highlighted. " : ""}${uses.length ? `Used in this case by <b>${uses.map((x) => esc(x.label)).join(", ")}</b>: a change applies there at once.` : "Not used in this case. The Structure tab assigns a material to the matrix and to every phase."}</div></div></div>
       <div class="sec"><div class="sh">${I("grains")}Materials in this case</div><div class="sb">
-        <table class="grid"><tr><th>Region</th><th>Material</th><th class="n">k</th><th class="n">E</th><th class="n">α</th></tr>${caseRows.map((r) => `<tr class="click" data-libsel="${r.e.material_id}"><td>${esc(r.label)}</td><td>${esc((mat(r.e.material_id) || {}).name || r.e.material_id)}${differs(r.e) ? ' <span class="chip" title="This case carries its own values (from a preset or an older input)">own values</span>' : ""}</td><td class="n">${fmt(r.e.props.k)}</td><td class="n">${fmt(r.e.props.E)}</td><td class="n">${fmt(r.e.props.alpha)}</td></tr>`).join("")}</table>
+        <table class="grid"><tr><th>Region</th><th>Material</th><th class="n">k</th><th class="n">E</th><th class="n">α</th></tr>${caseRows.map((r) => `<tr class="click" data-libsel="${r.e.material_id}"><td>${esc(r.label)}</td><td>${esc((mat(r.e.material_id) || {}).name || r.e.material_id)}${differs(r.e) ? ' <span class="chip" title="This case carries its own values (from a preset or an older input)">own values</span>' : ""}</td><td class="n">${kText(r.e.props)}</td><td class="n">${fmt(r.e.props.E)}</td><td class="n">${fmt(r.e.props.alpha)}</td></tr>`).join("")}</table>
         <div class="hint" style="margin-top:6px">Which material each region uses is set on the Structure tab. A click on a row opens its material above.</div></div></div>
       <div class="note">${esc(state.lib.note)}</div>`;
   }
@@ -1030,6 +1039,7 @@
         <i class="dot ${dot}"></i><div class="nm">${esc((study && study.name) || "DOE study")}
           <small>DOE · ${cases.length} case${cases.length === 1 ? "" : "s"} · ${n("done")} done${live ? ` · ${live} in flight` : ""}${n("failed") + n("stopped") ? ` · ${n("failed") + n("stopped")} failed` : ""} · ${secs(el)}</small></div>
         <div class="acts"><button class="btn sm" data-doeopen2="${j.doe}" title="Open the study">${I("preset")}</button>
+          <button class="btn sm" data-doedel="${j.doe}" title="Delete the study and all its runs">${I("delete")}</button>
           <button class="btn sm" data-doetoggle="${j.doe}" title="${open ? "Collapse" : "Show the cases"}">${open ? "−" : "+"}</button></div></div>`
         + (open ? `<div class="substack">${cases.map(one).join("")}</div>` : ""));
     });
@@ -1089,7 +1099,7 @@
     const t = e.target;
     if (t.dataset.doe) {
       state.doe[t.dataset.doe] = t.type === "number" ? Number(t.value) : t.value;
-      if (t.dataset.doe === "design") renderLeft();
+      if (t.dataset.doe === "design" || t.dataset.doe === "grid") renderLeft();
       else if (t.dataset.doe !== "name") { const el = $(".note", $("#lbody")); if (el) el.textContent = `${doeCaseCount()} cases will be queued.`; }
       return;
     }
@@ -1116,6 +1126,12 @@
       if (el.value === "" || !isFinite(Number(el.value))) return;
       const k = key.slice(6), v = Number(el.value);
       m.props[k] = v;
+      // anisotropic: k is the mean of the three axes (the closed-form estimates use it)
+      if (ANISO_PROPS.some(([a]) => a === k)) {
+        m.props.k = +((ANISO_PROPS.reduce((s, [a]) => s + Number(m.props[a] ?? m.props.k), 0) / 3).toPrecision(6));
+        const kEl = $('#lbody [data-lk="props.k"]');
+        if (kEl && document.activeElement !== kEl) kEl.value = m.props.k;
+      }
       const base = state.byId[id];
       el.classList.toggle("mod", !!base && Number(base.props[k]) !== v);
     } else m[key] = el.value;
@@ -1578,7 +1594,7 @@
     return prov + tiles((r.headline || []).filter((h) => !h.dir)) +
       `<div class="rgrid"><div class="box"><div class="bt">Verification</div><p>${pill("pass")} ${cc.pass} passed · ${pill("warn")} ${cc.warn} warnings · ${pill("fail")} ${cc.fail} failed</p>
         <div class="row wrap"><a class="btn sm" href="${jobUrl("download/layer_card")}">${I("layers")}Layer card</a><a class="btn sm" href="${jobUrl("download/result")}">${I("json")}Result JSON</a>${r.dem_direct ? "" : `<a class="btn sm" href="${jobUrl("download/structure")}">${I("image")}Structure TIFF</a>`}<button class="btn sm" data-editspec>${I("open")}Edit this input</button></div>
-        ${r.dem_direct ? `<p class="hint">No voxel RVE: viscosity alone of spheres above 35 vol% — the particle dynamics packed and sheared its own spheres (Viscosity section). The option <span class="ui">Also solve the resin flow on the RVE</span> builds an RVE for the 3D resin flow.</p>`
+        ${r.dem_direct ? `<p class="hint">No voxel RVE: viscosity alone of particles above 35 vol% — the particle dynamics packed and sheared its own particles (Viscosity section). The option <span class="ui">Also solve the resin flow on the RVE</span> builds an RVE for the 3D resin flow.</p>`
           : `<p class="hint">Grid ${gridTxt(r.plan)} · voxel ${fmt(r.plan.h_um)} µm · ${r.plan.film ? `film ${fmt(r.plan.L_um)} × ${fmt(r.plan.L_um)} µm × ${fmt(r.plan.T_um)} µm thick` : `edge ${fmt(r.plan.L_um)} µm`} · ${r.plan.seeds} realisation(s) · ${esc(r.realisations[0].route || "")}</p>`}${r.plan.notes.map((n) => `<div class="note warn">${esc(n)}</div>`).join("")}</div>
       <div class="box"><div class="bt">Realised composition (voxels)</div>${tbl(["Region", "Kind", "vol %", "wt %"], comp)}<p class="hint">Density ${fmt(r.composition.density)} g/cm³ · specific heat ${fmt(r.composition.cp)} J/kg·K · porosity ${fmt(100 * r.composition.porosity)} %</p></div></div>
       ${figs ? `<div class="box" style="margin-top:12px"><div class="bt">Figures (PyVista · matplotlib)</div><div class="figs">${figs}</div></div>` : ""}`;
@@ -1767,12 +1783,12 @@
       <label class="f">Computed on</label><select data-k="options.viscosity.dem.backend"><option value="auto">Automatic: the NVIDIA GPU (CUDA) first, all CPU cores when there is none or a GPU run fails</option><option value="cuda">NVIDIA GPU (CUDA), the CPU if it fails</option><option value="cpu">CPU only</option></select>
       <div class="hint">Every filler particle moves, turns and collides in the sheared resin: lubrication between close surfaces, contacts with friction, and the van der Waals attraction of the filler across the resin (Hamaker constant from the refractive indices of the library, or entered). Roughness and the closest approach are lengths, so a fine filler meets them at a larger share of its size than a coarse one — this is where the particle-size effect comes from. Friction 0.25 reproduces the measured law of non-Brownian spheres (Boyer et al. 2011: μr 20.7 at 50 vol% and 103 at 55 vol%), friction 0 the frictionless Krieger–Dougherty curve. It is the best estimate above about 35 vol% or where particles touch.</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.rve_with_dem"><span></span></span> Also solve the resin flow on the RVE where the particle dynamics gives the answer</label>
-      <div class="hint">Off (default): for spheres above 35 vol%, or touching, the particle dynamics gives the viscosity and the voxel flow solve is skipped — it cannot resolve the resin films between such particles, and its value would not be used; with viscosity as the only analysis no voxel RVE is generated at all. On: it is solved for its 3D resin flow (local shear rate, streamlines), on the CPU cores at the same time as the particle dynamics on an NVIDIA GPU; without a GPU, one after the other.</div>
+      <div class="hint">Off (default): for particles above 35 vol%, or touching, the particle dynamics gives the viscosity and the voxel flow solve is skipped — it cannot resolve the resin films between such particles, and its value would not be used; with viscosity as the only analysis no voxel RVE is generated at all. On: it is solved for its 3D resin flow (local shear rate, streamlines), on the CPU cores at the same time as the particle dynamics on an NVIDIA GPU; without a GPU, one after the other.</div>
       <div class="subh">Capillary underfill (parallel plates)</div>
       <div class="g2">${num("options.viscosity.underfill.gap_um", "Gap", "µm")}${num("options.viscosity.underfill.length_mm", "Flow length", "mm")}${num("options.viscosity.underfill.gamma_mN_m", "Surface tension", "mN/m")}${num("options.viscosity.underfill.theta_deg", "Contact angle", "°")}</div>
       <div class="subh">Filler settling</div>
       <div class="g2">${num("options.viscosity.density_resin", "Resin density", "kg/m³")}${num("options.viscosity.settle_min", "Time before gelation", "min")}</div>
-      <div class="hint">The RVE flow solve is reliable while every particle stays surrounded by resin on the grid (up to about 35 vol%); above that the particle dynamics (spheres) or, for other shapes, Krieger–Dougherty with the maximum packing fraction carries the result.</div>`;
+      <div class="hint">The RVE flow solve is reliable while every particle stays surrounded by resin on the grid (up to about 35 vol%); above that the particle dynamics carries the result (spheres, and rigid clumps of spheres for other shapes).</div>`;
   }
   function secVisc(p) {
     const fmtT = (s) => !isFinite(s) ? "—" : s < 60 ? `${fmt(s)} s` : s < 3600 ? `${fmt(s / 60)} min` : `${fmt(s / 3600)} h`;
@@ -1800,10 +1816,11 @@
       } catch (e) { console.warn("particle dynamics player", e); }
     });
     const demBox = !dm ? "" : dm.error ? `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics</div><p class="hint">Not run: ${esc(dm.error)}</p></div>`
-      : `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics <span class="hint">${dm.n} spheres moving, turning and colliding in the resin sheared at ${fmt(dm.gd)} 1/s · ${dm.backend === "cuda" ? "NVIDIA GPU" : dm.gpu_fallback ? "CPU (the GPU run failed)" : "CPU"} · ${secs(dm.seconds)}</span></div>
+      : `<div class="box" style="grid-column:1/-1"><div class="bt">Particle dynamics <span class="hint">${dm.rigid ? `${dm.n} particles (${dm.spheres} spheres in rigid clumps)` : `${dm.n} spheres`} moving, turning and colliding in the resin sheared at ${fmt(dm.gd)} 1/s · ${dm.backend === "cuda" ? "NVIDIA GPU" : dm.gpu_fallback ? "CPU (the GPU run failed)" : "CPU"} · ${secs(dm.seconds)}</span></div>
         <div class="rgrid"><div>${canvas("viscDem", 230)}</div><div>
         ${kv([["Relative viscosity", `<b class="mono">${fmt(dm.mu_r)}</b> ± ${fmt(dm.se)} <span class="hint">mean after a strain of 1; ± with the scatter between packings</span>`],
-              ["From lubrication / contacts", `${fmt(dm.eta_lub)} / ${fmt(dm.eta_contact)} <span class="hint">plus 1 + 2.5φ (resin and single-sphere stresslet)</span>`],
+              ["From lubrication / contacts", `${fmt(dm.eta_lub)} / ${fmt(dm.eta_contact)} <span class="hint">plus 1 + [η]φ (resin and each particle's own stresslet, [η] ${fmt(dm.intrinsic || 2.5)}${dm.intrinsic_basis ? `, ${esc(dm.intrinsic_basis)}` : ""})</span>`],
+              dm.rigid ? ["Shapes", dm.rigid.filter((b) => b.shape !== "sphere").map((b) => `${esc(b.phase)}: ${b.count} ${esc(b.shape)} particles of ${b.spheres} spheres <span class="hint">rigid multi-sphere particles</span>`).join("<br>")] : null,
               ["Contacts per particle", fmt(dm.contacts_per_particle)],
               ["Particles", dm.counts.map((c, i) => `${c} × ${fmt(dm.d_um[i])} µm`).join(" + ") + ` <span class="hint">box ${fmt(dm.box_um)} µm</span>`],
               ["Friction · roughness · closest approach", `${fmt(dm.mu_f)} · ${fmt(dm.roughness_nm)} nm · ${fmt(dm.hmin_nm)} nm`],
@@ -2545,6 +2562,17 @@
           <option value="lhs" ${d.design === "lhs" ? "selected" : ""}>Latin hypercube</option></select>
         ${d.design === "lhs" ? `<div class="g2"><div><label class="f">Samples</label><input type="number" min="2" max="64" data-doe="samples" value="${d.samples}"></div>
           <div><label class="f">Random seed</label><input type="number" min="0" data-doe="seed" value="${d.seed}"></div></div>` : ""}
+        <label class="f">Grid of the cases</label><select data-doe="grid">
+          <option value="adaptive" ${d.grid !== "fixed" ? "selected" : ""}>Adaptive — each case planned for its own particles (default)</option>
+          <option value="fixed" ${d.grid === "fixed" ? "selected" : ""}>Fixed — every case on one grid</option></select>
+        ${d.grid === "fixed" ? (() => {
+          const pl = state.plan && state.plan.plan;
+          const L = d.gridL ?? (pl ? pl.L_um : null), H = d.gridH ?? (pl ? pl.h_um : null);
+          const N = L && H ? Math.round(L / H) : null;
+          return `<div class="g2"><div><label class="f">RVE edge (µm)</label><input type="number" step="any" min="0" data-doe="gridL" value="${L ?? ""}"></div>
+            <div><label class="f">Voxel size (µm)</label><input type="number" step="any" min="0" data-doe="gridH" value="${H ?? ""}"></div></div>
+            <div class="hint">${N ? `${N}³ voxels` : "—"} for every case — taken from the current case's plan unless changed here, so that the cases differ only in the varied parameters. A parameter that varies the domain itself still sets it.</div>`;
+        })() : `<div class="hint">As a single run: each case gets the RVE and the voxel size its own particles need, so the grid can differ between cases (a finer filler, a finer grid).</div>`}
         <div class="note ${n > 64 ? "bad" : ""}">${n} case${n === 1 ? "" : "s"}${n > 64 ? " — at most 64 are accepted" : " will be queued"}. Each case is a complete run with its own result, figures and report.</div>
         <button class="btn primary" data-act="doeCreate" ${n < 1 || n > 64 ? "disabled" : ""}>${I("play")}Create study and queue runs</button>
       </div></div>
@@ -2558,6 +2586,12 @@
       parameters: d.parameters.map((p) => ({ path: p.path, label: p.label, unit: p.unit, min: +p.min, max: +p.max, steps: +p.steps, scale: p.scale })),
       form: clone(state.form),
     };
+    if (d.grid === "fixed") {
+      const pl = state.plan && state.plan.plan;
+      const L = +(d.gridL ?? (pl ? pl.L_um : 0)), H = +(d.gridH ?? (pl ? pl.h_um : 0));
+      if (!(L > 0 && H > 0)) { toast("A fixed grid needs the RVE edge length and the voxel size."); return; }
+      body.grid = { mode: "fixed", L_um: L, voxel_um: H };
+    } else body.grid = { mode: "adaptive" };
     try {
       const res = await api("POST", "/api/doe", body);
       toast(`The study has been created: ${res.n_cases} runs queued.`);
@@ -2639,7 +2673,8 @@
     const counts = {};
     d.rows.forEach((r) => (counts[r.state] = (counts[r.state] || 0) + 1));
     const design = { full: "full factorial", oat: "one factor at a time", lhs: "Latin hypercube" }[d.design] || d.design;
-    $("#doeInfo").textContent = `${esc(d.name)} · ${d.n_cases} cases · ${design}`;
+    const grid = d.grid && d.grid.mode === "fixed" ? `fixed grid ${d.grid.N}³ (${fmt(d.grid.L_um)} µm, voxel ${fmt(d.grid.voxel_um)} µm)` : "grid adaptive per case";
+    $("#doeInfo").textContent = `${d.name} · ${d.n_cases} cases · ${design} · ${grid}`;
     const tile = (l, v, dd) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${dd || ""}</div></div>`;
     const elapsed = d.rows.reduce((s, r) => s + (r.elapsed_s || 0), 0);
     const nbad = (counts.failed || 0) + (counts.stopped || 0) + (counts.missing || 0);
@@ -3003,7 +3038,7 @@
       $("#vField").value = "@dem";
       state.viewerJob = id; state.viewerSig = "dem";
       $("#vDemSec").style.display = "";
-      info.textContent = "No voxel RVE in this run: the particle dynamics packed and sheared its own spheres";
+      info.textContent = "No voxel RVE in this run: the particle dynamics packed and sheared its own particles";
       await showDemInView(true);
       return;
     }
@@ -3351,6 +3386,17 @@
     lb.addEventListener("change", (e) => {
       const t = e.target;
       if (t.dataset.lk) onLibField(e);
+      else if (t.dataset.laniso !== undefined) {
+        // anisotropic thermal conductivity on: every axis starts at k; off: k in every direction
+        const id = state.libSel;
+        if (!mat(id)) return;
+        const m = state.custom[id] || (state.custom[id] = Object.assign(clone(state.byId[id]), { override: true }));
+        if (t.checked) ANISO_PROPS.forEach(([a]) => { if (m.props[a] === undefined || m.props[a] === null || m.props[a] === "") m.props[a] = m.props.k; });
+        else ANISO_PROPS.forEach(([a]) => { delete m.props[a]; });
+        const n = libChanged(id);
+        renderLeft(); renderRibbon();
+        if (n) toast(`Applied to ${n} region(s) of this case.`);
+      }
       else if (t.dataset.libimport !== undefined) importLibrary(t);
       else if (t.dataset.k) onField(e);
       else if (t.dataset.mat) onMaterial(e);
@@ -3417,8 +3463,17 @@
       if (t.dataset.doeopen) { openDoe(t.dataset.doeopen); setCenter("doe"); return; }
       if (t.dataset.preset) {
         const p = state.presets.find((x) => x.id === t.dataset.preset);
-        state.form = completeForm(p.form); state.sel = 0; renderAll(); schedulePlan(0); saveForm();
-        toast(`Preset loaded: ${p.name}`);
+        state.form = completeForm(p.form); state.sel = 0;
+        if (p.doe) {
+          // a DOE preset: the study's settings too, ready in the DOE tab
+          state.doe = Object.assign({ name: "", design: "full", samples: 12, seed: 1, parameters: [], grid: "adaptive", gridL: null, gridH: null }, clone(p.doe));
+          renderAll(); schedulePlan(0); saveForm();
+          setTab("doe");
+          toast(`Preset loaded with its DOE study: ${p.name}. Check the settings and press "Create study and queue runs".`, 7000);
+        } else {
+          renderAll(); schedulePlan(0); saveForm();
+          toast(`Preset loaded: ${p.name}`);
+        }
       } else if (t.dataset.go) { if (t.dataset.go === "run") submit(false); else setTab(t.dataset.go); }
       else if (t.dataset.sel !== undefined) { state.sel = +t.dataset.sel; renderLeft(); }
       else if (t.dataset.shape) {
@@ -3433,7 +3488,7 @@
     });
 
     document.body.addEventListener("click", async (e) => {
-      const b = e.target.closest("[data-open],[data-stop],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry]");
+      const b = e.target.closest("[data-open],[data-stop],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel]");
       if (!b) return;
       // the cases of a study are shown only when asked for; the study row itself
       // opens the study rather than any one of its runs
@@ -3469,6 +3524,41 @@
           try { await api("DELETE", `/api/jobs/${b.dataset.del}`); if (state.resultJob === b.dataset.del) { state.result = null; state.resultJob = null; state.viewerJob = null; } pollRuns(); if (state.center === "res") renderResults(); }
           catch (err) { toast(err.message); }
         }
+      }
+      else if (b.dataset.doedel) {
+        // the whole study at once: its cases still going are stopped first
+        e.stopPropagation();
+        const sid = b.dataset.doedel;
+        const cases = state.jobs.filter((x) => x.doe === sid);
+        const live = cases.filter((x) => ["running", "queued"].includes(x.state));
+        const study = (state.doeList || []).find((x) => x.id === sid);
+        const name = (study && study.name) ? `the study "${study.name}"` : "this DOE study";
+        if (!confirm(`Delete ${name} and all its ${cases.length} run${cases.length === 1 ? "" : "s"} permanently?`
+          + (live.length ? `
+${live.length} case${live.length === 1 ? " is" : "s are"} still going and will be stopped first.` : ""))) return;
+        try {
+          for (const j of live) await api("POST", `/api/jobs/${j.id}/stop`);
+          for (let k = 0; k < 60 && live.length; k++) {
+            await pollRuns();
+            if (!state.jobs.some((x) => x.doe === sid && ["running", "queued"].includes(x.state))) break;
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          // the study and its runs on the server (whether or not this page has
+          // loaded the study list yet)
+          try { await api("DELETE", `/api/doe/${sid}?runs=1`); } catch (e2) { /* the study file is gone already */ }
+          // runs of a study the server no longer knows: one by one
+          for (const j of state.jobs.filter((x) => x.doe === sid && !["running", "queued"].includes(x.state))) {
+            try { await api("DELETE", `/api/jobs/${j.id}`); } catch (e2) { /* already gone */ }
+          }
+          if (cases.some((x) => x.id === state.resultJob)) { state.result = null; state.resultJob = null; state.viewerJob = null; }
+          delete state.openDoe[sid];
+          if (state.doeId === sid) { state.doeId = null; state.doeData = null; }
+          toast(`${name[0].toUpperCase()}${name.slice(1)} has been deleted.`);
+          try { state.doeList = await api("GET", "/api/doe"); } catch (e2) { /* the list is refreshed later */ }
+          await pollRuns();
+          if (state.center === "res") renderResults();
+          if (state.center === "doe") renderDoe();
+        } catch (err) { toast("The study could not be deleted: " + err.message, 7000); }
       }
       else if (b.dataset.open) openJob(b.dataset.open);
       else if (b.dataset.goviewer !== undefined) { setCenter("vis"); openViewer(b.dataset.goviewer); }

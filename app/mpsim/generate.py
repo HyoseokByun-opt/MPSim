@@ -1023,7 +1023,7 @@ def mc_compress(pos, d_excl, L, scale, rng, max_iter=MAX_COMPRESS_ITER, log=None
 # =========================================================================
 @njit(cache=True, fastmath=True, parallel=True)
 def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L, g,
-                wpos, wrad, wown, head, nxt, F, T, ncon, max_move, soff, wmax, Lz=0.0, Wt=0.0):
+                wpos, wrad, wown, head, nxt, F, T, ncon, max_move, soff, wmax, rgv, rcap, Lz=0.0, Wt=0.0):
     """One steepest-descent step on the clump overlap energy.
 
     The box is periodic, L x L x Lz (Lz = L when 0). Wt > 0 is a film: walls
@@ -1037,7 +1037,9 @@ def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L,
     On one core the cost grew with the particle count while the packing's
     time budget did not, and a 10 µm box of 250 nm spheres stopped short of
     the size a 5 µm box reached.
-    soff (n + 1) and wmax (n) are work arrays.
+    soff (n + 1) and wmax (n) are work arrays. max_move, rgv, rcap: per
+    particle the longest move, the radius of gyration (turns a torque into
+    an angle) and the largest angle of one step.
     Returns the largest overlap relative to the smaller sub-sphere radius."""
     if Lz <= 0.0:
         Lz = L
@@ -1212,7 +1214,7 @@ def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L,
         C[i, 2] = C[i, 2] + mz if Wt > 0.0 else (C[i, 2] + mz) % Lz
         if rotmode[i] < 0:
             continue
-        rg = max_move[i] * 4.0              # ~ radius of gyration (max_move = 0.25 rg)
+        rg = rgv[i]
         ax = T[i, 0] * w / (rg * rg)
         ay = T[i, 1] * w / (rg * rg)
         az = T[i, 2] * w / (rg * rg)
@@ -1233,12 +1235,12 @@ def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L,
         ang = math.sqrt(ax * ax + ay * ay + az * az)
         if ang < 1e-12:
             continue
-        if ang > 0.08:
-            f = 0.08 / ang
+        if ang > rcap[i]:
+            f = rcap[i] / ang
             ax *= f
             ay *= f
             az *= f
-            ang = 0.08
+            ang = rcap[i]
         ux = ax / ang
         uy = ay / ang
         uz = az / ang
@@ -1279,7 +1281,7 @@ def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L,
 
 def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
                log=None, should_stop=None, max_steps=MAX_RELAX_STEPS, tol=0.01, Lz=None, Wt=0.0, g0=0.55,
-               stall_window=0, stall_gain=0.0):
+               stall_window=0, stall_gain=0.0, recover=False):
     """Grow and relax rigid clumps until they reach full size without overlap.
 
     templates : list of (centres (k,3), radii (k,)) at nominal size
@@ -1289,6 +1291,11 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
     stall_window, stall_gain: also stop once the best size grew by less than
                 stall_gain (relative) over the last stall_window rounds - for
                 finding where a packing jams, not for building a structure
+    recover   : the growth per round, cut after a failed round, comes back
+                after clean ones (to the first 2 % at most). For building a
+                structure: thin platelets otherwise crept on at 0.5 % a round
+                after their first failure. jamming_fraction keeps it off - its
+                calibration (JAM_CAL) was measured without it.
     Returns (C, Rm, scale) of the best overlap-free state; scale < 1 means the
     target size (and so the target fraction) was not reached.
 
@@ -1312,6 +1319,16 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
         off += len(r)
     tq = np.concatenate(tq_l)
     tr = np.concatenate(tr_l)
+    # the thickest sub-sphere of each particle at nominal size: its thickness scale
+    thick = np.array([float(templates[t][1].max()) for t in range(len(templates))])[tpl]
+    # thin particles start smaller: platelets or rods dropped at random at
+    # half their size cross each other, and crossed plates lock (2 um x 50 nm
+    # BN with alumina at 55 vol% found no clean state below 0.55); at a size
+    # where they are short against their spacing they rarely cross, and they
+    # grow from there
+    asp = float(np.max(circ / np.maximum(thick, 1e-300)))
+    if asp > 4.0:
+        g0 = min(g0, max(0.1, 2.2 / asp))
     msub = int(sum(tcnt[t] for t in tpl))
     wpos = np.zeros((msub, 3))
     wrad = np.zeros(msub)
@@ -1353,13 +1370,21 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
         cxyz = np.floor(np.mod(C, [L, L, Lz]) / [L / ncs, L / ncs, Lz / ncz_s]).astype(np.int64)
         o = np.argsort((cxyz[:, 0] * ncs + cxyz[:, 1]) * ncz_s + cxyz[:, 2], kind="stable")
         C, Rm = np.ascontiguousarray(C[o]), np.ascontiguousarray(Rm[o])
-        s, tpl, gap, ph, rotmode, circ = s[o], tpl[o], gap[o], ph[o], rotmode[o], circ[o]
+        s, tpl, gap, ph, rotmode, circ, thick = s[o], tpl[o], gap[o], ph[o], rotmode[o], circ[o], thick[o]
         perm = perm[o]
-        max_move = 0.25 * g * s * circ * 0.5
+        # a step moves a particle by at most an eighth of its size, and turns
+        # it by at most 0.08 rad - or, for a thin one (a platelet, a rod:
+        # its thickest sub-sphere well below its size), so little that no
+        # part moves more than half its thickness: steps on its own scale
+        # threw a 2 um x 50 nm platelet past every overlap it had to clear
+        size = g * s * np.minimum(circ, 4.0 * thick)
+        max_move = 0.125 * size
+        rgv = 0.5 * g * s * circ
+        rcap = np.minimum(0.08, max_move / np.maximum(g * s * circ, 1e-300))
         clean = False
         for _ in range(300):
             w = _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, float(L), g,
-                            wpos, wrad, wown, head, nxt, F, T, ncon, max_move, soff, wmax, Lz, float(Wt))
+                            wpos, wrad, wown, head, nxt, F, T, ncon, max_move, soff, wmax, rgv, rcap, Lz, float(Wt))
             it_total += 1
             if w < tol:
                 clean = True
@@ -1378,6 +1403,8 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
             if g >= 1.0:
                 break
             g = min(1.0, g * growth)
+            if recover:
+                growth = min(1.02, 1.0 + 1.15 * (growth - 1.0))
         else:
             stuck += 1
             g = max(best_g, g / (1.0 + 0.5 * (growth - 1.0)))
@@ -1863,7 +1890,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                         Pn = nom["P"].copy()
                         if nom["code"] == 6:
                             Pn[1] = t_id
-                        q, r = SH.clump_template(nom["code"], Pn, planes, nfaces, max_spheres=40, coverage=0.98)
+                        q, r = SH.dem_template(nom["code"], Pn, planes, nfaces)
                         tkey[key] = len(templates)
                         templates.append((q, r))
                     tids.append(tkey[key])
@@ -1912,7 +1939,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                         f"particles kept {g_med:.2f} voxels apart where the packing allows")
             C, Rs, scale = clump_pack(float(L), C, Rs, s, tpl, templates, gap, ph_arr,
                                       overlap_of.astype(np.int64), rotm, circ, log=log, should_stop=should_stop,
-                                      Lz=Lz_pack, Wt=Wt)
+                                      Lz=Lz_pack, Wt=Wt, recover=True)
             if scale < 1.0 and np.any(gap > gap_user):
                 # the separation gap does not fit: continue from this state
                 # without it, so particles touch only where the target needs it
@@ -1920,7 +1947,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                     f"{scale:.4f}); packing on with contacts allowed where needed")
                 C, Rs, scale = clump_pack(float(L), C, Rs, s, tpl, templates, gap_user, ph_arr,
                                           overlap_of.astype(np.int64), rotm, circ, log=log,
-                                          should_stop=should_stop, Lz=Lz_pack, Wt=Wt)
+                                          should_stop=should_stop, Lz=Lz_pack, Wt=Wt, recover=True)
             info["pack_scale"] = scale
             if scale < 1.0:
                 log(f"  !! the target could not be packed without overlap; particles are {scale:.3f} x the "
@@ -2120,7 +2147,7 @@ def jamming_fraction(phases, n_target=500, seed=11, log=None, should_stop=None, 
                     Pn = nom["P"].copy()
                     if nom["code"] == 6:
                         Pn[1] = t_id
-                    q, r = SH.clump_template(nom["code"], Pn, planes, nfaces, max_spheres=40, coverage=0.98)
+                    q, r = SH.dem_template(nom["code"], Pn, planes, nfaces)
                 tkey[key] = len(templates)
                 templates.append((q, r))
             tids.append(tkey[key])
