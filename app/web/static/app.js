@@ -359,7 +359,7 @@
       ],
       results: [
         { group: "Views", items: [RB("c:vis", "view3d", "3D / 2D view", { on: state.center === "vis" }), RB("c:res", "table", "Result Viewer", { on: state.center === "res" }), RB("c:rep", "report", "Report", { on: state.center === "rep" })] },
-        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob, tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob })] },
+        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob })] },
         { group: "Figures", items: [RB("shot", "camera", "Screen capture"), RB("render", "image", "High-resolution figure")] },
       ],
     };
@@ -1435,8 +1435,8 @@
       lastGroup = s.group;
       return `${cap}<button data-sec="${s.id}" style="--ic:${s.color}">${I(s.icon)}<span>${esc(s.title)}</span></button>`;
     }).join("");
-    body.innerHTML = `<div class="rvhead">${I("logo")}<div class="grow"><h2>${esc(r.name)}</h2><div class="hint">${esc(r.created)} · ${secs(r.elapsed_s)} · ${backendTxt(r)} · PuMA ${esc((r.versions || {}).puma || "—")}</div></div>
-        <div class="row wrap"><button class="btn sm" data-center="vis">${I("view3d")}3D view</button><a class="btn sm primary" href="${jobUrl("report")}" target="_blank">${I("report")}Report</a><a class="btn sm" href="${jobUrl("download/bundle")}">${I("zip")}ZIP</a></div></div>` +
+    body.innerHTML = `<div class="rvhead">${I("logo")}<div class="grow"><h2>${esc(r.name)}</h2><div class="hint">${esc(r.created)} · ${secs(r.elapsed_s)} · ${r.dem_direct ? "particle dynamics, no voxel RVE" : `${backendTxt(r)} · PuMA ${esc((r.versions || {}).puma || "—")}`}</div></div>
+        <div class="row wrap">${r.view === false ? "" : `<button class="btn sm" data-center="vis">${I("view3d")}3D view</button>`}<a class="btn sm primary" href="${jobUrl("report")}" target="_blank">${I("report")}Report</a><a class="btn sm" href="${jobUrl("download/bundle")}">${I("zip")}ZIP</a></div></div>` +
       secs_.map((s) => `<section class="rsec" id="sec-${s.id}"><h3 style="--ic:${s.color}">${I(s.icon)}${esc(s.title)}</h3>${s.html}</section>`).join("");
     requestAnimationFrame(() => { draws.forEach((d) => { try { d(); } catch (e) { console.warn(e); } }); });
     $$("button", nav)[0] && $$("button", nav)[0].classList.add("on");
@@ -1453,8 +1453,9 @@
     // per-direction entries exist for DOE targets; the tiles show the average
     return prov + tiles((r.headline || []).filter((h) => !h.dir)) +
       `<div class="rgrid"><div class="box"><div class="bt">Verification</div><p>${pill("pass")} ${cc.pass} passed · ${pill("warn")} ${cc.warn} warnings · ${pill("fail")} ${cc.fail} failed</p>
-        <div class="row wrap"><a class="btn sm" href="${jobUrl("download/layer_card")}">${I("layers")}Layer card</a><a class="btn sm" href="${jobUrl("download/result")}">${I("json")}Result JSON</a><a class="btn sm" href="${jobUrl("download/structure")}">${I("image")}Structure TIFF</a><button class="btn sm" data-editspec>${I("open")}Edit this input</button></div>
-        <p class="hint">Grid ${gridTxt(r.plan)} · voxel ${fmt(r.plan.h_um)} µm · ${r.plan.film ? `film ${fmt(r.plan.L_um)} × ${fmt(r.plan.L_um)} µm × ${fmt(r.plan.T_um)} µm thick` : `edge ${fmt(r.plan.L_um)} µm`} · ${r.plan.seeds} realisation(s) · ${esc(r.realisations[0].route || "")}</p>${r.plan.notes.map((n) => `<div class="note warn">${esc(n)}</div>`).join("")}</div>
+        <div class="row wrap"><a class="btn sm" href="${jobUrl("download/layer_card")}">${I("layers")}Layer card</a><a class="btn sm" href="${jobUrl("download/result")}">${I("json")}Result JSON</a>${r.dem_direct ? "" : `<a class="btn sm" href="${jobUrl("download/structure")}">${I("image")}Structure TIFF</a>`}<button class="btn sm" data-editspec>${I("open")}Edit this input</button></div>
+        ${r.dem_direct ? `<p class="hint">No voxel RVE: viscosity alone of spheres above 35 vol% — the particle dynamics packed and sheared its own spheres (Viscosity section). The option <span class="ui">Also solve the resin flow on the RVE</span> builds an RVE for the 3D resin flow.</p>`
+          : `<p class="hint">Grid ${gridTxt(r.plan)} · voxel ${fmt(r.plan.h_um)} µm · ${r.plan.film ? `film ${fmt(r.plan.L_um)} × ${fmt(r.plan.L_um)} µm × ${fmt(r.plan.T_um)} µm thick` : `edge ${fmt(r.plan.L_um)} µm`} · ${r.plan.seeds} realisation(s) · ${esc(r.realisations[0].route || "")}</p>`}${r.plan.notes.map((n) => `<div class="note warn">${esc(n)}</div>`).join("")}</div>
       <div class="box"><div class="bt">Realised composition (voxels)</div>${tbl(["Region", "Kind", "vol %", "wt %"], comp)}<p class="hint">Density ${fmt(r.composition.density)} g/cm³ · specific heat ${fmt(r.composition.cp)} J/kg·K · porosity ${fmt(100 * r.composition.porosity)} %</p></div></div>
       ${figs ? `<div class="box" style="margin-top:12px"><div class="bt">Figures (PyVista · matplotlib)</div><div class="figs">${figs}</div></div>` : ""}`;
   }
@@ -1642,7 +1643,7 @@
       <label class="f">Computed on</label><select data-k="options.viscosity.dem.backend"><option value="auto">Automatic: the NVIDIA GPU (CUDA) first, all CPU cores when there is none or a GPU run fails</option><option value="cuda">NVIDIA GPU (CUDA), the CPU if it fails</option><option value="cpu">CPU only</option></select>
       <div class="hint">Every filler particle moves, turns and collides in the sheared resin: lubrication between close surfaces, contacts with friction, and the van der Waals attraction of the filler across the resin (Hamaker constant from the refractive indices of the library, or entered). Roughness and the closest approach are lengths, so a fine filler meets them at a larger share of its size than a coarse one — this is where the particle-size effect comes from. Friction 0.25 reproduces the measured law of non-Brownian spheres (Boyer et al. 2011: μr 20.7 at 50 vol% and 103 at 55 vol%), friction 0 the frictionless Krieger–Dougherty curve. It is the best estimate above about 35 vol% or where particles touch.</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.rve_with_dem"><span></span></span> Also solve the resin flow on the RVE where the particle dynamics gives the answer</label>
-      <div class="hint">Off (default): for spheres above 35 vol%, or touching, the particle dynamics gives the viscosity and the voxel flow solve is skipped — it cannot resolve the resin films between such particles, and its value would not be used. On: it is solved for its 3D resin flow (local shear rate, streamlines), on the CPU cores at the same time as the particle dynamics on an NVIDIA GPU; without a GPU, one after the other.</div>
+      <div class="hint">Off (default): for spheres above 35 vol%, or touching, the particle dynamics gives the viscosity and the voxel flow solve is skipped — it cannot resolve the resin films between such particles, and its value would not be used; with viscosity as the only analysis no voxel RVE is generated at all. On: it is solved for its 3D resin flow (local shear rate, streamlines), on the CPU cores at the same time as the particle dynamics on an NVIDIA GPU; without a GPU, one after the other.</div>
       <div class="subh">Capillary underfill (parallel plates)</div>
       <div class="g2">${num("options.viscosity.underfill.gap_um", "Gap", "µm")}${num("options.viscosity.underfill.length_mm", "Flow length", "mm")}${num("options.viscosity.underfill.gamma_mN_m", "Surface tension", "mN/m")}${num("options.viscosity.underfill.theta_deg", "Contact angle", "°")}</div>
       <div class="subh">Filler settling</div>
@@ -1663,7 +1664,7 @@
     const dm = p.dem;
     if (dm && !dm.error) draws.push(() => CH.line($("#viscDem"), { xlabel: "Sheared strain", ylabel: "Relative viscosity μr", series: [
       { x: dm.strain, y: dm.eta, color: "#bf8700", width: 1.8, label: "Instantaneous" },
-      { x: [1, dm.strain[dm.strain.length - 1]], y: [dm.mu_r, dm.mu_r], color: "#0b62c4", dash: [6, 4], width: 1.6, label: "Mean from strain 1" }] }));
+      { x: [dm.settle ?? 1, dm.strain[dm.strain.length - 1]], y: [dm.mu_r, dm.mu_r], color: "#0b62c4", dash: [6, 4], width: 1.6, label: `Mean from strain ${fmt(dm.settle ?? 1)}` }] }));
     if (dm && !dm.error && dm.anim) draws.push(async () => {
       // the solver's own sheared box, played in a small 3D view
       try {
@@ -1725,7 +1726,7 @@
         <div class="hint">The dots are the bumps (schematic). The compound's front starts as fast as it can and slows as the wetted length grows; the resin alone fills ${fmt(uf.t_compound_s / uf.t_resin_s)}× faster.</div></div>
       <div class="box" style="grid-column:1/-1"><div class="bt">Resin flow inside the RVE <span class="hint">simple shear in the xy plane at the reference shear rate</span><div class="grow"></div>
           ${p.rve_skipped ? "" : viewBtn("visc_gd", "Local shear rate") + linesBtn("visc_v", "Animated resin flow")}</div>
-        ${p.rve_skipped ? `<p class="hint">Not computed in this run: the particle dynamics gives the viscosity here (${esc(p.rve_skipped.replace(/^the particle dynamics gives the answer \(|\)$/g, ""))}), so the RVE flow solve was skipped. Switch on <span class="ui">Also solve the resin flow on the RVE</span> in the viscosity options to see the resin flow — on a PC with an NVIDIA GPU it runs at the same time as the particle dynamics.</p>` : ""}
+        ${p.rve_skipped ? `<p class="hint">Not computed in this run: ${esc(p.rve_skipped)}. Switch on <span class="ui">Also solve the resin flow on the RVE</span> in the viscosity options to see the resin flow — on a PC with an NVIDIA GPU it runs at the same time as the particle dynamics.</p>` : ""}
         <p class="hint" ${p.rve_skipped ? 'style="display:none"' : ""}>The animated view moves tracers along the resin streamlines at the local speed: the layers slide past each other, the resin swerves around the fillers and hurries through the narrow gaps between them — the places where the local shear rate, and so the extra dissipation that makes the compound viscous, is highest.</p></div>
       <div class="box" style="grid-column:1/-1"><div class="bt">Filler settling before gelation <span class="hint">${fmt(p.settle_min)} min, Stokes velocity × hindered settling (1 − φ)^4.65</span></div>
         ${tbl(["Filler", "Diameter (µm)", "Density (g/cm³)", "Velocity (µm/min)", "Distance (µm)"], p.settling.map((s) => [esc(s.name), fmt(s.d_um), fmt(s.rho), fmt(s.v_m_s * 6e7), fmt(s.distance_m * 1e6)]))}</div>

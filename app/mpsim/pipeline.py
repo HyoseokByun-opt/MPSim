@@ -691,13 +691,15 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     st = np.asarray(out["strain"])
     e = np.asarray(out["eta"])
     keep = max(1, len(st) // 200)
+    s0 = 1.0 if tot > 1.0 else 0.5 * tot     # the averaging starts here (as in the solver)
     res = {"mu_r": out["eta_mean"], "se": out["eta_se"], "n": out["n"], "phi": phi, "gd": gd, "mu_resin": mu_res,
            "backend": out["backend"], "gpu_fallback": out.get("gpu_fallback"),
            "seconds": out["seconds"], "steps": out["steps"], "box_um": out["box_um"],
            "strain": st[::keep].tolist(), "eta": e[::keep].tolist(),
-           "eta_lub": float(np.mean(np.asarray(out["eta_lub"])[st >= 1.0])),
-           "eta_contact": float(np.mean(np.asarray(out["eta_contact"])[st >= 1.0])),
-           "contacts_per_particle": float(np.mean(np.asarray(out["contacts_per_particle"])[st >= 1.0])),
+           "eta_lub": float(np.mean(np.asarray(out["eta_lub"])[st >= s0])),
+           "eta_contact": float(np.mean(np.asarray(out["eta_contact"])[st >= s0])),
+           "contacts_per_particle": float(np.mean(np.asarray(out["contacts_per_particle"])[st >= s0])),
+           "settle": s0,
            "max_overlap": float(max(out["max_overlap"])),
            "roughness_nm": do["roughness_nm"], "hmin_nm": do["hmin_nm"], "mu_f": do["mu_f"],
            "bound_nm": do["bound_nm"], "adhesion_mJ_m2": do["adhesion_mJ_m2"], "phi_effective": out["phi_effective"],
@@ -709,10 +711,77 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     if do["rates"] > 0:
         res["rate_curve"], res["rate_note"] = _dem_rates(radii, owner, hks, phi, vo, do, mu_res, gd, res, log, event,
                                                          prog, should_stop)
-    log(f"    particle dynamics: μr {res['mu_r']:.4g} ± {res['se']:.2g} (strain 1-{tot:g}; lubrication "
+    log(f"    particle dynamics: μr {res['mu_r']:.4g} ± {res['se']:.2g} (strain {s0:g}-{tot:g}; lubrication "
         f"{res['eta_lub']:.3g}, contacts {res['eta_contact']:.3g}; {res['contacts_per_particle']:.2f} contacts per particle; "
         f"{out['backend']}, {out['seconds']:.0f} s)")
     return res
+
+
+def dem_direct(spec, need):
+    """Viscosity alone, of spheres (no shells, no bubbles) above 35 vol%: the
+    particle dynamics gives the answer and packs its own spheres, so no voxel
+    RVE is needed at all - unless its resin flow is asked for."""
+    vo = spec["options"]["viscosity"]
+    if set(need) != {"viscosity"} or not vo["dem"]["on"] or vo["rve_with_dem"]:
+        return False
+    solid = [ph for ph in spec["phases"] if not ph["void"] and ph["shape"] != G.NETWORK]
+    if not solid or any(ph["void"] or ph.get("shell") for ph in spec["phases"]):
+        return False
+    if any(ph["shape"] != "sphere" for ph in solid):
+        return False
+    return float(sum(ph["vf"] for ph in solid)) > 0.35
+
+
+def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, should_stop):
+    """The viscosity without a voxel RVE: the composition from the recipe,
+    the maximum packing of the size distribution, the particle dynamics with
+    its animation written as the run's view. Returns the first-realisation
+    results and the realisation record."""
+    import types
+    vo = opts["viscosity"]
+    solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
+    phi = float(sum(spec["phases"][i]["vf"] for i in solid))
+    why = f"spheres at {100 * phi:.0f} vol%"
+    prog.stage("Viscosity · no voxel RVE needed", f"the particle dynamics gives the answer ({why}) and packs its own "
+               f"spheres", units=0.5)
+    prog.end()
+    vf = [0.0] * len(table)
+    for k, t in enumerate(table):
+        if t["kind"] == "core":
+            vf[k] = float(spec["phases"][t["phase"]]["vf"])
+    vf[0] = max(0.0, 1.0 - sum(vf))
+    rinfo = {"seed": spec["rve"]["seed"], "route": "particle dynamics only - no voxel RVE", "seconds": 0.0,
+             "contact_pairs": {}, "contacts_mode": None, "contacts_removed": 0, "contact_faces": 0, "touching_pairs": 0,
+             "voxel_conflicts": 0, "shrunk": None, "pack_scale": None, "phases": [], "vf_labels": vf,
+             "interface_area_ratio": {}}
+    res = {"viscosity": {"skipped": f"the particle dynamics gives the answer ({why}); no voxel RVE was generated",
+                         "touching_pairs": 0}}
+    prog.stage("Viscosity · maximum packing fraction", "random close packing of these particles", units=1.0)
+    vx = dict(max_packing([dict(gen_phases[i], void=False) for i in solid], vo, log, should_stop))
+    prog.end()
+    vx["eta"], vx["eta_basis"] = 2.5, "closed form"
+    res["viscosity_extra"] = vx
+    # the animation is the run's view: the player reads it from there
+    vdir = os.path.join(out_dir, "view")
+    os.makedirs(vdir, exist_ok=True)
+    labs, ci = [], 1
+    for t in table:
+        labs.append({"name": t["name"], "color": V.PHASE_COLORS[0] if t["kind"] == "matrix"
+                     else V.PHASE_COLORS[ci % len(V.PHASE_COLORS)]})
+        ci += t["kind"] != "matrix"
+    dv = types.SimpleNamespace(dir=vdir, meta={"labels": labs, "built": time.time()})
+    dv.add_particles_anim = lambda *a, **k: V.ViewWriter.add_particles_anim(dv, *a, **k)
+    try:
+        res["viscosity_dem"] = _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, dv)
+    except InterruptedError:
+        raise
+    except Exception as e:                                               # noqa: BLE001
+        prog.end()
+        res["viscosity_dem"] = {"error": f"the particle dynamics failed: {e}"}
+        log(f"    particle dynamics not run: {e}")
+    if dv.meta.get("dem"):
+        _dump(os.path.join(vdir, "meta.json"), {"dem": dv.meta["dem"], "labels": labs, "built": dv.meta["built"]})
+    return res, rinfo
 
 
 def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop):
@@ -1001,7 +1070,7 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
                                + ("the best estimate is the particle dynamics, which resolves them" if dem_ok else
                                   "the best estimate is Krieger-Dougherty with the jammed packing fraction")})
     if dem_ok:
-        late = [e_ for s_, e_ in zip(dem["strain"], dem["eta"]) if s_ >= 1.0]
+        late = [e_ for s_, e_ in zip(dem["strain"], dem["eta"]) if s_ >= dem.get("settle", 1.0)]
         third = max(1, len(late) // 3)
         drift = abs(float(np.mean(late[-third:])) - float(np.mean(late[third:2 * third]))) / max(dem["mu_r"], 1e-9)
         checks.append({"id": "visc_dem_steady", "group": "Viscosity", "label": "Particle dynamics at steady state",
@@ -2141,7 +2210,12 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
     log(f"== {spec['name']}")
     if prev is not None:
         log(f"   Continuing this run: {', '.join(sorted(kept))} kept, {', '.join(sorted(need)) or 'nothing'} added.")
-    if plan.get("film"):
+    direct = prev is None and not spec.get("preview") and dem_direct(spec, need)
+    if direct:
+        log("   Viscosity alone, of spheres above 35 vol%: the particle dynamics gives the answer and packs its own "
+            "spheres, so no voxel RVE is generated (the option 'Also solve the resin flow on the RVE' builds one "
+            "for its 3D resin flow)")
+    elif plan.get("film"):
         log(f"   Film {plan['L_um']:.4g} × {plan['L_um']:.4g} µm (periodic in x and y) × {plan['T_um']:.4g} µm thick, "
             f"voxel {plan['h_um']:.4g} µm, grid {_grid(plan['N'], plan['Nz'])} "
             f"(level {plan['quality_label']}, {plan['seeds']} realisation(s))")
@@ -2587,7 +2661,12 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                    "note": f"{seeds} independent realisations"})
         return props, composition, rho, cp
 
-    for r in range(seeds):
+    if direct:
+        prog = Progress(event, 1.5 + 3.0 + float(opts["viscosity"]["dem"]["rates"] or 0))
+        results_first, rinfo_d = _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog,
+                                                 should_stop)
+        realisations.append(rinfo_d)
+    for r in range(0 if direct else seeds):
         first = r == 0
         seed = spec["rve"]["seed"] + 1000 * r
         prog.stage("Structure generation", f"realisation {r+1}/{seeds} · {_grid(N, Nz)} voxels", units=1.0)
@@ -3397,15 +3476,16 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         del void_mask, open_mask, flow_labels
 
     # ------------------------------------------------------------------ view
-    prog.stage("Visualisation data", "field values on the surfaces", units=1.5)
     meta = None
-    try:
-        viewer.sample_surfaces()
-        meta = viewer.finish()
-    except Exception as e:                                           # noqa: BLE001
-        log(f"   !! the visualisation data could not be written: {e}")
-        log(traceback.format_exc())
-    prog.end()
+    if not direct:
+        prog.stage("Visualisation data", "field values on the surfaces", units=1.5)
+        try:
+            viewer.sample_surfaces()
+            meta = viewer.finish()
+        except Exception as e:                                       # noqa: BLE001
+            log(f"   !! the visualisation data could not be written: {e}")
+            log(traceback.format_exc())
+        prog.end()
 
     # ---------------------------------------------------------- aggregation
     props, composition, rho, cp = aggregate(results_first, realisations, checks)
@@ -3482,7 +3562,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         "spec": spec, "plan": plan, "realisations": realisations,
         "composition": composition, "properties": props, "checks": checks,
         "headline": headline, "layer_card": layer, "figures": figures,
-        "view": bool(meta), "preview": bool(spec.get("preview")),
+        "view": bool(meta), "preview": bool(spec.get("preview")), "dem_direct": direct,
         "check_counts": {s: sum(1 for c in checks if c["status"] == s) for s in ("pass", "warn", "fail")},
     }
     _dump(os.path.join(out_dir, "result.json"), summary)

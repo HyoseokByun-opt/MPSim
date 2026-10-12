@@ -1404,8 +1404,8 @@ def t_pipeline_live():
             f"from {rc['gd'][0]:g} to {rc['gd'][-1]:g} 1/s; {s['elapsed_s']:.0f} s")
 
 
-@check("Complete pipeline: dense spheres - the particle dynamics gives the viscosity, the RVE flow solve skipped "
-       "(default) or solved at the same time (option)", quick=False)
+@check("Complete pipeline: dense spheres - the particle dynamics gives the viscosity without a voxel RVE (default) "
+       "or with the RVE flow solved at the same time (option)", quick=False)
 def t_pipeline_dense_visc():
     import json
     from mpsim import pipeline
@@ -1426,10 +1426,15 @@ def t_pipeline_dense_visc():
             with tempfile.TemporaryDirectory() as d:
                 pipeline.run(form(both), d, log=lambda *a: None)
                 with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
-                    v = json.load(fh)["properties"]["viscosity"]
+                    res = json.load(fh)
+                v = res["properties"]["viscosity"]
                 with open(os.path.join(d, "view", "meta.json"), encoding="utf-8") as fh:
                     vm = json.load(fh)
-            keys = [x["key"] for x in vm["fields"]]
+                expect(os.path.exists(os.path.join(d, "report.html")), "no report")
+                no_struct = not os.path.exists(os.path.join(d, "structure.tif"))
+            keys = [x["key"] for x in vm.get("fields") or []]
+            expect(res.get("dem_direct") == (not both) and no_struct == (not both),
+                   f"voxel RVE built: {not no_struct}, direct: {res.get('dem_direct')} (option {both})")
             expect(v["basis"] == "particle dynamics", f"best estimate from {v['basis']}")
             expect(bool(vm.get("dem")), "no particle animation")
             if both:
@@ -1446,7 +1451,7 @@ def t_pipeline_dense_visc():
     expect(abs(out[True]["mu_r"] / out[False]["mu_r"] - 1) < 1e-9,
            f"the particle dynamics in its own process {out[True]['mu_r']} against here {out[False]['mu_r']}")
     expect(not pipeline._LIVE_DEM, "a particle-dynamics process left running")
-    return (f"45 vol%: particle dynamics μr {out[False]['mu_r']:.4g}, RVE flow solve skipped; with the option the same "
+    return (f"45 vol%: particle dynamics μr {out[False]['mu_r']:.4g} without a voxel RVE; with the option the same "
             f"{out[True]['mu_r']:.4g} from its own process, beside the RVE value {out[True]['mu_r_rve']:.4g}")
 
 

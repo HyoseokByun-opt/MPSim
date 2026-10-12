@@ -950,6 +950,9 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
             if log:
                 log(f"    a particle had more than {s.maxn} neighbours: restarted with {maxn}")
     st, e = np.asarray(out["strain"]), np.asarray(out["eta"])
+    # a strain no longer than the settling one (1 is accepted): its second half
+    if float(strain) <= settle:
+        settle = 0.5 * float(strain)
     m = st >= settle
     blocks = [b.mean() for b in np.array_split(e[m], 8) if len(b)]
     # the standard error: contact networks build and break over a strain of
