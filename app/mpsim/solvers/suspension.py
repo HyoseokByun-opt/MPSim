@@ -122,6 +122,21 @@ def init_backend(prefer="auto", log=None):
     raise RuntimeError(f"Taichi could not start ({last})")
 
 
+def cuda_device_count():
+    """NVIDIA GPUs the CUDA driver reports, asked without starting Taichi
+    (0 when there is no driver or no device)."""
+    import ctypes
+    import sys
+    try:
+        lib = ctypes.WinDLL("nvcuda.dll") if sys.platform == "win32" else ctypes.CDLL("libcuda.so.1")
+        if lib.cuInit(0) != 0:
+            return 0
+        n = ctypes.c_int(0)
+        return int(n.value) if lib.cuDeviceGetCount(ctypes.byref(n)) == 0 else 0
+    except Exception:                                          # noqa: BLE001
+        return 0
+
+
 def device_text(prefer="auto", log=None):
     """Where the particle dynamics runs, for the stage line: starts the
     backend if it is not running (and logs the choice)."""

@@ -310,15 +310,20 @@ def write(out_dir, r):
         rows = [[f"Simple shear {k}", _fmt(sh.get(k))] for k in ("yz", "xz", "xy") if sh.get(k) is not None]
         if p.get("extension") is not None:
             rows.append(["Uniaxial extension (as a shear viscosity)", _fmt(p["extension"])])
-        rows.append(["<b>RVE mean</b>" + (f" ± {_fmt(p['ci95'])} (95 % CI)" if p.get("ci95") else ""), f"<b>{_fmt(p['mu_r_rve'])}</b>"])
-        P.append(_table(["Stokes flow solve on the RVE", "μ/μ<sub>resin</sub>"], rows))
+        if p.get("mu_r_rve") is not None:
+            rows.append(["<b>RVE mean</b>" + (f" ± {_fmt(p['ci95'])} (95 % CI)" if p.get("ci95") else ""),
+                         f"<b>{_fmt(p['mu_r_rve'])}</b>"])
+            P.append(_table(["Stokes flow solve on the RVE", "μ/μ<sub>resin</sub>"], rows))
+        elif p.get("rve_skipped"):
+            P.append(f"<p>The Stokes flow solve on the RVE was not run: {e(p['rve_skipped'])}.</p>")
         P.append(_table(["Closed-form model", "μ/μ<sub>resin</sub>"], [[e(n), _fmt(v)] for n, v in p["refs"].items()]))
         jm = p.get("jamming") or {}
         P.append(f"<p>Maximum packing fraction φ<sub>m</sub> = {_fmt(p['phi_m'])} ({e(p['phi_m_basis'])}"
                  + (f"; {jm.get('n_particles')} particles of the same mix jammed in {_fmt(jm.get('seconds'))} s, "
                     f"raw {_fmt(jm.get('phi_m_raw'))} × calibration {_fmt(jm.get('calibration'))}" if jm else "")
-                 + f"). Intrinsic viscosity [η] = {_fmt(p['eta'])} ({e(p['eta_basis'])}). The φ<sub>m</sub> that makes Krieger-Dougherty "
-                 f"reproduce the RVE value: {_fmt(p.get('kd_phi_m_fit'))}.</p>")
+                 + f"). Intrinsic viscosity [η] = {_fmt(p['eta'])} ({e(p['eta_basis'])})."
+                 + (f" The φ<sub>m</sub> that makes Krieger-Dougherty reproduce the RVE value: {_fmt(p.get('kd_phi_m_fit'))}."
+                    if p.get("kd_phi_m_fit") is not None else "") + "</p>")
         mrows = []
         if p.get("farr_groot") is not None:
             mrows.append(["Farr-Groot random close packing (spheres)", _fmt(p["farr_groot"])])

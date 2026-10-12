@@ -383,6 +383,10 @@ def normalize(form):
                       "lam": _num(vmod.get("lam", 1.0), "time constant", 1e-9, 1e6)},
             "yield_Pa": _num(vis.get("yield_Pa", 0.0), "resin yield stress", 0.0, 1e6),
             "gd_min": _num(vis.get("gd_min", 0.01), "lowest shear rate", 1e-6, 1e6),
+            # the RVE flow solve also where the particle dynamics gives the
+            # answer: its 3D resin flow, at the same time as the particle
+            # dynamics when that runs on a GPU (off: skipped there)
+            "rve_with_dem": bool(vis.get("rve_with_dem", False)),
             "gd_max": _num(vis.get("gd_max", 1000.0), "highest shear rate", 1e-5, 1e7),
             "gd_ref": _num(vis.get("gd_ref", 10.0), "reference shear rate", 1e-6, 1e7),
             # maximum packing fraction phi_m: auto = Farr-Groot for spheres of

@@ -1404,6 +1404,52 @@ def t_pipeline_live():
             f"from {rc['gd'][0]:g} to {rc['gd'][-1]:g} 1/s; {s['elapsed_s']:.0f} s")
 
 
+@check("Complete pipeline: dense spheres - the particle dynamics gives the viscosity, the RVE flow solve skipped "
+       "(default) or solved at the same time (option)", quick=False)
+def t_pipeline_dense_visc():
+    import json
+    from mpsim import pipeline
+
+    def form(both):
+        return {"name": "selftest dense", "matrix": {"material_id": "epoxy"},
+                "phases": [{"material_id": "sio2", "name": "Silica", "shape": "sphere", "size": {"d": 6, "unit": "um"},
+                            "dist": {"type": "lognormal", "cv": 0.15}, "fraction": {"value": 45, "basis": "vol"}}],
+                "rve": {"auto": False, "L_um": 24, "voxel_um": 1.0, "auto_enlarge": False, "quality": "fast"},
+                "analyses": {"viscosity": True},
+                "options": {"viscosity": {"rve_with_dem": both, "dem": {"n": 100, "strain": 1.5, "rates": 0}}}}
+    out = {}
+    old = os.environ.get("MPSIM_DEM_CONCURRENT")
+    try:
+        for both in (False, True):
+            if both:
+                os.environ["MPSIM_DEM_CONCURRENT"] = "1"      # the process path also without a GPU
+            with tempfile.TemporaryDirectory() as d:
+                pipeline.run(form(both), d, log=lambda *a: None)
+                with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
+                    v = json.load(fh)["properties"]["viscosity"]
+                with open(os.path.join(d, "view", "meta.json"), encoding="utf-8") as fh:
+                    vm = json.load(fh)
+            keys = [x["key"] for x in vm["fields"]]
+            expect(v["basis"] == "particle dynamics", f"best estimate from {v['basis']}")
+            expect(bool(vm.get("dem")), "no particle animation")
+            if both:
+                expect(v["mu_r_rve"] is not None and "visc_gd" in keys, "the RVE flow solve did not run with the option")
+            else:
+                expect(v.get("rve_skipped") and v["mu_r_rve"] is None and "visc_gd" not in keys,
+                       f"the RVE flow solve was not skipped ({v.get('mu_r_rve')})")
+            out[both] = v
+    finally:
+        if old is None:
+            os.environ.pop("MPSIM_DEM_CONCURRENT", None)
+        else:
+            os.environ["MPSIM_DEM_CONCURRENT"] = old
+    expect(abs(out[True]["mu_r"] / out[False]["mu_r"] - 1) < 1e-9,
+           f"the particle dynamics in its own process {out[True]['mu_r']} against here {out[False]['mu_r']}")
+    expect(not pipeline._LIVE_DEM, "a particle-dynamics process left running")
+    return (f"45 vol%: particle dynamics μr {out[False]['mu_r']:.4g}, RVE flow solve skipped; with the option the same "
+            f"{out[True]['mu_r']:.4g} from its own process, beside the RVE value {out[True]['mu_r_rve']:.4g}")
+
+
 @check("Complete pipeline: thin film (x, y periodic, z the real thickness), z solved first", quick=False)
 def t_pipeline_film():
     import json

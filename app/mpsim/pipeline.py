@@ -715,6 +715,128 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     return res
 
 
+def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop):
+    """The particle dynamics in a process of its own (see _DemProcess): log
+    lines, stage lines and the result go back through the queue."""
+    try:
+        def log(*a):
+            q.put(("log", " ".join(str(x) for x in a)))
+
+        def event(kind, **p):
+            if kind == "stage":
+                q.put(("stage", p.get("name"), p.get("detail"), p.get("progress")))
+
+        class _Collect:                      # stands in for the viewer: keeps the animation
+            def __init__(self):
+                self.meta = {"labels": labels or []}
+                self.anim = None
+
+            def add_particles_anim(self, *a, **k):
+                self.anim = (a, k)
+        col = _Collect() if want_anim else None
+        prog = Progress(event, 3.0 + float(vo["dem"]["rates"] or 0))
+        res = _dem_viscosity(spec, solid, phi, vo, log, event, prog, stop.is_set, col)
+        q.put(("done", res, col.anim if col is not None else None))
+    except InterruptedError:
+        q.put(("stopped",))
+    except BaseException as e:                                          # noqa: BLE001
+        q.put(("error", f"{type(e).__name__}: {e}"))
+
+
+_LIVE_DEM = set()                       # particle-dynamics processes not yet collected
+
+
+class _DemProcess:
+    """The particle dynamics running on the GPU in its own process while this
+    process solves the RVE flow on the CPU cores."""
+
+    def __init__(self, spec, solid, phi, vo, viewer, log):
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        self.q = ctx.Queue()
+        self.stop = ctx.Event()
+        self.log = log
+        self.latest = None                   # (stage name, detail, fraction of its own work)
+        self.result = None
+        self.t_said = 0.0
+        labels = viewer.meta.get("labels") if viewer is not None else None
+        self.p = ctx.Process(target=_dem_child, args=(spec, solid, phi, vo, labels, viewer is not None, self.q,
+                                                      self.stop), daemon=True)
+        self.p.start()
+        _LIVE_DEM.add(self)
+
+    def _take(self, m):
+        if m[0] == "log":
+            self.log(m[1])
+        elif m[0] == "stage":
+            self.latest = m[1:]
+        else:
+            self.result = m
+
+    def poll(self):
+        """Takes what the process has sent; True once it has finished."""
+        import queue
+        while self.result is None:
+            try:
+                self._take(self.q.get_nowait())
+            except queue.Empty:
+                break
+        return self.result is not None
+
+    def status(self):
+        """One line on the particle dynamics for the flow solve's stage line, at
+        most once a second (None in between)."""
+        now = time.time()
+        if self.latest is None or now - self.t_said < 1.0:
+            return None
+        self.t_said = now
+        name, detail, _ = self.latest
+        return f"{name.split('·', 1)[-1].strip()}: {detail}"
+
+    def cancel(self):
+        self.stop.set()
+        self.p.join(timeout=15)
+        if self.p.is_alive():
+            self.p.terminate()
+            self.p.join(timeout=5)
+        _LIVE_DEM.discard(self)
+
+    def wait(self, viewer, prog, event, should_stop, units):
+        """The result, once the process has finished: a stage of its own for
+        what is left after the flow solve."""
+        import queue
+        name = "Viscosity · particle dynamics (started with the flow solve)"
+        self.poll()
+        prog.stage(name, (self.latest[1] if self.latest else "finishing") if self.result is None
+                   else "finished during the flow solve", units=units)
+        while self.result is None:
+            if should_stop is not None and should_stop():
+                self.cancel()
+                raise InterruptedError
+            try:
+                self._take(self.q.get(timeout=0.5))
+            except queue.Empty:
+                if not self.p.is_alive() and not self.poll():
+                    self.result = ("error", f"its process ended unexpectedly (exit code {self.p.exitcode})")
+            if self.result is None and self.latest and time.time() - self.t_said >= 1.0:
+                self.t_said = time.time()
+                event("stage", name=name, detail=f"{self.latest[0].split('·', 1)[-1].strip()}: {self.latest[1]}",
+                      progress=prog.sub(self.latest[2] or 0.0))
+        self.p.join(timeout=60)
+        _LIVE_DEM.discard(self)
+        prog.end()
+        if self.result[0] == "stopped":
+            raise InterruptedError
+        if self.result[0] == "error":
+            raise RuntimeError(self.result[1])
+        res, anim = self.result[1], self.result[2]
+        res["anim"] = False
+        if anim is not None and viewer is not None:
+            viewer.add_particles_anim(*anim[0], **anim[1])
+            res["anim"] = True
+        return res
+
+
 def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, event, prog, should_stop):
     """The particle dynamics at further shear rates, log-spaced over the
     flow curve's range, with the resin's viscosity at each rate. Returns the
@@ -777,11 +899,12 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
     of the compound, underfill filling and settling."""
     vo = opts["viscosity"]
     v0 = results_first["viscosity"]
+    rve_skipped = v0.get("skipped")          # the particle dynamics gave the answer
     vx = results_first.get("viscosity_extra") or {}
     vf = realisations[0]["vf_labels"]
     phi = float(sum(v for v, t in zip(vf, table) if t["kind"] in ("core", "shell") and float(t["props"]["E"]) > 0))
     bubbles = float(sum(v for v, t in zip(vf, table) if float(t["props"]["E"]) <= 0 and t["kind"] != "matrix"))
-    mu_r = float(np.mean(mus)) if mus else v0["mu_r"]
+    mu_r = float(np.mean(mus)) if mus else v0.get("mu_r")
     ci = None
     if len(mus) >= 2:
         _, _, c = _mean_ci([[m] for m in mus])
@@ -801,7 +924,7 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
     resolved = phi <= 0.35 and touching == 0
     dem = results_first.get("viscosity_dem")
     dem_ok = bool(dem) and not dem.get("error")
-    if resolved:
+    if resolved and mu_r is not None:
         best, basis = mu_r, "RVE flow solve"
     elif dem_ok:
         best, basis = float(dem["mu_r"]), "particle dynamics"
@@ -836,7 +959,8 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
                          vo["settle_min"] * 60.0)
         settle.append({"name": ph["name"], "d_um": d, "rho": float(ph["props"]["rho"]), **s_})
     entry = {"title": "Viscosity and flowability", "phi": phi, "bubbles": bubbles, "mu_r_rve": mu_r, "ci95": ci,
-             "seeds": mus, "shear": v0["shear"], "extension": v0.get("extension"), "stats": v0["stats"],
+             "seeds": mus, "shear": v0.get("shear"), "extension": v0.get("extension"), "stats": v0.get("stats") or {},
+             "rve_skipped": rve_skipped,
              "touching_pairs": touching, "phi_m": phi_m, "phi_m_basis": vx.get("phi_m_basis", "entered"),
              "phi_m_rcp": vx.get("phi_m_rcp", phi_m), "friction": bool(vx.get("friction")),
              "phi_m_alt": phi_m_alt, "kd_alt": kd_alt, "farr_groot": vx.get("farr_groot"),
@@ -847,7 +971,8 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
                       "Krieger-Dougherty": kd, "Maron-Pierce": mp,
                       **({"Particle dynamics": float(dem["mu_r"])} if dem_ok else {})},
              "dem": dem,
-             "kd_phi_m_fit": VI.kd_phi_m_from(mu_r, phi, eta), "mu_r": best, "basis": basis, "curve": curve,
+             "kd_phi_m_fit": VI.kd_phi_m_from(mu_r, phi, eta) if mu_r is not None else None, "mu_r": best,
+             "basis": basis, "curve": curve,
              "flow": {"gd": gd.tolist(), "mu_resin": mu_m.tolist(), "mu_compound": mu_s.tolist(),
                       "amplification": A, "model": vo["model"], "yield_Pa": vo["yield_Pa"],
                       "dem_rates": rc,
@@ -858,14 +983,16 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
              "underfill": dict(uf, t_resin_s=t_resin, t_compound_s=t_comp),
              "settling": settle, "settle_min": vo["settle_min"]}
     hs = VI.hs_lower(phi)
+    mu_chk = mu_r if mu_r is not None else best
     checks.append({"id": "visc_hs", "group": "Viscosity", "label": "Relative viscosity above the Hashin-Shtrikman lower bound",
-                   "value": mu_r, "target": hs, "unit": "", "status": "pass" if mu_r >= 0.99 * hs else "warn",
+                   "value": mu_chk, "target": hs, "unit": "", "status": "pass" if mu_chk >= 0.99 * hs else "warn",
                    "note": "Rigid particles always raise the viscosity at least this much (isotropic suspension)"})
-    checks.append({"id": "visc_contacts", "group": "Viscosity", "label": "Particles in voxel contact in the flow solve",
-                   "value": touching, "target": 0, "unit": "pairs", "status": "pass" if touching == 0 else "warn",
-                   "note": ("No resin film is left between touching voxels: they move as one rigid body and the RVE "
-                            "value is too high; the best estimate uses Krieger-Dougherty" if touching else
-                            "Every particle is surrounded by resin on the grid")})
+    if not rve_skipped:
+        checks.append({"id": "visc_contacts", "group": "Viscosity", "label": "Particles in voxel contact in the flow solve",
+                       "value": touching, "target": 0, "unit": "pairs", "status": "pass" if touching == 0 else "warn",
+                       "note": ("No resin film is left between touching voxels: they move as one rigid body and the RVE "
+                                "value is too high; the best estimate uses Krieger-Dougherty" if touching else
+                                "Every particle is surrounded by resin on the grid")})
     if phi > 0.35:
         checks.append({"id": "visc_dense", "group": "Viscosity", "label": "Filler fraction within the range the voxel flow solve resolves",
                        "value": phi, "target": 0.35, "unit": "",
@@ -895,10 +1022,11 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
                        "note": "The flow solve has no surface tension: a bubble deforms freely (high capillary number) and "
                                "lowers the viscosity as 1 - 5/3 phi (dilute). Small bubbles kept spherical by surface "
                                "tension (low capillary number, Taylor) raise it as 1 + phi instead"})
-    conv = [s.get("converged") for s in v0["stats"].values()]
-    checks.append({"id": "visc_conv", "group": "Viscosity", "label": "Flow solves converged",
-                   "value": sum(bool(c) for c in conv), "target": len(conv), "unit": "solves",
-                   "status": "pass" if all(conv) else "fail", "note": ""})
+    conv = [s.get("converged") for s in (v0.get("stats") or {}).values()]
+    if conv:
+        checks.append({"id": "visc_conv", "group": "Viscosity", "label": "Flow solves converged",
+                       "value": sum(bool(c) for c in conv), "target": len(conv), "unit": "solves",
+                       "status": "pass" if all(conv) else "fail", "note": ""})
     return entry
 
 
@@ -2058,6 +2186,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
     samples = {}
     viewer = None
     results_first = {}
+    visc_plan = {}                       # the viscosity's plan, set on the first realisation
+    for j_ in list(_LIVE_DEM):           # left over from an earlier run in this process
+        j_.cancel()
     checks = list(plan["checks"])
     labels = None
 
@@ -2725,51 +2856,107 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if "viscosity" in need:
             vo = opts["viscosity"]
             vtol = 1e-5 if spec["rve"]["quality"] == "fast" else 1e-6
-            prog.stage("Viscosity · creeping flow of the resin around the fillers",
-                       "voxel FE (B-bar) · FFT-preconditioned CG · 3 shear planes + extension · CPU cores", units=4.0)
-            vnames = ["yz", "xz", "xy", "extension"]
-
-            def cbv(plane, it, res):
-                k = vnames.index(plane)
-                event("solver", name=f"Viscosity, shear {plane}" if plane != "extension" else "Viscosity, extension",
-                      it=it, res=res, target=vtol, progress=prog.sub(min(k + 0.5, 3.99) / 4.0))
+            # is the particle dynamics the answer here? spheres (no bubbles) above
+            # 35 vol% or touching: the voxel flow solve cannot resolve their
+            # films, so its value is not used - it is skipped unless its 3D
+            # resin flow is asked for (option), and then solved at the same time
+            # as the particle dynamics when that runs on a GPU
+            from .solvers import suspension as SU
+            solid_v = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
+            dem_possible = (vo["dem"]["on"] and bool(solid_v)
+                            and all(spec["phases"][i]["shape"] == "sphere" for i in solid_v)
+                            and not any(ph["void"] for ph in spec["phases"]))
+            if first:
+                phi_v = float(sum(v for v, t in zip(vf_labels, table)
+                                  if t["kind"] in ("core", "shell") and float(t["props"]["E"]) > 0))
+                touch_v = int(rinfo.get("touching_pairs", 0) or 0)
+                dem_answer = dem_possible and not (phi_v <= 0.35 and touch_v == 0)
+                visc_plan.update(phi=phi_v, touching=touch_v, dem_answer=dem_answer,
+                                 skip_rve=dem_answer and not vo["rve_with_dem"],
+                                 concurrent=bool(vo["rve_with_dem"] and dem_possible and vo["dem"]["backend"] != "cpu"
+                                                 and (SU.cuda_device_count() > 0
+                                                      or os.environ.get("MPSIM_DEM_CONCURRENT") == "1")))
             try:
                 import numba
                 vworkers = int(numba.get_num_threads())
             except Exception:                                            # noqa: BLE001
                 vworkers = -1
-            vr = VI.effective_viscosity(labels, VI.phase_viscosities(table), tol=vtol, progress=cbv,
-                                        should_stop=should_stop, workers=vworkers, keep_field=first)
-            vfield = vr.pop("field", None)
-            vvel = vr.pop("velocity", None)
-            if first and viewer is not None and vfield is not None:
-                # a quantity of the resin: the fillers are rigid and their
-                # inside is zero, so the particle surfaces read the resin
-                # beside them (read from inside, every particle came out the
-                # bottom colour of the scale)
-                viewer.add_field("visc_gd", vfield, "Local shear rate / applied shear rate (xy shear)", "-", "Viscosity",
-                                 note="Where the resin is sheared hardest between the fillers", in_matrix=True)
-            if first and viewer is not None and vvel is not None:
+            dem_job = None
+            if first and visc_plan["concurrent"]:
+                dem_job = _DemProcess(spec, solid_v, float(sum(spec["phases"][i]["vf"] for i in solid_v)), vo,
+                                      viewer, log)
+                log("    the particle dynamics runs on the GPU in its own process, at the same time as the flow "
+                    "solve below on the CPU cores")
+            if visc_plan["skip_rve"]:
+                why = (f"spheres at {100 * visc_plan['phi']:.0f} vol%"
+                       + (f", {visc_plan['touching']} touching pairs" if visc_plan["touching"] else ""))
+                prog.stage("Viscosity · RVE flow solve not needed",
+                           f"the particle dynamics gives the answer ({why}); the option 'Also solve the resin flow on "
+                           f"the RVE' adds it", units=4.0)
+                if first:
+                    log(f"    RVE flow solve skipped: the particle dynamics gives the answer here ({why}); the "
+                        f"voxel flow solve cannot resolve the resin films between such particles")
+                res_r["viscosity"] = {"skipped": f"the particle dynamics gives the answer ({why})",
+                                      "touching_pairs": visc_plan["touching"]}
+                prog.end()
+            else:
+                prog.stage("Viscosity · creeping flow of the resin around the fillers",
+                           "voxel FE (B-bar) · FFT-preconditioned CG · 3 shear planes + extension · CPU cores", units=4.0)
+                vnames = ["yz", "xz", "xy", "extension"]
+
+                def cbv(plane, it, res):
+                    k = vnames.index(plane)
+                    event("solver", name=f"Viscosity, shear {plane}" if plane != "extension" else "Viscosity, extension",
+                          it=it, res=res, target=vtol, progress=prog.sub(min(k + 0.5, 3.99) / 4.0))
+                    if dem_job is not None:
+                        dem_job.poll()
+                        st_ = dem_job.status()
+                        if st_:
+                            event("stage", name="Viscosity · creeping flow of the resin around the fillers",
+                                  detail=f"voxel FE on the CPU cores, {plane} · at the same time on the GPU, {st_}",
+                                  progress=prog.sub(min(k + 0.5, 3.99) / 4.0))
                 try:
-                    vr["flow_lines"] = _shear_flow_layer(viewer, vvel, h)
-                except Exception as e:                                   # noqa: BLE001
-                    log(f"    (the flow lines could not be drawn: {e})")
-            del vfield, vvel
-            vr["touching_pairs"] = rinfo.get("touching_pairs", 0)
-            samples.setdefault("viscosity", []).append(vr["mu_r"])
-            res_r["viscosity"] = vr
-            sh_txt = " / ".join(f"{vr['shear'][p_]:.4g}" for p_ in ("yz", "xz", "xy"))
-            log(f"    relative viscosity μr = {vr['mu_r']:.4g} (shear yz / xz / xy {sh_txt}, "
-                f"extension {vr['extension']:.4g})")
-            event("partial", key="viscosity", value=_clean([vr["shear"][p] for p in ("yz", "xz", "xy")]))
-            prog.end()
+                    vr = VI.effective_viscosity(labels, VI.phase_viscosities(table), tol=vtol, progress=cbv,
+                                                should_stop=should_stop, workers=vworkers, keep_field=first)
+                except BaseException:
+                    if dem_job is not None:              # stopped or failed: the GPU process ends too
+                        dem_job.cancel()
+                    raise
+                vfield = vr.pop("field", None)
+                vvel = vr.pop("velocity", None)
+                if first and viewer is not None and vfield is not None:
+                    # a quantity of the resin: the fillers are rigid and their
+                    # inside is zero, so the particle surfaces read the resin
+                    # beside them (read from inside, every particle came out the
+                    # bottom colour of the scale)
+                    viewer.add_field("visc_gd", vfield, "Local shear rate / applied shear rate (xy shear)", "-", "Viscosity",
+                                     note="Where the resin is sheared hardest between the fillers", in_matrix=True)
+                if first and viewer is not None and vvel is not None:
+                    try:
+                        vr["flow_lines"] = _shear_flow_layer(viewer, vvel, h)
+                    except Exception as e:                                   # noqa: BLE001
+                        log(f"    (the flow lines could not be drawn: {e})")
+                del vfield, vvel
+                vr["touching_pairs"] = rinfo.get("touching_pairs", 0)
+                samples.setdefault("viscosity", []).append(vr["mu_r"])
+                res_r["viscosity"] = vr
+                sh_txt = " / ".join(f"{vr['shear'][p_]:.4g}" for p_ in ("yz", "xz", "xy"))
+                log(f"    relative viscosity μr = {vr['mu_r']:.4g} (shear yz / xz / xy {sh_txt}, "
+                    f"extension {vr['extension']:.4g})")
+                event("partial", key="viscosity", value=_clean([vr["shear"][p] for p in ("yz", "xz", "xy")]))
+                prog.end()
             if first:
                 vx = {}
                 solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
                 if solid:
                     prog.stage("Viscosity · maximum packing fraction", "random close packing of these particles", units=1.0)
                     sp_solid = [dict(gen_phases[i], void=False) for i in solid]          # outer sizes
-                    vx.update(max_packing(sp_solid, vo, log, should_stop))
+                    try:
+                        vx.update(max_packing(sp_solid, vo, log, should_stop))
+                    except BaseException:
+                        if dem_job is not None:
+                            dem_job.cancel()
+                        raise
                     prog.end()
                 else:
                     vx["phi_m"] = vo["phi_m"]
@@ -2795,6 +2982,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                     vx["eta"], vx["eta_basis"] = 2.5, "sphere value"
                 res_r["viscosity_extra"] = vx
                 # particle dynamics of the spheres (all solid phases spheres, no bubbles)
+                if dem_job is not None and not (vo["dem"]["on"] and solid):
+                    dem_job.cancel()
                 if vo["dem"]["on"] and solid:
                     sph = all(spec["phases"][i]["shape"] == "sphere" for i in solid)
                     bubbles_ = any(ph["void"] for ph in spec["phases"])
@@ -2805,16 +2994,29 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                         res_r["viscosity_dem"] = {"error": "bubbles are not in the particle dynamics; the RVE flow solve and "
                                                            "Krieger-Dougherty are used"}
                     else:
-                        try:
-                            phi_s = float(sum(spec["phases"][i]["vf"] for i in solid))
-                            res_r["viscosity_dem"] = _dem_viscosity(spec, solid, phi_s, vo, log, event, prog, should_stop,
-                                                                    viewer if first else None)
-                        except InterruptedError:
-                            raise
-                        except Exception as e:                           # noqa: BLE001
-                            prog.end()
-                            res_r["viscosity_dem"] = {"error": f"the particle dynamics failed: {e}"}
-                            log(f"    particle dynamics not run: {e}")
+                        phi_s = float(sum(spec["phases"][i]["vf"] for i in solid))
+                        vo_run = vo
+                        if dem_job is not None:
+                            try:
+                                res_r["viscosity_dem"] = dem_job.wait(viewer if first else None, prog, event,
+                                                                      should_stop, 3.0 + float(vo["dem"]["rates"] or 0))
+                            except InterruptedError:
+                                raise
+                            except Exception as e:                       # noqa: BLE001
+                                # the GPU process failed: once more here, on the CPU
+                                log(f"    the particle dynamics process failed ({e}); it is run again here on the CPU")
+                                vo_run = dict(vo, dem=dict(vo["dem"], backend="cpu"))
+                                dem_job = None
+                        if dem_job is None:
+                            try:
+                                res_r["viscosity_dem"] = _dem_viscosity(spec, solid, phi_s, vo_run, log, event, prog,
+                                                                        should_stop, viewer if first else None)
+                            except InterruptedError:
+                                raise
+                            except Exception as e:                       # noqa: BLE001
+                                prog.end()
+                                res_r["viscosity_dem"] = {"error": f"the particle dynamics failed: {e}"}
+                                log(f"    particle dynamics not run: {e}")
 
         # ---- moisture ------------------------------------------------------
         if "moisture" in need:

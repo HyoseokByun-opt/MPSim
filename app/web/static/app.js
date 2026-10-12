@@ -240,7 +240,7 @@
         porosimetry: { fluid: "mercury", surface_tension_N_m: 0.485, contact_angle_deg: 140, steps: 40 },
         filtration: { face_velocity_m_s: 0.05, n_particles: 200, particle_density_kg_m3: 1000, d_min_um: 0.01, d_max_um: 5, n_sizes: 8 },
         viscosity: { model: { type: "newtonian", mu: 1, K: 1, n: 0.7, mu0: 1, mu_inf: 0, lam: 1 }, yield_Pa: 0, gd_min: 0.01, gd_max: 1000, gd_ref: 10,
-          phi_m_mode: "auto", friction: "none", phi_m: 0.64, dilute_rve: true, density_resin: 1150, settle_min: 60,
+          phi_m_mode: "auto", friction: "none", phi_m: 0.64, dilute_rve: true, density_resin: 1150, settle_min: 60, rve_with_dem: false,
           underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 },
           dem: { on: true, n: 500, strain: 5, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
@@ -1641,6 +1641,8 @@
       <div class="hint">The attraction weighs against the viscous force as 1/(μγ̇): with van der Waals or adhesion a compound flows more easily the faster it is sheared. The particles are sheared again at this many rates, log-spaced over the flow curve's range, and the curve follows them (0: only the reference rate; skipped where the attraction is negligible).</div>
       <label class="f">Computed on</label><select data-k="options.viscosity.dem.backend"><option value="auto">Automatic: the NVIDIA GPU (CUDA) first, all CPU cores when there is none or a GPU run fails</option><option value="cuda">NVIDIA GPU (CUDA), the CPU if it fails</option><option value="cpu">CPU only</option></select>
       <div class="hint">Every filler particle moves, turns and collides in the sheared resin: lubrication between close surfaces, contacts with friction, and the van der Waals attraction of the filler across the resin (Hamaker constant from the refractive indices of the library, or entered). Roughness and the closest approach are lengths, so a fine filler meets them at a larger share of its size than a coarse one — this is where the particle-size effect comes from. Friction 0.25 reproduces the measured law of non-Brownian spheres (Boyer et al. 2011: μr 20.7 at 50 vol% and 103 at 55 vol%), friction 0 the frictionless Krieger–Dougherty curve. It is the best estimate above about 35 vol% or where particles touch.</div>
+      <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.rve_with_dem"><span></span></span> Also solve the resin flow on the RVE where the particle dynamics gives the answer</label>
+      <div class="hint">Off (default): for spheres above 35 vol%, or touching, the particle dynamics gives the viscosity and the voxel flow solve is skipped — it cannot resolve the resin films between such particles, and its value would not be used. On: it is solved for its 3D resin flow (local shear rate, streamlines), on the CPU cores at the same time as the particle dynamics on an NVIDIA GPU; without a GPU, one after the other.</div>
       <div class="subh">Capillary underfill (parallel plates)</div>
       <div class="g2">${num("options.viscosity.underfill.gap_um", "Gap", "µm")}${num("options.viscosity.underfill.length_mm", "Flow length", "mm")}${num("options.viscosity.underfill.gamma_mN_m", "Surface tension", "mN/m")}${num("options.viscosity.underfill.theta_deg", "Contact angle", "°")}</div>
       <div class="subh">Filler settling</div>
@@ -1656,7 +1658,7 @@
       { x: c.phi, y: c.mp, color: "#8250df", dash: [6, 4], label: "Maron–Pierce" },
       { x: c.phi, y: c.batchelor, color: "#1a7f37", dash: [3, 3], label: "Batchelor" },
       { x: c.phi, y: c.hs, color: "#57606a", dash: [2, 3], label: "Hashin–Shtrikman lower bound" },
-      { x: [p.phi], y: [p.mu_r_rve], color: "#d1242f", marker: true, width: 0, label: "RVE flow solve" },
+      ...(p.mu_r_rve != null ? [{ x: [p.phi], y: [p.mu_r_rve], color: "#d1242f", marker: true, width: 0, label: "RVE flow solve" }] : []),
       ...(p.dem && !p.dem.error ? [{ x: [p.phi], y: [p.dem.mu_r], color: "#bf8700", marker: true, width: 0, label: "Particle dynamics" }] : [])] }));
     const dm = p.dem;
     if (dm && !dm.error) draws.push(() => CH.line($("#viscDem"), { xlabel: "Sheared strain", ylabel: "Relative viscosity μr", series: [
@@ -1696,10 +1698,11 @@
     return `<div class="rgrid">
       <div class="box"><div class="bt">Relative viscosity <span class="hint">μ / μ<sub>resin</sub>, φ = ${fmt(100 * p.phi)} vol% filler${p.bubbles ? ` · ${fmt(100 * p.bubbles)} vol% bubbles` : ""}</span></div>
         ${kv([["Best estimate", `<b class="mono">${fmt(p.mu_r)}</b> <span class="hint">${esc(p.basis)}</span>`],
-              ["RVE flow solve (isotropic mean)", fmt(p.mu_r_rve) + (p.ci95 ? ` ± ${fmt(p.ci95)}` : "")],
+              p.rve_skipped ? ["RVE flow solve", `<span class="hint">not run (not needed here)</span>`]
+                : ["RVE flow solve (isotropic mean)", fmt(p.mu_r_rve) + (p.ci95 ? ` ± ${fmt(p.ci95)}` : "")],
               p.dem && !p.dem.error ? ["Particle dynamics", `${fmt(p.dem.mu_r)} ± ${fmt(p.dem.se)}`] : null,
-              ["Shear yz / xz / xy", ["yz", "xz", "xy"].map((k) => fmt(p.shear[k])).join(" / ")],
-              ["Extension (η<sub>E</sub> / 3μ)", fmt(p.extension)],
+              p.shear ? ["Shear yz / xz / xy", ["yz", "xz", "xy"].map((k) => fmt(p.shear[k])).join(" / ")] : null,
+              p.shear ? ["Extension (η<sub>E</sub> / 3μ)", fmt(p.extension)] : null,
               ["Maximum packing fraction φm", `${fmt(p.phi_m)} <span class="hint">${esc(p.phi_m_basis || "")}${p.jamming ? ` · ${p.jamming.n_particles} particles` : ""}${p.friction ? ` · frictional (random close packing ${fmt(p.phi_m_rcp)} × 0.914)` : ""}</span>`],
               p.farr_groot != null && !/Farr/.test(p.phi_m_basis || "") ? ["Farr–Groot random close packing", fmt(p.farr_groot)] : null,
               p.desmond_weeks ? ["Desmond–Weeks φ<sub>RCP</sub>", `${fmt(p.desmond_weeks.phi)} <span class="hint">δ ${fmt(p.desmond_weeks.delta)}, skewness ${fmt(p.desmond_weeks.skewness)}${p.desmond_weeks.in_range ? "" : " · outside its fitted range δ ≤ 0.4"}</span>`] : null,
@@ -1721,11 +1724,12 @@
         <div class="row gap" style="align-items:center;margin-top:4px"><input type="range" id="ufTime" min="0" max="1000" value="0" style="flex:1"><span class="mono" id="ufRead" style="min-width:330px;text-align:right"></span></div>
         <div class="hint">The dots are the bumps (schematic). The compound's front starts as fast as it can and slows as the wetted length grows; the resin alone fills ${fmt(uf.t_compound_s / uf.t_resin_s)}× faster.</div></div>
       <div class="box" style="grid-column:1/-1"><div class="bt">Resin flow inside the RVE <span class="hint">simple shear in the xy plane at the reference shear rate</span><div class="grow"></div>
-          ${viewBtn("visc_gd", "Local shear rate")}${linesBtn("visc_v", "Animated resin flow")}</div>
-        <p class="hint">The animated view moves tracers along the resin streamlines at the local speed: the layers slide past each other, the resin swerves around the fillers and hurries through the narrow gaps between them — the places where the local shear rate, and so the extra dissipation that makes the compound viscous, is highest.</p></div>
+          ${p.rve_skipped ? "" : viewBtn("visc_gd", "Local shear rate") + linesBtn("visc_v", "Animated resin flow")}</div>
+        ${p.rve_skipped ? `<p class="hint">Not computed in this run: the particle dynamics gives the viscosity here (${esc(p.rve_skipped.replace(/^the particle dynamics gives the answer \(|\)$/g, ""))}), so the RVE flow solve was skipped. Switch on <span class="ui">Also solve the resin flow on the RVE</span> in the viscosity options to see the resin flow — on a PC with an NVIDIA GPU it runs at the same time as the particle dynamics.</p>` : ""}
+        <p class="hint" ${p.rve_skipped ? 'style="display:none"' : ""}>The animated view moves tracers along the resin streamlines at the local speed: the layers slide past each other, the resin swerves around the fillers and hurries through the narrow gaps between them — the places where the local shear rate, and so the extra dissipation that makes the compound viscous, is highest.</p></div>
       <div class="box" style="grid-column:1/-1"><div class="bt">Filler settling before gelation <span class="hint">${fmt(p.settle_min)} min, Stokes velocity × hindered settling (1 − φ)^4.65</span></div>
         ${tbl(["Filler", "Diameter (µm)", "Density (g/cm³)", "Velocity (µm/min)", "Distance (µm)"], p.settling.map((s) => [esc(s.name), fmt(s.d_um), fmt(s.rho), fmt(s.v_m_s * 6e7), fmt(s.distance_m * 1e6)]))}</div>
-      <div class="box" style="grid-column:1/-1"><div class="bt">Solver record</div>${tbl(["Load", "Iterations", "Residual", "Converged", "Time"], Object.entries(p.stats).map(([k, s]) => [k, s.iterations, fmt(s.residual), s.converged ? "yes" : "no", secs(s.seconds)]))}</div>
+      ${Object.keys(p.stats || {}).length ? `<div class="box" style="grid-column:1/-1"><div class="bt">Solver record</div>${tbl(["Load", "Iterations", "Residual", "Converged", "Time"], Object.entries(p.stats).map(([k, s]) => [k, s.iterations, fmt(s.residual), s.converged ? "yes" : "no", secs(s.seconds)]))}</div>` : ""}
     </div>`;
   }
   /* Underfill flow front: two lanes under the same die, the resin alone and
