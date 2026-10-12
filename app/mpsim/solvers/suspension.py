@@ -68,7 +68,7 @@ KN_FACTOR = 1000.0      # contact stiffness against the strongest attraction (se
 RUN_SCATTER = 2.5
 # arch: the running Taichi backend; prefer: what it was started for;
 # cuda_failed: why a run on the GPU failed (the process then stays on the CPU)
-_TI = {"arch": None, "prefer": None, "cuda_failed": None}
+_TI = {"arch": None, "prefer": None, "cuda_failed": None, "said": None, "logged": None}
 
 
 def init_backend(prefer="auto", log=None):
@@ -99,13 +99,17 @@ def init_backend(prefer="auto", log=None):
                 why = "no NVIDIA GPU with CUDA found"
                 continue
             _TI["arch"], _TI["prefer"] = got, prefer
-            if log:
-                if got == "cuda":
-                    log("    particle dynamics on the GPU (CUDA)")
-                else:
-                    reason = ("as set" if not want_gpu else
-                              f"the GPU run failed: {_TI['cuda_failed']}" if _TI["cuda_failed"] else why or "")
-                    log(f"    particle dynamics on the CPU{f' ({reason})' if reason else ''}")
+            if got == "cuda":
+                said = "particle dynamics on the GPU (CUDA)"
+            else:
+                reason = ("as set" if not want_gpu else
+                          f"the GPU run failed: {_TI['cuda_failed']}" if _TI["cuda_failed"] else why or "")
+                said = f"particle dynamics on the CPU{f' ({reason})' if reason else ''}"
+            _TI["said"] = said
+            # said once per change, not at every run (each run starts Taichi again)
+            if log and said != _TI.get("logged"):
+                log("    " + said)
+                _TI["logged"] = said
             return got
         except Exception as e:                                 # noqa: BLE001
             last = e
@@ -116,6 +120,17 @@ def init_backend(prefer="auto", log=None):
             except Exception:                                  # noqa: BLE001
                 pass
     raise RuntimeError(f"Taichi could not start ({last})")
+
+
+def device_text(prefer="auto", log=None):
+    """Where the particle dynamics runs, for the stage line: starts the
+    backend if it is not running (and logs the choice)."""
+    if init_backend(prefer, log) == "cuda":
+        return "the NVIDIA GPU (CUDA)"
+    if prefer == "cpu":
+        return "the CPU (as set)"
+    said = _TI.get("said") or ""
+    return "the CPU (" + said.split("(", 1)[1] if "(" in said else "the CPU"
 
 
 def release():

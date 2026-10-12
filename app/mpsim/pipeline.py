@@ -647,8 +647,9 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     mu_res = float(VI.matrix_flow(vo["model"], [gd])[0])
     tot = do["strain"]
     stage_name = "Viscosity · particle dynamics"
-    detail = (f"{len(radii)} spheres sheared in the resin at {gd:g} 1/s - lubrication, contacts with friction "
-              f"{do['mu_f']:g}, van der Waals")
+    dev = SU.device_text(do["backend"], log)
+    detail = (f"{len(radii)} spheres sheared in the resin at {gd:g} 1/s on {dev} - lubrication, contacts with "
+              f"friction {do['mu_f']:g}, van der Waals")
     prog.stage(stage_name, detail, units=3.0)
     last = {"t": 0.0, "s": -1.0}
 
@@ -735,7 +736,8 @@ def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, eve
     rates = [float(g) for g in rates if abs(math.log10(g / gd_ref)) > 0.15]
     pts = [(gd_ref, res_ref["mu_r"], res_ref["se"])]
     stage = "Viscosity · particle dynamics, flow curve"
-    prog.stage(stage, f"{len(rates)} further shear rates, {len(radii)} spheres each", units=float(len(rates)))
+    prog.stage(stage, f"{len(rates)} further shear rates, {len(radii)} spheres each, on {SU.device_text(do['backend'])}",
+               units=float(len(rates)))
     for k, g in enumerate(rates):
         mu_g = float(VI.matrix_flow(vo["model"], [g])[0])
         last = {"t": 0.0}
@@ -2724,7 +2726,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             vo = opts["viscosity"]
             vtol = 1e-5 if spec["rve"]["quality"] == "fast" else 1e-6
             prog.stage("Viscosity · creeping flow of the resin around the fillers",
-                       "voxel FE (B-bar) · FFT-preconditioned CG · 3 shear planes + extension", units=4.0)
+                       "voxel FE (B-bar) · FFT-preconditioned CG · 3 shear planes + extension · CPU cores", units=4.0)
             vnames = ["yz", "xz", "xy", "extension"]
 
             def cbv(plane, it, res):
