@@ -774,7 +774,7 @@ class Suspension:
         return it
 
     def run(self, strain, every=0.05, progress=None, should_stop=None, max_disp=2e-3, dt_max=5e-3,
-            frames=0.0, frame_every=0.02):
+            frames=0.0, frame_every=0.02, live=None):
         """Shears the box to the given total strain. Returns the time series
         of the relative viscosity and its parts; with frames > 0 also the
         positions and speeds (relative to the shear) over that last strain."""
@@ -828,6 +828,8 @@ class Suspension:
                     self._push_par()
                 if progress:
                     progress(self.strain, eta, its)
+                if live is not None and live.due():
+                    live(self, eta)
             # the step: no particle moves more than max_disp relative to the
             # shear (the affine part is exact)
             dt = min(dt_max, max_disp / umax)
@@ -880,15 +882,52 @@ def hamaker(filler_id, resin_id, eps_f=None, eps_r=None, sigma_f=0.0, T=298.15):
     return zero + disp
 
 
+class _LiveDem:
+    """The particle dynamics' frames for the live view (mpsim/live.Slot):
+    positions in um inside the box and speeds relative to the shear; above
+    40 000 spheres a slab across z, chosen at the start."""
+
+    def __init__(self, slot, a0):
+        self.slot, self.a0, self.keep = slot, a0, None
+
+    def due(self):
+        return self.slot.due()
+
+    def start(self, s):
+        r = s.r * self.a0 * 1e6
+        L = s.L * self.a0 * 1e6
+        self.keep = None
+        if s.n > 40000:
+            z = np.mod(s.K["x"].to_numpy()[:, 2] * self.a0 * 1e6, L)
+            t = L * 40000.0 / s.n
+            self.keep = np.abs(z - 0.5 * L) < 0.5 * t
+        info = getattr(self.slot, "static_info", None) or {}
+        ph = info.get("phase")
+        ph = np.zeros(s.n, np.uint8) if ph is None or len(ph) != s.n else np.asarray(ph, np.uint8)
+        keep = self.keep if self.keep is not None else slice(None)
+        self.slot.particles_static(r[keep], ph[keep], L, info.get("names") or ["Filler"],
+                                   info.get("colors") or ["#4c9be8"], shown_of=s.n)
+
+    def __call__(self, s, eta):
+        L = s.L * self.a0 * 1e6
+        x = np.mod(s.K["x"].to_numpy() * self.a0 * 1e6, L)
+        v = np.linalg.norm(s.K["u"].to_numpy(), axis=1)
+        if self.keep is not None:
+            x, v = x[self.keep], v[self.keep]
+        self.slot.particles(x, v, s.strain, eta)
+
+
 def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
                     strain=5.0, settle=1.0, seed=1, backend="auto", log=None, progress=None, should_stop=None,
-                    bound_m=0.0, adhesion_J_m2=0.0, frames=None):
-    """See _shear_viscosity. On the GPU first; a run that fails there (the
+                    bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None):
+    """See _shear_viscosity. live: a mpsim.live.Slot for the live view (its
+    static_info may give the phase names, colours and the phase of every
+    sphere: {"names", "colors", "phase"}). On the GPU first; a run that fails there (the
     driver, the GPU's memory) is redone on the CPU, and the process stays
     on the CPU. out['gpu_fallback'] says why, when it happened."""
     kw = dict(roughness_m=roughness_m, hmin_m=hmin_m, hamaker_J=hamaker_J, mu_f=mu_f, strain=strain, settle=settle,
               seed=seed, log=log, progress=progress, should_stop=should_stop, bound_m=bound_m,
-              adhesion_J_m2=adhesion_J_m2, frames=frames)
+              adhesion_J_m2=adhesion_J_m2, frames=frames, live=live)
     try:
         out = _shear_viscosity(radii_m, phi, mu_resin, gd, backend=backend, **kw)
     except InterruptedError:
@@ -907,7 +946,7 @@ def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, h
 
 def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
                      strain=5.0, settle=1.0, seed=1, backend="auto", log=None, progress=None, should_stop=None,
-                     bound_m=0.0, adhesion_J_m2=0.0, frames=None):
+                     bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None):
     """Relative viscosity of spheres of the given radii (m) at volume fraction
     phi in a resin of viscosity mu_resin (Pa s) sheared at gd (1/s), from the
     particle dynamics. The surface roughness and the closest approach are
@@ -927,6 +966,7 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
     phi = float(phi) * float(np.sum(r ** 3) / np.sum(r0 ** 3))
     a0 = float(r.max())
     maxn = None
+    lv = _LiveDem(live, a0) if live is not None else None
     while True:
         # the fields of an earlier run are freed first (Taichi keeps every
         # field until it is reset)
@@ -940,8 +980,10 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
         try:
             s.pack()
             # frames of the last strain for the viewer (frames=0: none)
+            if lv is not None:
+                lv.start(s)
             out = s.run(strain, every=0.02, progress=progress, should_stop=should_stop,
-                        frames=min(1.0, strain / 2) if frames is None else frames)
+                        frames=min(1.0, strain / 2) if frames is None else frames, live=lv)
             break
         except NeighbourOverflow:
             if s.maxn >= 4096:

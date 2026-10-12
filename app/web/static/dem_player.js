@@ -27,7 +27,8 @@
     return JET[JET.length - 1].slice(1);
   };
 
-  window.DemPlayer = async function (host, jobId, dem, built, name) {
+  window.DemPlayer = async function (host, jobId, dem, built, name, opts) {
+    const fill = !!(opts && opts.fill);          // the whole 3D/2D View instead of a box of the Result Viewer
     if (!window.vtk || !host) return null;
     const v = built || 0;
     const base = `/api/jobs/${jobId}/view/`;
@@ -35,7 +36,7 @@
       .map((f) => bin(`${base}${f}?v=${v}`)));
     const P = new Float32Array(pos), Sp = new Float32Array(spd), Rd = new Float32Array(rad), Ph = new Uint8Array(ph);
     const n = dem.n, F = dem.frames, L = dem.box_um;
-    host.innerHTML = `<div style="position:relative"><div class="demview" style="position:relative;height:360px;border:1px solid var(--line,#d0d7de);border-radius:6px;overflow:hidden"></div>
+    host.innerHTML = `<div style="position:relative${fill ? ";flex:1;min-height:0;display:flex;flex-direction:column" : ""}"><div class="demview" style="position:relative;${fill ? "flex:1;min-height:0" : "height:360px"};border:1px solid var(--line,#d0d7de);border-radius:6px;overflow:hidden"></div>
       <div data-dem="legend" style="position:absolute;right:10px;top:10px;background:rgba(255,255,255,.88);border:1px solid #d0d7de;border-radius:4px;padding:6px 8px;font:11px system-ui,sans-serif;color:#1f2328;pointer-events:none"></div></div>
       <div class="row gap" style="align-items:center;margin-top:6px;flex-wrap:wrap">
         <button class="btn sm" data-dem="play">Pause</button>
@@ -180,6 +181,96 @@
     state.id = requestAnimationFrame(tick);
     return {
       stop() { if (state.id) cancelAnimationFrame(state.id); state.id = null; try { grw.delete(); } catch (e) { } },
+    };
+  };
+
+  /* The particle dynamics while it runs: the frames the solver writes about
+     once a second (mpsim/live.py), the spheres coloured by their speed
+     relative to the shear. init: {slot, radii, phase, box_um, names, colors,
+     n, n_total}; frame(pos, speed, header) moves them. */
+  window.DemLive = function (host, init) {
+    if (!window.vtk || !host) return null;
+    const n = init.n, L = init.box_um;
+    host.innerHTML = `<div class="demview" style="position:absolute;inset:0"></div>
+      <div data-dem="legend" style="position:absolute;right:10px;top:10px;background:rgba(255,255,255,.88);border:1px solid #d0d7de;border-radius:4px;padding:6px 8px;font:11px system-ui,sans-serif;color:#1f2328;pointer-events:none"></div>`;
+    const view = host.querySelector(".demview");
+    const GRW = ns("Rendering.Misc.vtkGenericRenderWindow"), PD = ns("Common.DataModel.vtkPolyData");
+    const DA = ns("Common.Core.vtkDataArray"), Glyph = ns("Rendering.Core.vtkGlyph3DMapper");
+    const Sphere = ns("Filters.Sources.vtkSphereSource"), Actor = ns("Rendering.Core.vtkActor");
+    const Mapper = ns("Rendering.Core.vtkMapper"), CTF = ns("Rendering.Core.vtkColorTransferFunction");
+    const grw = GRW.newInstance({ background: [1, 1, 1] });
+    grw.setContainer(view);
+    grw.resize();
+    const ren = grw.getRenderer(), rw = grw.getRenderWindow();
+    const pts = new Float32Array(3 * n), diam = new Float32Array(n), col = new Float32Array(n);
+    for (let i = 0; i < n; i++) diam[i] = 2 * init.radii[i];
+    const pd = PD.newInstance();
+    pd.getPoints().setData(pts, 3);
+    const cArr = DA.newInstance({ name: "c", numberOfComponents: 1, values: col });
+    pd.getPointData().addArray(DA.newInstance({ name: "diam", numberOfComponents: 1, values: diam }));
+    pd.getPointData().addArray(cArr);
+    pd.getPointData().setScalars(cArr);
+    const gm = Glyph.newInstance();
+    gm.setInputData(pd, 0);
+    gm.setInputConnection(Sphere.newInstance({ radius: 0.5, thetaResolution: 14, phiResolution: 10 }).getOutputPort(), 1);
+    gm.setScaleArray("diam");
+    gm.setScaleMode(Glyph.ScaleModes.SCALE_BY_MAGNITUDE);
+    gm.setScaleFactor(1.0);
+    gm.setScalarVisibility(true);
+    gm.setUseLookupTableScalarRange(true);
+    const actor = Actor.newInstance();
+    actor.setMapper(gm);
+    actor.getProperty().setSpecular(0.35);
+    actor.getProperty().setSpecularPower(30);
+    ren.addActor(actor);
+    const corners = [];
+    for (const z of [0, L]) for (const y of [0, L]) for (const x of [0, L]) corners.push(x, y, z);
+    const edges = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+    const lines = new Uint32Array(edges.length * 3);
+    edges.forEach(([a, b], k) => { lines[3 * k] = 2; lines[3 * k + 1] = a; lines[3 * k + 2] = b; });
+    const box = PD.newInstance();
+    box.getPoints().setData(new Float32Array(corners), 3);
+    box.getLines().setData(lines);
+    const bm = Mapper.newInstance();
+    bm.setInputData(box);
+    const ba = Actor.newInstance();
+    ba.setMapper(bm);
+    ba.getProperty().setColor(0.35, 0.38, 0.42);
+    ren.addActor(ba);
+    const legend = host.querySelector('[data-dem="legend"]');
+    const fmtv = (x) => (x === 0 ? "0" : Math.abs(x) >= 100 || Math.abs(x) < 0.01 ? x.toExponential(1) : x.toPrecision(2));
+    let vmax = 0;
+    function lut(v) {
+      vmax = v;
+      const c = CTF.newInstance();
+      JET.forEach(([t, r, g, b]) => c.addRGBPoint(t * v, r, g, b));
+      gm.setLookupTable(c);
+      const stops = JET.map(([t, r, g, b]) => `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)}) ${t * 100}%`).join(",");
+      legend.innerHTML = `<b>Speed relative to the shear</b><br><span style="color:#57606a">shear rate × largest radius</span>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px"><span>0</span><div style="width:110px;height:10px;border:1px solid #afb8c1;background:linear-gradient(to right,${stops})"></div><span>${fmtv(v)}</span></div>`;
+    }
+    const cam = ren.getActiveCamera();
+    cam.setFocalPoint(L / 2, L / 2, L / 2);
+    cam.setPosition(L / 2 + 0.9 * L, L / 2 + 0.7 * L, L / 2 + 2.3 * L);
+    cam.setViewUp(0, 1, 0);
+    ren.resetCameraClippingRange();
+    const ro = new ResizeObserver(() => { try { grw.resize(); rw.render(); } catch (e) { } });
+    ro.observe(view);
+    return {
+      slot: init.slot, n,
+      frame(pos, speed, h) {
+        pts.set(pos.subarray(0, 3 * n));
+        col.set(speed.subarray(0, n));
+        // the colour range follows the speeds, without flickering at every frame
+        const p99 = Math.max(h.speed_p99 || 1, 1e-9);
+        if (!vmax || p99 > 1.25 * vmax || p99 < 0.6 * vmax) lut(p99);
+        pd.getPoints().modified();
+        cArr.modified();
+        pd.modified();
+        ren.resetCameraClippingRange();
+        rw.render();
+      },
+      dispose() { ro.disconnect(); try { grw.delete(); } catch (e) { } host.innerHTML = ""; },
     };
   };
 })();

@@ -41,6 +41,7 @@ from . import parallel as PAR
 from . import poro as PO
 from . import rve as R
 from . import spec as S
+from . import live as LV
 from . import visual as V
 from .solvers import complex_cond as CC
 from .solvers import conduction as CD
@@ -662,6 +663,7 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
         if strain >= last["s"] + 1.0:
             last["s"] = math.floor(strain)
             log(f"    strain {strain:.2f}: μr {eta:.4g} (CG {its} iterations)")
+    live = _dem_slot("dem", f"Particle dynamics, {gd:g} 1/s", spec, solid, owner, viewer)
     log(f"    particle dynamics: {len(radii)} spheres, φ {phi:.3f}, resin {mu_res:.4g} Pa·s at {gd:g} 1/s, "
         f"roughness {do['roughness_nm']:g} nm, closest approach {do['hmin_nm']:g} nm, friction {do['mu_f']:g}, "
         f"bound layer {do['bound_nm']:g} nm, adhesion {do['adhesion_mJ_m2']:g} mJ/m², "
@@ -669,7 +671,9 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     out = SU.shear_viscosity(radii, phi, mu_res, gd, roughness_m=do["roughness_nm"] * 1e-9,
                              hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
                              strain=tot, backend=do["backend"], log=log, progress=cb, should_stop=should_stop,
-                             bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3)
+                             bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, live=live)
+    if live is not None:
+        live.done(eta=out["eta_mean"])
     prog.end()
     anim = False
     if viewer is not None and out.get("frames_um") is not None:
@@ -784,9 +788,11 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     return res, rinfo
 
 
-def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop):
+def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop, live_dir=None):
     """The particle dynamics in a process of its own (see _DemProcess): log
-    lines, stage lines and the result go back through the queue."""
+    lines, stage lines and the result go back through the queue; the live
+    frames go to the run's live folder as here."""
+    _LIVE["dir"] = live_dir
     try:
         def log(*a):
             q.put(("log", " ".join(str(x) for x in a)))
@@ -813,6 +819,7 @@ def _dem_child(spec, solid, phi, vo, labels, want_anim, q, stop):
 
 
 _LIVE_DEM = set()                       # particle-dynamics processes not yet collected
+_LIVE = {"dir": None}                   # the live/ folder of the run going on in this process
 
 
 class _DemProcess:
@@ -830,7 +837,7 @@ class _DemProcess:
         self.t_said = 0.0
         labels = viewer.meta.get("labels") if viewer is not None else None
         self.p = ctx.Process(target=_dem_child, args=(spec, solid, phi, vo, labels, viewer is not None, self.q,
-                                                      self.stop), daemon=True)
+                                                      self.stop, _LIVE["dir"]), daemon=True)
         self.p.start()
         _LIVE_DEM.add(self)
 
@@ -906,6 +913,29 @@ class _DemProcess:
         return res
 
 
+def _dem_slot(slot, name, spec, solid, owner, viewer):
+    """The live-view slot of a particle-dynamics run (None without a live
+    folder): the phase names, colours and the phase of every sphere."""
+    if not _LIVE["dir"]:
+        return None
+    nph = int(np.max(owner)) + 1 if len(owner) else 1
+    names = [f"Filler {k + 1}" for k in range(nph)]
+    if solid is not None:
+        names = [spec["phases"][i]["name"] for i in solid]
+    labs = (viewer.meta.get("labels") or []) if viewer is not None else []
+    colors = []
+    for k, nm in enumerate(names):
+        lb = next((x for x in labs if x.get("name") == nm), None)
+        colors.append(lb["color"] if lb else V.PHASE_COLORS[(k + 1) % len(V.PHASE_COLORS)])
+    if solid is None and _LIVE.get("dem_info"):
+        names, colors = _LIVE["dem_info"]                # the further rates: as the first run
+    elif solid is not None:
+        _LIVE["dem_info"] = (names, colors)
+    s = LV.Slot(_LIVE["dir"], slot, name, kind="particles")
+    s.static_info = {"names": names, "colors": colors, "phase": np.asarray(owner, np.uint8)}
+    return s
+
+
 def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, event, prog, should_stop):
     """The particle dynamics at further shear rates, log-spaced over the
     flow curve's range, with the resin's viscosity at each rate. Returns the
@@ -939,10 +969,14 @@ def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, eve
                 last["t"] = now
                 event("stage", name=stage, detail=f"{g:.3g} 1/s ({k + 1} of {len(rates)}) · strain {strain:.2f}, μr {eta:.3g}",
                       progress=prog.sub((k + min(strain / do["strain"], 0.999)) / len(rates)))
+        live = _dem_slot(f"dem_rate{k + 1}", f"Particle dynamics, {g:.3g} 1/s", None, None, owner, None)
         out = SU.shear_viscosity(radii, phi, mu_g, g, roughness_m=do["roughness_nm"] * 1e-9,
                                  hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
                                  strain=do["strain"], backend=do["backend"], progress=cb, should_stop=should_stop,
-                                 bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, frames=0.0)
+                                 bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, frames=0.0,
+                                 live=live)
+        if live is not None:
+            live.done(eta=out["eta_mean"])
         pts.append((g, out["eta_mean"], out["eta_se"]))
         log(f"    flow curve: {g:.3g} 1/s, resin {mu_g:.4g} Pa·s -> μr {out['eta_mean']:.4g} ± {out['eta_se']:.2g} "
             f"({out['seconds']:.0f} s)")
@@ -1406,8 +1440,13 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
             if done is not None:
                 r = done
             else:
+                def cb_d(it, res, d=d):
+                    cb(d, it, res, tol, None)
+                if first and _LIVE["dir"]:
+                    cb_d.snapshot = LV.cond_snapshot(LV.Slot(_LIVE["dir"], f"{key}_{d}", f"{COND[key]['title']} {d}"),
+                                                     di, bool(spec["rve"].get("film")), LV.LABEL.get(key, "Potential"))
                 r = CD.solve_direction(labels, v_used, di, tol=tol, rpair=rpair, cmask=cmask, rcpair=rcpair,
-                                       callback=lambda it, res: cb(d, it, res, tol, None),
+                                       callback=cb_d,
                                        should_stop=should_stop, flux_h=(h_um * 1e-6) if first else None,
                                        film=bool(spec["rve"].get("film")))
                 r["method"] = "fv-film" if spec["rve"].get("film") else ("fv-interface" if iface else "fv-periodic")
@@ -1679,6 +1718,8 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
     def add(fn, kind, t, units=None):
         t["_kind"] = kind
         t["mem_gb"] = mem_of[kind]
+        if first and fn is PAR.cond_task and _LIVE["dir"]:
+            t["live_dir"] = _LIVE["dir"]
         t["_units"] = units_of[kind] if units is None else units
         tasks.append((fn, t))
     for key in COND:
@@ -1977,6 +2018,8 @@ def _elastic_solve(labels, table, spec, h_um, backend, prog, log, event, should_
             workers = int(numba.get_num_threads())
         except Exception:                                            # noqa: BLE001
             workers = -1
+        if first and _LIVE["dir"]:
+            cbf.snapshot = LV.Multi(_LIVE["dir"], "elastic", "Elasticity, load", "Displacement fluctuation |u| (voxels)")
         rf = FA.homogenize(labels, E, nu, al, tol=tol, workers=workers, progress=cbf, should_stop=should_stop,
                            keep_thermal_stress=bool(first), stress_bc="free" if free else "th")
         stats = [dict(st, load=fnames[k]) for k, st in rf["stats"].items()]
@@ -2173,6 +2216,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
     os.makedirs(out_dir, exist_ok=True)
     fig_dir = os.path.join(out_dir, "figures")
     os.makedirs(fig_dir, exist_ok=True)
+    # the live frames of the solves going on (mpsim/live.py), for the browser
+    _LIVE["dir"] = os.path.join(out_dir, "live")
+    LV.clear(_LIVE["dir"])
     PB.set_log_dir(os.path.join(out_dir, "logs"))
 
     limits = limits or (form or {}).get("_limits") or {}
@@ -2333,6 +2379,14 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                        "target": spec.get("composition")}
         if "porosity" in results_first:
             props["porosity"] = {"title": "Porosity", **results_first["porosity"]}
+        # each realisation's own values, beside their mean (two or more)
+        seeds_used = [int(z.get("seed", 0)) for z in realisations]
+
+        def by_real(title, rows, labels, unit):
+            rows = [[float(v) for v in np.atleast_1d(np.asarray(r_, float))] for r_ in (rows or [])]
+            if len(rows) < 2:
+                return None
+            return {"title": title, "seeds": seeds_used[:len(rows)], "labels": labels, "rows": rows, "unit": unit}
 
         for key in COND:
             if key not in need or key not in results_first or not samples.get(key):
@@ -2404,6 +2458,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 tand = np.array(S.label_values(table, "tan_d"))
                 entry["tan_d"] = {d: float(np.dot(tand, w)) for d, w in f0["energy"].items()}
                 entry["tan_d_iso"] = float(np.mean(list(entry["tan_d"].values())))
+            entry["by_realisation"] = [b_ for b_ in [by_real(COND[key]["title"], samples[key], ["x", "y", "z"],
+                                                               COND[key]["unit"])] if b_]
             props[key] = entry
 
         if "cte" in need and "cte" in results_first:
@@ -2425,6 +2481,10 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                      "E_ci95": e_ci, "refs": refs, "hs": hs, "stats": el["stats"],
                      "asymmetry": el["asymmetry"], "void_ratio": el.get("void_ratio"),
                      "seeds_alpha": samples["cte_alpha"], "delta_T": opts["delta_T"],
+                     "by_realisation": [b_ for b_ in (by_real("Thermal expansion", samples["cte_alpha"],
+                                                              ["αx", "αy", "αz"], "ppm/K"),
+                                                      by_real("Young's modulus", samples["cte_E"], ["Ex", "Ey", "Ez"],
+                                                              "GPa")) if b_],
                      "stress_stats": el.get("stress_stats"), "above_tg": el.get("above_tg")}
             solid = [i for i in range(len(table)) if E_l[i] > 0 and comp_vf[i] > 0]
             if len(solid) == 2 and not any(comp_vf[i] > 0 for i in void_labels):
@@ -2559,6 +2619,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             p0 = results_first["permeability"]
             ptype = results_first.get("porosity", {})
             entry = {"title": "Permeability", "unit": "m²", "diag": mean, "ci95": ci,
+                     "by_realisation": [b_ for b_ in [by_real("Permeability", samples["permeability"], ["Kx", "Ky", "Kz"],
+                                                              "m²")] if b_],
                      "tensor": p0["tensor"], "percolation": p0["percolation"], "stats": p0["stats"],
                      "open_porosity": ptype.get("open"), "closed_porosity": ptype.get("closed"),
                      "darcy": [m / 9.869233e-13 for m in mean]}
@@ -2604,6 +2666,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             taus = [v["tortuosity"] for v in t0_.values() if v["tortuosity"]]
             deffs = [v["d_eff"] for v in t0_.values() if v["d_eff"]]
             entry = {"title": "Diffusion and tortuosity", "by_direction": t0_,
+                     "by_realisation": [b_ for b_ in [by_real("Effective diffusivity / free diffusivity",
+                                                              samples.get("tortuosity"), list(dirs), "-")] if b_],
                      "open_porosity": ptype.get("open"), "closed_porosity": ptype.get("closed")}
             if deffs:
                 de = float(np.mean(deffs))
@@ -2642,6 +2706,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if "viscosity" in need and "viscosity" in results_first:
             props["viscosity"] = _viscosity_entry(spec, opts, table, realisations, results_first,
                                                   samples.get("viscosity") or [], checks)
+            props["viscosity"]["by_realisation"] = [b_ for b_ in [by_real(
+                "Relative viscosity, RVE flow solve", [[m_] for m_ in samples.get("viscosity") or []], ["μr"], "-")]
+                if b_]
         if "morphology" in need and "morphology" in results_first:
             props["morphology"] = results_first.get("morphology", {})
             props["profiles"] = results_first.get("profiles")
@@ -2994,6 +3061,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                             event("stage", name="Viscosity · creeping flow of the resin around the fillers",
                                   detail=f"voxel FE on the CPU cores, {plane} · at the same time on the GPU, {st_}",
                                   progress=prog.sub(min(k + 0.5, 3.99) / 4.0))
+                if first and _LIVE["dir"]:
+                    cbv.snapshot = LV.Multi(_LIVE["dir"], "viscosity", "Viscosity, shear",
+                                            "Resin velocity disturbance |v'| (wall speed per voxel)")
                 try:
                     vr = VI.effective_viscosity(labels, VI.phase_viscosities(table), tol=vtol, progress=cbv,
                                                 should_stop=should_stop, workers=vworkers, keep_field=first)

@@ -89,6 +89,7 @@
             <span id="v2dPos"></span>
           </div>
           <div class="vtip" id="vTip" hidden></div>
+          <div class="vdem" id="vDem" hidden></div>
           <div class="livebox" id="liveBox" hidden></div>
         </div>
       </section>
@@ -157,6 +158,10 @@
         <button data-r="runs"></button>
       </div>
       <div class="pscroll rpage on" id="r-display">
+        <div class="sec" id="vDemSec" style="display:none"><div class="sh" id="hDem"></div><div class="sb">
+          <label class="chk"><span class="switch"><input type="checkbox" id="vDemOn"><span></span></span> Show the sheared particles</label>
+          <div class="hint">The viscosity's particle dynamics in its own box, played frame by frame (colour by speed or by filler, GIF). Off: the RVE returns.</div>
+        </div></div>
         <div class="sec"><div class="sh" id="hScene"></div><div class="sb">
           <label class="chk"><span class="switch"><input type="checkbox" id="vFaces"><span></span></span> Field on the RVE faces</label>
           <label class="chk"><span class="switch"><input type="checkbox" id="vParticles" checked><span></span></span> Particle and pore surfaces</label>

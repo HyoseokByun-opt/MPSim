@@ -75,7 +75,7 @@
   const QUALITY_HINT = {
     fast: "6 voxels across the smallest feature, RVE ≥ 4 × the largest particle, ≥ 20 particles. Suitable for trend screening.",
     standard: "10 voxels across the smallest feature, RVE ≥ 7 × the largest particle, ≥ 50 particles. Suitable for routine analysis.",
-    accurate: "14 voxels across the smallest feature, RVE ≥ 10 × the largest particle, ≥ 100 particles and 3 realisations. Suitable for reporting.",
+    accurate: "14 voxels across the smallest feature, RVE ≥ 10 × the largest particle, ≥ 100 particles. Suitable for reporting; add realisations (2–3) for a confidence interval.",
   };
   const BACKEND = { puma: "NASA PuMA FE + periodic FV", puma_fv: "NASA PuMA FV", builtin: "built-in verification solver" };
   const backendTxt = (r) => (BACKEND[r.backend] || "") + (r.plan && r.plan.film ? " · thin film" : "");
@@ -1227,6 +1227,7 @@
   async function stopActive() { if (state.active) { await api("POST", `/api/jobs/${state.active}/stop`); toast("A stop has been requested."); } }
   function attach(id, preview) {
     state.active = id; state.seq = 0; state.history = {}; state.partial = {}; state.activeState = null; state.activePreview = !!preview;
+    state.lastStage = null;
     state.liveFigs = []; state.livePick = null;
     // the run being followed takes over the Result Viewer with its provisional result
     if (state.resultJob && state.resultJob !== id) { state.result = null; state.resultJob = null; }
@@ -1246,7 +1247,11 @@
       let text = "", liveDirty = false, partialDirty = false;
       for (const e of ev.events) {
         if (e.kind === "line") text += esc(e.data.text) + "\n";
-        else if (e.kind === "stage") text += `<span class="st">▶ ${esc(e.data.name)}</span> — ${esc(e.data.detail || "")}\n`;
+        else if (e.kind === "stage") {
+          // a stage's progress updates (same name) go to the status bar only
+          if (e.data.name !== state.lastStage) text += `<span class="st">▶ ${esc(e.data.name)}</span> — ${esc(e.data.detail || "")}\n`;
+          state.lastStage = e.data.name;
+        }
         else if (e.kind === "partial") state.partial[e.data.key] = e.data.value;
         else if (e.kind === "figure") { if (!state.liveFigs.some((f) => f.name === e.data.name)) state.liveFigs.push(e.data); liveDirty = true; }
         else if (e.kind === "partial_result") partialDirty = true;
@@ -1267,6 +1272,7 @@
       if (state.dtab === "conv") drawConv(sv);
       renderPartial();
       if (liveDirty || prev !== ev.state) renderLive(ev.state);
+      if (running) pollLive();
       if (partialDirty && running) loadPartialResult(state.active);
       if (["done", "failed", "stopped"].includes(ev.state) && prev !== ev.state && prev !== null) {
         if (ev.state === "done") {
@@ -1295,15 +1301,111 @@
     const running = ["running", "queued"].includes(st || state.activeState);
     const figs = state.liveFigs || [];
     const showing = running && state.active && (state.viewerJob !== state.active);
-    if (!showing) { box.hidden = true; return; }
+    if (!showing) { box.hidden = true; liveStop(); return; }
     const url = (f) => `/api/jobs/${state.active}/figures/${encodeURIComponent(f.name)}?t=${f.seconds || 0}`;
     const pick = figs.find((f) => f.name === state.livePick) || figs[figs.length - 1];
     box.hidden = false;
-    box.innerHTML = !figs.length
+    liveShell(box);
+    const ft = box.querySelector('[data-lt="figs"]');
+    if (ft) ft.textContent = `Figures so far${figs.length ? ` (${figs.length})` : ""}`;
+    box.querySelector("#liveFigs").innerHTML = !figs.length
       ? `<div class="livewait">${I("view3d")}<div><b>Results so far</b><br>The figures of each analysis appear here as soon as it finishes; the interactive 3D view opens when the run is complete.</div></div>`
       : `<div class="livemain"><div class="livehead"><b>Results so far</b> · ${figs.length} figure${figs.length === 1 ? "" : "s"} · <span class="hint">${esc(pick.title || pick.name)}</span></div>
           <img src="${url(pick)}" alt="${esc(pick.title || "")}"></div>
         <div class="livestrip">${figs.slice().reverse().map((f) => `<figure class="${f === pick ? "on" : ""}" data-livepick="${esc(f.name)}"><img src="${url(f)}" loading="lazy"><figcaption>${esc(f.group || "")}<br><small>${esc(f.title || f.name)}</small></figcaption></figure>`).join("")}</div>`;
+  }
+  /* ---- the live solve: the frames the running solves write about once a
+     second (mpsim/live.py) - a section of a field as it converges, or the
+     particles of the particle dynamics as they move. Solves side by side
+     each have a slot; the list picks the one to watch (by default the
+     newest one still running). */
+  const LIVE = { pick: null, user: false, seq: {}, dem: null, demSlot: null, tab: "solve", busy: false };
+  function liveShell(box) {
+    if (box.querySelector("#liveSolve")) return;
+    box.innerHTML = `<div class="livetabs"><button data-lt="solve" class="${LIVE.tab === "solve" ? "on" : ""}">Live solve</button><button data-lt="figs" class="${LIVE.tab === "figs" ? "on" : ""}">Figures so far</button>
+        <span class="hint" style="margin-left:8px">The interactive 3D view opens when the run is complete.</span></div>
+      <div class="livesolve" id="liveSolve" ${LIVE.tab === "solve" ? "" : "hidden"}><div class="lshead"><select id="liveSlot"><option value="">waiting for a solve…</option></select><span class="hint" id="liveRead"></span></div>
+        <div class="lsbody" id="liveBody"><div class="livewait">${I("view3d")}<div><b>Live solve</b><br>The conduction, elasticity and viscosity solves show a section of their field here while they converge, and the particle dynamics its moving particles. PuMA's solves report their residual only (Solver convergence).</div></div></div></div>
+      <div class="livefigs" id="liveFigs" ${LIVE.tab === "figs" ? "" : "hidden"}></div>`;
+    box.querySelector(".livetabs").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-lt]");
+      if (!b) return;
+      LIVE.tab = b.dataset.lt;
+      box.querySelectorAll("[data-lt]").forEach((x) => x.classList.toggle("on", x === b));
+      box.querySelector("#liveSolve").hidden = LIVE.tab !== "solve";
+      box.querySelector("#liveFigs").hidden = LIVE.tab !== "figs";
+      if (LIVE.tab === "solve") { LIVE.seq = {}; pollLive(); }
+    });
+    box.querySelector("#liveSlot").addEventListener("change", (e) => { LIVE.pick = e.target.value; LIVE.user = true; LIVE.seq = {}; pollLive(); });
+  }
+  function liveStop() {
+    if (LIVE.dem) { LIVE.dem.dispose(); LIVE.dem = null; LIVE.demSlot = null; }
+    LIVE.seq = {}; LIVE.pick = null; LIVE.user = false;
+  }
+  async function liveBin(name) {
+    const r = await fetch(`/api/jobs/${state.active}/live/${encodeURIComponent(name)}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    return r.arrayBuffer();
+  }
+  async function pollLive() {
+    const box = $("#liveBox");
+    if (LIVE.busy || !state.active || !box || box.hidden || !box.offsetParent || LIVE.tab !== "solve") return;
+    LIVE.busy = true;
+    try {
+      const slots = await api("GET", `/api/jobs/${state.active}/live`);
+      const sel = $("#liveSlot");
+      if (!sel) return;
+      const opts = slots.map((h) => `<option value="${esc(h.slot)}">${esc(h.name)}${h.state === "done" ? " — done" : ""}</option>`).join("");
+      if (sel.dataset.sig !== opts) { sel.innerHTML = opts || `<option value="">waiting for a solve…</option>`; sel.dataset.sig = opts; }
+      // the newest solve still running, unless one was picked by hand
+      const running = slots.find((h) => h.state !== "done");
+      if (!LIVE.user || !slots.some((h) => h.slot === LIVE.pick)) LIVE.pick = (running || slots[0] || {}).slot || null;
+      sel.value = LIVE.pick || "";
+      const h = slots.find((x) => x.slot === LIVE.pick);
+      if (h && LIVE.seq[h.slot] !== h.seq) { LIVE.seq[h.slot] = h.seq; await drawLive(h); }
+    } catch (e) { /* the run folder may not exist yet */ }
+    finally { LIVE.busy = false; }
+  }
+  async function drawLive(h) {
+    const body = $("#liveBody"), read = $("#liveRead");
+    if (!body) return;
+    if (h.kind === "particles") {
+      if (!LIVE.dem || LIVE.demSlot !== h.slot || LIVE.dem.n !== h.n) {
+        if (LIVE.dem) LIVE.dem.dispose();
+        const [rad, ph] = await Promise.all([liveBin(`${h.slot}_radii.f32`), liveBin(`${h.slot}_phase.u8`)]);
+        LIVE.dem = window.DemLive(body, { slot: h.slot, radii: new Float32Array(rad), phase: new Uint8Array(ph), box_um: h.box_um, n: h.n });
+        LIVE.demSlot = h.slot;
+      }
+      const [pos, sp] = await Promise.all([liveBin(`${h.slot}_pos.f32`), liveBin(`${h.slot}_speed.f32`)]);
+      if (LIVE.dem) LIVE.dem.frame(new Float32Array(pos), new Float32Array(sp), h);
+      read.innerHTML = `strain ${fmt(h.strain)} · μr ${h.eta != null ? fmt(h.eta) : "—"} · ${h.n.toLocaleString()}${h.n_total && h.n_total !== h.n ? ` of ${h.n_total.toLocaleString()}` : ""} spheres${h.state === "done" ? " · finished" : ""}`;
+      return;
+    }
+    if (LIVE.dem) { LIVE.dem.dispose(); LIVE.dem = null; LIVE.demSlot = null; }
+    const img = new Float32Array(await liveBin(`${h.slot}.f32`));
+    const [ny, nx] = h.shape;
+    let cv = body.querySelector("canvas");
+    if (!cv) { body.innerHTML = `<canvas></canvas><div class="lsleg"></div>`; cv = body.querySelector("canvas"); }
+    const W = body.clientWidth || 600, H = body.clientHeight || 400, dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const g = cv.getContext("2d");
+    const off = document.createElement("canvas");
+    off.width = nx; off.height = ny;
+    const og = off.getContext("2d"), id = og.createImageData(nx, ny);
+    const lo = h.vmin, hi = h.vmax, cm = (V.CMAPS && V.CMAPS.jet) || ((t) => [t, t, t]);
+    for (let r = 0; r < ny; r++) for (let c = 0; c < nx; c++) {
+      const v = img[r * nx + c], t = Math.min(1, Math.max(0, (v - lo) / (hi - lo || 1)));
+      const [R, G, B] = cm(t), o = 4 * ((ny - 1 - r) * nx + c);          // y up
+      id.data[o] = R * 255; id.data[o + 1] = G * 255; id.data[o + 2] = B * 255; id.data[o + 3] = 255;
+    }
+    og.putImageData(id, 0, 0);
+    g.fillStyle = "#fff"; g.fillRect(0, 0, cv.width, cv.height);
+    g.imageSmoothingEnabled = false;
+    const s = Math.min((cv.width - 20 * dpr) / nx, (cv.height - 20 * dpr) / ny);
+    g.drawImage(off, (cv.width - nx * s) / 2, (cv.height - ny * s) / 2, nx * s, ny * s);
+    const stops = [0, 0.25, 0.5, 0.75, 1].map((t) => { const [R, G, B] = cm(t); return `rgb(${Math.round(R * 255)},${Math.round(G * 255)},${Math.round(B * 255)}) ${t * 100}%`; }).join(",");
+    body.querySelector(".lsleg").innerHTML = `<b>${esc(h.label || "")}</b><div style="display:flex;align-items:center;gap:6px;margin-top:4px"><span>${fmt(lo)}</span><div style="width:110px;height:10px;border:1px solid #afb8c1;background:linear-gradient(to right,${stops})"></div><span>${fmt(hi)}</span></div>`;
+    read.innerHTML = `${esc(h.plane || "")} · iteration ${h.it ?? "—"} · residual ${h.res != null ? fmt(h.res) : "—"}${h.state === "done" ? " · converged" : ""}`;
   }
   async function loadPartialResult(id) {
     if (!id || (state.resultJob && state.resultJob !== id && state.result && !state.result.partial)) return;
@@ -1427,6 +1529,8 @@
     if (P.porosimetry) add("porosimetry", "Porosimetry", "porosimetry", "var(--c-struct)", "Structure analysis", secPorosimetry(P.porosimetry));
     if (P.pore_network) add("pore_network", "Pore network", "pore_network", "var(--c-struct)", "Structure analysis", secNetwork(P.pore_network));
     if (P.grains) add("grains", "Grain analysis", "grains", "var(--c-struct)", "Structure analysis", secGrains(P.grains));
+    // each realisation's own values under the section of its property
+    secs_.forEach((s) => { const p = P[s.id]; if (p && (p.by_realisation || []).length) s.html += realTables(p.by_realisation); });
     add("checks", `Verification (${r.check_counts.fail ? r.check_counts.fail + " failed" : r.check_counts.pass + " passed"})`, "checks", "var(--c-diff)", "Verification", `<div class="box">${`<div class="tablewrap"><table class="grid">${checksRows(r.checks)}</table></div>`}</div>`);
     add("input", "Input and RVE", "cube", "var(--c-gen)", "Verification", secInput(r));
     let lastGroup = "";
@@ -1440,6 +1544,19 @@
       secs_.map((s) => `<section class="rsec" id="sec-${s.id}"><h3 style="--ic:${s.color}">${I(s.icon)}${esc(s.title)}</h3>${s.html}</section>`).join("");
     requestAnimationFrame(() => { draws.forEach((d) => { try { d(); } catch (e) { console.warn(e); } }); });
     $$("button", nav)[0] && $$("button", nav)[0].classList.add("on");
+  }
+  // the values of every realisation, their mean and the 95 % interval
+  function realTables(list) {
+    return list.map((b) => {
+      const n = b.rows.length;
+      const mean = b.labels.map((_, j) => { const v = b.rows.map((r) => r[j]).filter((x) => x != null && isFinite(x)); return v.length ? v.reduce((a, c) => a + c, 0) / v.length : null; });
+      const sd = b.labels.map((_, j) => { const v = b.rows.map((r) => r[j]).filter((x) => x != null && isFinite(x)); if (v.length < 2) return null; const m = mean[j]; return Math.sqrt(v.reduce((a, c) => a + (c - m) ** 2, 0) / (v.length - 1)); });
+      const t95 = [12.71, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262][Math.min(n, 10) - 2] || 2.0;
+      const rows = b.rows.map((r, i) => [`Realisation ${i + 1} <span class="hint">seed ${b.seeds[i]}</span>`, ...r.map((v) => v == null ? "—" : fmt(v))]);
+      rows.push(["<b>Mean</b>", ...mean.map((v) => v == null ? "—" : `<b>${fmt(v)}</b>`)]);
+      rows.push(["95 % interval ±", ...sd.map((v) => v == null ? "—" : fmt(t95 * v / Math.sqrt(n)))]);
+      return `<div class="box" style="grid-column:1/-1"><div class="bt">${esc(b.title)} per realisation <span class="hint">${n} arrangements of the same recipe${b.unit && b.unit !== "-" ? ` · ${esc(b.unit)}` : ""}</span></div>${tbl(["", ...b.labels.map(esc)], rows)}</div>`;
+    }).join("");
   }
   function tiles(headline) {
     return `<div class="big">${headline.map((h) => `<div class="tile"><div class="l">${esc(h.label)}</div><div class="v">${fmt(h.value)} <span style="font-size:12px;color:var(--muted)">${esc(h.unit)}</span></div>
@@ -2794,7 +2911,7 @@
   /* ================================================================ viewer */
   function syncViewerControls() {
     const S = V.state;
-    $("#vField").value = S.field;
+    $("#vField").value = state.demShown ? "@dem" : S.field;
     $("#vLog").checked = S.log;
     $("#vRange").value = S.range;
     $("#vFaces").checked = S.faces;
@@ -2842,9 +2959,40 @@
     const [lo, hi] = V.currentRange();
     if (S.range !== "manual") { $("#vMin").value = S.field ? +lo.toPrecision(4) : ""; $("#vMax").value = S.field ? +hi.toPrecision(4) : ""; }
   }
+  /* The particle dynamics in the 3D/2D View: its own sheared box, chosen in
+     the displayed-quantity list like a field (or shown alone when the run
+     made no voxel RVE). */
+  let demView = null;
+  async function showDemInView(on) {
+    const host = $("#vDem");
+    state.demShown = !!on;
+    const sw = $("#vDemOn");
+    if (sw) sw.checked = !!on;
+    if (!on) { if (demView) { demView.stop(); demView = null; } host.hidden = true; return; }
+    host.hidden = false;
+    const id = state.resultJob;
+    try {
+      const m = await (await fetch(`/api/jobs/${id}/view/meta.json`, { cache: "no-store" })).json();
+      if (!m.dem) { host.innerHTML = `<div class="hint" style="margin:auto">This run has no particle dynamics.</div>`; return; }
+      if (demView) demView.stop();
+      demView = await window.DemPlayer(host, id, m.dem, m.built, state.result && state.result.name, { fill: true });
+    } catch (e) { host.innerHTML = `<div class="hint" style="margin:auto">The particle dynamics could not be shown: ${esc(e.message)}</div>`; }
+  }
+  const hasDem = (r) => !!(r && r.properties && r.properties.viscosity && r.properties.viscosity.dem && r.properties.viscosity.dem.anim);
   async function openViewer(prefer) {
     const id = state.resultJob;
     const info = $("#vInfo");
+    if (id && state.result && !state.result.view && hasDem(state.result)) {
+      // no voxel RVE in this run: the particle dynamics is the view
+      $("#vField").innerHTML = `<optgroup label="Particle dynamics"><option value="@dem">Sheared particles (the particle-dynamics box)</option></optgroup>`;
+      $("#vField").value = "@dem";
+      state.viewerJob = id; state.viewerSig = "dem";
+      $("#vDemSec").style.display = "";
+      info.textContent = "No voxel RVE in this run: the particle dynamics packed and sheared its own spheres";
+      await showDemInView(true);
+      return;
+    }
+    if (state.demShown && state.viewerJob !== id) await showDemInView(false);
     if (!id || !state.result || !state.result.view) {
       V.showEmpty(`${I("cube")}<div><b>No structure is displayed.</b><br>A preset is selected on the Home tab; <i>Generate structure</i> or <i>Run analyses</i> then fills this view.</div>`);
       info.textContent = "";
@@ -2861,7 +3009,9 @@
         state.viewerSig = sig;
         const groups = {};
         meta.fields.forEach((f) => { (groups[f.group] = groups[f.group] || []).push(f); });
-        $("#vField").innerHTML = `<option value="">Structure (phases)</option>` + Object.entries(groups).map(([g, fs]) => `<optgroup label="${esc(g)}">${fs.map((f) => `<option value="${f.key}">${esc(f.label)}</option>`).join("")}</optgroup>`).join("");
+        $("#vField").innerHTML = `<option value="">Structure (phases)</option>` + Object.entries(groups).map(([g, fs]) => `<optgroup label="${esc(g)}">${fs.map((f) => `<option value="${f.key}">${esc(f.label)}</option>`).join("")}</optgroup>`).join("")
+          + (meta.dem ? `<optgroup label="Particle dynamics"><option value="@dem">Sheared particles (the particle-dynamics box)</option></optgroup>` : "");
+        $("#vDemSec").style.display = meta.dem ? "" : "none";
         $("#vPhaseToggles").innerHTML = meta.surfaces.map((sf) => { const l = meta.labels[sf.label]; return `<label class="phtog"><input type="checkbox" data-hide="${sf.label}" checked><i style="background:${l.color}"></i>${esc(l.name)}</label>`; }).join("") || '<div class="hint">No surfaces.</div>';
         $("#vNetworkRow").style.display = meta.network ? "" : "none";
         $("#vVolumeRow").style.display = V.can.volume() ? "" : "none";
@@ -2971,6 +3121,8 @@
     $("#vAxis2d").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.axis2d = b.dataset.a; syncViewerControls(); V.syncSliders(); V.refresh(false); });
     $("#v2dSlice").addEventListener("input", (e) => { S.slices[S.axis2d] = +e.target.value; sliceMoved(); });
     $("#vField").addEventListener("change", (e) => {
+      if (e.target.value === "@dem") { showDemInView(true); return; }
+      if (state.demShown) showDemInView(false);
       S.field = e.target.value;
       const f = S.meta && S.meta.fields.find((x) => x.key === S.field);
       // a field reads best on the RVE faces; surfaces return for the structure
@@ -3105,6 +3257,11 @@
     $("#rptabs [data-r=display]").innerHTML = `${I("display")}Display`;
     $("#rptabs [data-r=runs]").innerHTML = `${I("runs")}Runs`;
     $("#hScene").innerHTML = `${I("view3d")}Scene`;
+    $("#hDem").innerHTML = `${I("permeability")}Particle dynamics`;
+    $("#vDemOn").addEventListener("change", async (e) => {
+      await showDemInView(e.target.checked);
+      $("#vField").value = state.demShown ? "@dem" : V.state.field;
+    });
     $("#hPhases").innerHTML = `${I("grains")}Surfaces`;
     $("#hSections").innerHTML = `${I("matrix")}Section planes`;
     // guarded like #hVectors: a page held in an old cache will not have these

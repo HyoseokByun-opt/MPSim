@@ -216,6 +216,11 @@ def cond_task(t):
     t0 = time.time()
     rep = _Reporter(t.get("q"), t.get("name") or tag, t["tol"])
     primary, _, check = t["backend"].partition("+")
+    if t.get("live_dir") and primary not in ("fe", "puma_fv"):
+        # the live view: this solve's field on a section, about once a second
+        from . import live as LV
+        rep.snapshot = LV.cond_snapshot(LV.Slot(t["live_dir"], tag, t.get("name") or tag), "xyz".index(t["d"]),
+                                        bool(t.get("film")), LV.LABEL.get(t["key"], "Potential"))
     if primary in ("fe", "puma_fv"):
         r = PB.conductivity(labels, t["vals"], t["d"], t["voxel_m"], kind=t["kind"], tol=t["tol"],
                             progress=rep, log=None, should_stop=None, keep_fields=t["fields"],

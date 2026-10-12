@@ -521,6 +521,35 @@ def t_visc_forms():
             f"flow curve μr {m[1]:.1f} at 1 1/s between 400 and 40")
 
 
+@check("Live view: a conduction solve writes its converging section, the last frame marked done")
+def t_live_frames():
+    from mpsim import live as LV
+    from mpsim.solvers import conduction as CD
+    lab = _sphere_lab(24, 6.0)
+    with tempfile.TemporaryDirectory() as d:
+        frames = []
+
+        def cb(it, res):
+            pass
+        slot = LV.Slot(d, "thermal_x", "Thermal conductivity x")
+        inner = LV.cond_snapshot(slot, 0, False, "Temperature")
+
+        def snap(u, it, res, final=False):
+            inner(u, it, res, final)
+            frames.append(slot.seq)
+        cb.snapshot = snap
+        slot.every = 0.0                        # every call writes, for the test
+        r = CD.solve_direction(lab, [1.0, 20.0], 0, tol=1e-7, callback=cb)
+        idx = LV.index(d)
+        expect(len(idx) == 1 and idx[0]["state"] == "done", f"slots {idx}")
+        h = idx[0]
+        img = np.fromfile(os.path.join(d, "thermal_x.f32"), np.float32).reshape(h["shape"])
+        # the applied gradient is in the section: the temperature rises along x
+        expect(img[:, -1].mean() - img[:, 0].mean() > 0.5 * img.shape[1], f"no gradient along x: {img.mean(axis=0)}")
+    return (f"{len(frames)} frames over {r['iterations']} iterations, last {h['shape'][0]}x{h['shape'][1]} "
+            f"section marked done, k {r['k_eff']:.4g}")
+
+
 @check("Contact faces per pair of fillers: counted across faces and the periodic boundary")
 def t_contact_pairs():
     from mpsim import pipeline

@@ -41,12 +41,13 @@ from . import geometry as G
 # 2 d: +3 % k, +22 % E). alpha = 1.04 / 1.35 / 1.27. Anisotropy that only the finite box
 # produces (spread of the three diagonal values): 4.3 % at 7 d, 1.9 % at 10 d
 # for 50 vol%. So Standard (7 d, one realisation) is within 1 % for moderate
-# loadings, and Accurate (10 d, three realisations: 2 x 1.9 % / sqrt 3 = 1.1 %
-# at 50 vol%) is the level for dense, high-contrast fillers.
+# loadings, and Accurate (10 d) is the level for dense, high-contrast fillers;
+# three realisations of it give 2 x 1.9 % / sqrt 3 = 1.1 % at 50 vol%. Every
+# level builds one structure unless more are asked for (Realisations).
 QUALITY = {
     "fast":     {"label": "Fast",     "res": 6,  "res_min": 4, "size": 4.0, "length": 1.5, "count": 20,  "seeds": 1, "vf_tol": 0.03},
     "standard": {"label": "Standard", "res": 10, "res_min": 6, "size": 7.0, "length": 2.0, "count": 50,  "seeds": 1, "vf_tol": 0.02},
-    "accurate": {"label": "Accurate", "res": 14, "res_min": 8, "size": 10.0, "length": 2.5, "count": 100, "seeds": 3, "vf_tol": 0.01},
+    "accurate": {"label": "Accurate", "res": 14, "res_min": 8, "size": 10.0, "length": 2.5, "count": 100, "seeds": 1, "vf_tol": 0.01},
 }
 
 # Safety ceilings on the grid, not physics: they exist so that a mistyped voxel
@@ -364,8 +365,9 @@ def plan(phases, rve=None, props=None, limits=None):
     if (hard and total >= 0.40 and rve.get("quality", "standard") != "accurate" and not rve.get("n_seeds")
             and props & {"thermal", "electrical", "dielectric", "magnetic", "emi", "cte", "elastic"}):
         notes.append(f"At {100*total:.0f} vol% of particles, realisations of a 7-diameter RVE scattered by ±4 % "
-                     f"(50 vol%, contrast 150); the Accurate level (10 diameters, 3 realisations) narrowed it "
-                     f"to ±1.1 %. Accurate, or 2-3 realisations, is advisable for reported values.")
+                     f"(50 vol%, contrast 150); the Accurate level (10 diameters) with 3 realisations narrowed "
+                     f"it to ±1.1 %. Accurate, and 2-3 realisations (Realisations), is advisable for reported "
+                     f"values.")
     if hard and total > 0.60:
         checks.append({"id": "loading", "group": "Packing", "label": "Non-overlapping packing fraction",
                        "value": total, "target": 0.60, "unit": "", "status": "warn",

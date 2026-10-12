@@ -774,6 +774,29 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
     import threading
     _upgrade_lock, _upgraded = threading.Lock(), set()
 
+    # the live frames of the solves going on (mpsim/live.py): the index of
+    # slots, then a slot's files; never cached, they change every second
+    @app.get("/api/jobs/<jid>/live")
+    def api_live_index(jid):
+        job = job_or_404(jid)
+        from mpsim import live as LIVE
+        return jsonify(LIVE.index(os.path.join(job.out_dir, "live")))
+
+    @app.get("/api/jobs/<jid>/live/<path:name>")
+    def api_live_file(jid, name):
+        job = job_or_404(jid)
+        p = safe_path(os.path.join(job.out_dir, "live"), name)
+        if not os.path.exists(p):
+            abort(404)
+        try:
+            with open(p, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            abort(404)
+        resp = Response(data, mimetype="application/octet-stream")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     @app.get("/api/jobs/<jid>/view/<path:name>")
     def api_view(jid, name):
         job = job_or_404(jid)

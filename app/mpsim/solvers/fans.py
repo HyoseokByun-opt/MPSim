@@ -385,6 +385,7 @@ class FANS:
         bn = math.sqrt(_dot(b, b))
         x = np.zeros_like(b)
         it, res = 0, 0.0
+        snap = getattr(callback, "snapshot", None)      # the live view (mpsim/live.py)
         if bn > 0:
             r = b
             z = self.P(r)
@@ -402,6 +403,8 @@ class FANS:
                 res = math.sqrt(_dot(r, r)) / bn
                 if callback is not None and (it % 2 == 0 or res < tol):
                     callback(it, res)
+                if snap is not None and it % 4 == 0:
+                    snap(x, it, res)
                 if res < tol:
                     break
                 if should_stop is not None and it % 5 == 0 and should_stop():
@@ -411,6 +414,8 @@ class FANS:
                 _xpay(z, rz_new / rz, p)
                 rz = rz_new
             del q, p, z
+        if snap is not None:
+            snap(x, it, res, True)
         eps = np.empty((6,) + self.shape)
         _strain(x, self.lab, self.Bbar, eps)
         self.last_disp = x if keep_disp else None
@@ -455,6 +460,8 @@ def homogenize(labels, E, nu, alpha, tol=1e-5, maxiter=5000, void_ratio=1e-4, wo
         Ev = np.zeros(6)
         Ev[k] = 1.0
         cb = (lambda it, res, nm=nm: progress(nm, it, res)) if progress else None
+        if cb is not None and getattr(progress, "snapshot", None) is not None:
+            cb.snapshot = lambda x, it, res, final=False, nm=nm: progress.snapshot(nm, x, it, res, final)
         sbar, st, _ = sol.solve(Ev, 0.0, tol, maxiter, cb, should_stop)
         C[:, k] = sbar
         stats[nm] = st
@@ -462,6 +469,8 @@ def homogenize(labels, E, nu, alpha, tol=1e-5, maxiter=5000, void_ratio=1e-4, wo
            "nu_used": sol.nu_used.tolist(), "void_phases": sol.void_phases}
     if "th" in loads:
         cb = (lambda it, res: progress("th", it, res)) if progress else None
+        if cb is not None and getattr(progress, "snapshot", None) is not None:
+            cb.snapshot = lambda x, it, res, final=False: progress.snapshot("th", x, it, res, final)
         keep = keep_thermal_stress and stress_bc != "free"
         sth, st, stress = sol.solve(np.zeros(6), 1.0, tol, maxiter, cb, should_stop, keep)
         stats["th"] = st
@@ -470,6 +479,8 @@ def homogenize(labels, E, nu, alpha, tol=1e-5, maxiter=5000, void_ratio=1e-4, wo
         if keep_thermal_stress and stress_bc == "free":
             # the RVE expands freely: macroscopic strain alpha* dT, zero mean stress
             cb = (lambda it, res: progress("free", it, res)) if progress else None
+            if cb is not None and getattr(progress, "snapshot", None) is not None:
+                cb.snapshot = lambda x, it, res, final=False: progress.snapshot("free", x, it, res, final)
             _, st, stress = sol.solve(out["alpha"], 1.0, tol, maxiter, cb, should_stop, True)
             stats["free"] = st
         out["thermal_stress"] = stress

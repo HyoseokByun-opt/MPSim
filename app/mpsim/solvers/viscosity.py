@@ -94,6 +94,8 @@ def effective_viscosity(labels, mu, tol=1e-6, maxiter=20000, progress=None, shou
         Ev = np.zeros(6)
         Ev[k] = 1.0                         # engineering shear rate 1
         cb = (lambda it, res, plane=plane: progress(plane, it, res)) if progress else None
+        if cb is not None and getattr(progress, "snapshot", None) is not None:
+            cb.snapshot = lambda x, it, res, final=False, plane=plane: progress.snapshot(plane, x, it, res, final)
         sbar, st, _ = sol.solve(Ev, 0.0, tol, maxiter, cb, should_stop,
                                 keep_strain=keep_field and plane == "xy", keep_disp=keep_field and plane == "xy")
         out["shear"][plane] = float(sbar[k])
@@ -113,6 +115,8 @@ def effective_viscosity(labels, mu, tol=1e-6, maxiter=20000, progress=None, shou
     if extension:
         Ev = np.array([1.0, -0.5, -0.5, 0.0, 0.0, 0.0])       # uniaxial, volume-preserving
         cb = (lambda it, res: progress("extension", it, res)) if progress else None
+        if cb is not None and getattr(progress, "snapshot", None) is not None:
+            cb.snapshot = lambda x, it, res, final=False: progress.snapshot("extension", x, it, res, final)
         sbar, st, _ = sol.solve(Ev, 0.0, tol, maxiter, cb, should_stop)
         out["extension"] = float((sbar[0] - 0.5 * (sbar[1] + sbar[2])) / 3.0)
         out["stats"]["extension"] = st

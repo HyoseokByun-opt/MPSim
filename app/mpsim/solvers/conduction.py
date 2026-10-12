@@ -305,6 +305,7 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
     it, res = 0, 0.0
     converged = bnorm == 1.0 and float(np.linalg.norm(b)) == 0.0
     history = []
+    snap = getattr(callback, "snapshot", None)          # the live view (mpsim/live.py)
     if not converged:
         for it in range(1, maxiter + 1):
             _apply(p, kf[0], kf[1], kf[2], Ap)
@@ -323,6 +324,8 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
                 break
             if callback is not None and it % 10 == 0:
                 callback(it, res)
+                if snap is not None:
+                    snap(u, it, res)
             if should_stop is not None and it % 25 == 0 and should_stop():
                 raise InterruptedError
             z = M(r)
@@ -331,6 +334,8 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
             p = z + (rz_new / rz) * p
             rz = rz_new
     u -= u.mean()
+    if snap is not None:
+        snap(u, it, res, True)
 
     col = np.array([_mean_flux(u, kf[ax], ax, 1.0 if ax == direction else 0.0)
                     for ax in range(3)]) * scale
@@ -442,6 +447,8 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
             break
         if callback is not None and it % 10 == 0:
             callback(it, res)
+            if getattr(callback, "snapshot", None) is not None:
+                callback.snapshot(u, it, res)
         if should_stop is not None and it % 25 == 0 and should_stop():
             raise InterruptedError
         z = M(r)

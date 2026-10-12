@@ -177,6 +177,19 @@ label.f .u{color:var(--muted);font-weight:400;margin-left:4px}
 .note.warn{border-left-color:#d4a72c;background:#fff8e1}
 .livebox{position:absolute;inset:0;z-index:14;background:#fff;display:flex;flex-direction:column;min-height:0}
 .livebox[hidden]{display:none}
+.livetabs{display:flex;gap:4px;padding:8px 12px 0;align-items:center}
+.livetabs button{border:1px solid var(--line,#d0d7de);background:#f6f8fa;border-radius:6px;padding:4px 10px;font-size:12.5px;cursor:pointer}
+.livetabs button.on{background:#fff;border-color:var(--accent,#0b62c4);color:var(--accent,#0b62c4);font-weight:600}
+.livesolve{flex:1;min-height:0;display:flex;flex-direction:column;padding:6px 12px 10px}
+.livesolve[hidden],.livefigs[hidden]{display:none}
+.lshead{display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:13px;flex-wrap:wrap}
+.lshead select{max-width:360px}
+.lsbody{position:relative;flex:1;min-height:0;border:1px solid var(--line,#d0d7de);border-radius:6px;overflow:hidden;background:#fff}
+.lsbody canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.lsleg{position:absolute;right:10px;top:10px;background:rgba(255,255,255,.9);border:1px solid #d0d7de;border-radius:4px;padding:6px 8px;font:11px system-ui,sans-serif;color:#1f2328}
+.livefigs{flex:1;min-height:0;display:flex;flex-direction:column}
+.vdem{position:absolute;inset:0;z-index:12;background:#fff;display:flex;flex-direction:column;padding:8px 10px}
+.vdem[hidden]{display:none}
 .livemain{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 12px 4px}
 .livehead{font-size:13px;margin-bottom:4px}
 .livemain img{flex:1;min-height:0;object-fit:contain;width:100%;border:1px solid var(--line,#d0d7de);border-radius:6px;background:#fff}

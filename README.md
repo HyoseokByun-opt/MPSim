@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-57%20checks-2da44e" alt="57 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-58%20checks-2da44e" alt="58 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -93,7 +93,8 @@ Its capabilities include:
   analyses: 1231 s one after another, 693 s side by side on 8 cores).
 - **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as the solver's voxels, fields on
   the RVE faces and on XYZ sections, arrows, animated field lines and pore networks; publication figures rendered on the
-  server (PyVista); animations saved as GIF (3D view, moving particles, underfill front); a single-file HTML report for
+  server (PyVista); animations saved as GIF (3D view, moving particles, underfill front); while a run goes on, the
+  solves show their converging fields and the particle dynamics its moving particles live; a single-file HTML report for
   every run.
 
 ### The workspace
@@ -136,7 +137,7 @@ bounds (Wiener, Hashin–Shtrikman, Schapery); a value outside a rigorous bound 
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **57 problems whose answers are known** (38 in the quick set) and compares the results.
+`5_SELF_TEST.bat` solves **58 problems whose answers are known** (39 in the quick set) and compares the results.
 Among them:
 
 | Check | Reference | Result |
