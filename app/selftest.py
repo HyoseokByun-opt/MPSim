@@ -1409,9 +1409,19 @@ def t_cond_aniso():
     kz = 0.2e-6 / (0.2e-6 / 30.0 + 3 * 1.2e-8)
     got = np.diag(an["K"][0])
     expect(np.allclose(got, [300.0, 300.0, kz], rtol=1e-12), f"stack tensor diagonal {got} (k_z {kz:.4f} expected)")
+    # a film with a laminate matrix (0.81 / 0.81 / 0.29, FR-4) and copper rods
+    # through it: k_z is the parallel mean of the copper and the matrix's k_z
+    # exactly (films took the mean k of the matrix up to v5.2.2)
+    labf = np.zeros((20, 20, 8), np.uint8)
+    labf[4:8, 4:8, :] = 1
+    f_cu = float(np.mean(labf == 1))
+    anf = {"label_axes": {0: (0.81, 0.81, 0.29)}, "aid": None, "K": np.zeros((0, 3, 3))}
+    kzf = CD.solve_direction(labf, [0.64, 401.0], 2, tol=1e-12, film=True, aniso=anf)["column"][2]
+    kz_ref = f_cu * 401.0 + (1 - f_cu) * 0.29
+    expect(abs(kzf / kz_ref - 1) < 1e-6, f"film k_z {kzf:.6g}, parallel {kz_ref:.6g}")
     return (f"turned tensor exact ({e_hom:.0e}); laminate error {100 * errs[0]:.1f} % at 8 cells, {100 * errs[1]:.1f} % at 16 "
             f"(first order); energy balance {gapmax:.0e}; isotropic tensor = plain solve; a 4-layer stack conducts "
-            f"{kz:.2f} W/m·K through its thickness")
+            f"{kz:.2f} W/m·K through its thickness; a laminate film with rods = the parallel mean")
 
 
 @check("DOE: a filler's share with the total kept, a fixed grid for every case")
@@ -1455,7 +1465,16 @@ def t_doe_mix_grid():
         q2 = _Queue()
         st.create(None, {"form": base, "parameters": [{"path": "mix.1", "min": 5, "max": 50, "steps": 2}]}, q2, d, lambda f: f)
         expect(all(f["rve"].get("auto") is True for f in q2.forms), "adaptive: the cases' own plan")
-    return f"shares {shares[0]:g}-{shares[-1]:g} % of 55 vol% with the total kept; fixed grid 160³ on every case"
+    # what a finished case really holds: 51.1 of 55 vol%, a BN share of 48 of 50 %
+    from web.doe import realised
+    res = {"spec": {"labels": [{"kind": "matrix", "phase": None}, {"kind": "core", "phase": 0}, {"kind": "core", "phase": 1}],
+                    "phases": [{"name": "Al2O3"}, {"name": "BN"}]},
+           "composition": {"labels": [{"vf": 0.489}, {"vf": 0.266}, {"vf": 0.245}], "target": {"vf": [0.275, 0.275]}}}
+    rz = realised({"base_form": base, "parameters": [{"path": "mix.1"}]}, res)
+    expect(abs(rz["real_filler"][2] - 51.1) < 1e-9 and abs(rz["real_filler"][3] - 55.0) < 1e-9, f"filler {rz['real_filler']}")
+    expect(abs(rz["real_mix.1"][2] - 100 * 0.245 / 0.511) < 1e-9 and abs(rz["real_mix.1"][3] - 50.0) < 1e-9, f"share {rz['real_mix.1']}")
+    return (f"shares {shares[0]:g}-{shares[-1]:g} % of 55 vol% with the total kept; fixed grid 160³ on every case; "
+            f"realised 51.1 vol%, share {rz['real_mix.1'][2]:.1f} %")
 
 
 @check("EMI complex homogenisation: complex laminates exact, real values = real solver, dilute spheres = Maxwell-Garnett")
@@ -1521,6 +1540,55 @@ def t_emi():
     err = np.max(np.abs(tot - np.array(sp["se_db"])))
     expect(err < 1e-6, f"split error {err}")
     return f"scikit-rf difference {chk['max_diff_db']:.2e} dB, decomposition error {err:.1e} dB"
+
+
+@check("Linked inputs: expressions are parsed safely; a link sets its entries in DOE cases and one unknown of a calibration")
+def t_links():
+    import copy
+    from mpsim import calibrate as CAL
+    from mpsim import doe as DOE
+    from mpsim import links as LK
+    from mpsim import spec as S
+    expect(abs(LK.evaluate("sqrt(x1*x2) + 2^3 - pi*0", {"x": 1.0, "x1": 4.0, "x2": 9.0}) - 14.0) < 1e-12, "arithmetic")
+    for bad in ("__import__('os')", "x.real", "[x]", "open(1)", "y+1", "1/0*x", "lambda: 1"):
+        try:
+            LK.evaluate(bad, {"x": 1.0})
+            raise AssertionError(f"'{bad}' was evaluated")
+        except LK.LinkError:
+            pass
+    # a blend of two grades of one alumina: one R_int for both
+    form = {"name": "links", "matrix": {"material_id": "epoxy"},
+            "phases": [{"material_id": "al2o3", "name": "Al2O3 10 um", "shape": "sphere", "size": {"d": 10, "unit": "um"},
+                        "fraction": {"value": 25, "basis": "vol"}, "r_int": 2e-8},
+                       {"material_id": "al2o3", "name": "Al2O3 3 um", "shape": "sphere", "size": {"d": 3, "unit": "um"},
+                        "fraction": {"value": 15, "basis": "vol"}, "r_int": 2e-8}],
+            "rve": {"auto": True, "quality": "fast"}, "analyses": {"thermal": True}}
+    params = [{"path": "phases.0.r_int", "min": 1e-9, "max": 1e-7, "steps": 3, "scale": "log",
+               "links": [{"path": "phases.1.r_int", "expr": "x"}, {"path": "contact_rc.0-1", "expr": "0.5*x"}]}]
+    expect(not DOE.check_links(params, form), f"links rejected: {DOE.check_links(params, form)}")
+    expect(DOE.check_links([dict(params[0], links=[{"path": "phases.0.r_int"}])], form), "a doubly set entry passed")
+    cases = DOE.expand(params, "full")
+    f = DOE.apply_case(form, cases[2], parameters=params)
+    expect(f["phases"][1]["r_int"] == f["phases"][0]["r_int"] == 1e-7 and abs(f["contact_rc"]["0-1"] - 5e-8) < 1e-20,
+           f"case values {f['phases'][0]['r_int']}, {f['phases'][1]['r_int']}, {f.get('contact_rc')}")
+    # calibration (effective-medium preview): synthetic k at two contents, truth
+    # R_int = 3e-8 for both grades; linked, one unknown recovers it
+    f0 = copy.deepcopy(form)
+    for ph in f0["phases"]:
+        ph["r_int"] = 3e-8
+    k1 = CAL._theory_k(S.normalize(copy.deepcopy(f0)))
+    f0["phases"][0]["fraction"]["value"] = 35
+    k2 = CAL._theory_k(S.normalize(f0))
+    meas = [{"property": "k", "value": k1, "rel_unc": 0.03},
+            {"property": "k", "value": k2, "rel_unc": 0.03, "set": {"phases.0.fraction.value": 35}}]
+    unk = {"path": "phases.0.r_int", "lo": 1e-9, "hi": 1e-6, "scale": "log"}
+    linked = CAL.preview({"base": form, "measurements": meas, "unknowns": [dict(unk, links=[{"path": "phases.1.r_int"}])]})
+    alone = CAL.preview({"base": form, "measurements": meas, "unknowns": [unk]})
+    m1, m0 = linked["unknowns"][0]["map"], alone["unknowns"][0]["map"]
+    expect(abs(m1 / 3e-8 - 1) < 0.05, f"linked calibration {m1:.3g} (truth 3e-8)")
+    expect(abs(m0 / 3e-8 - 1) > 0.2, f"unlinked calibration {m0:.3g} should be biased")
+    return (f"unsafe expressions rejected; DOE case sets both grades and the pair; calibration linked {m1:.3g} "
+            f"(truth 3e-8), the 10 µm grade alone {m0:.3g}")
 
 
 @check("Web API: materials, presets and plans are JSON the browser can read")

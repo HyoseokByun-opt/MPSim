@@ -255,7 +255,7 @@
         viscosity: { model: { type: "newtonian", mu: 1, K: 1, n: 0.7, mu0: 1, mu_inf: 0, lam: 1 }, yield_Pa: 0, gd_min: 0.01, gd_max: 1000, gd_ref: 10,
           phi_m_mode: "auto", friction: "none", phi_m: 0.64, dilute_rve: true, density_resin: 1150, settle_min: 60, rve_with_dem: false,
           underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 },
-          dem: { on: true, n: 500, strain: 5, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
+          dem: { on: true, n: 500, strain: 10, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
         gas: { molar_mass_g_mol: 28.97, viscosity_Pa_s: 1.81e-5, diffusivity_m2_s: 2.0e-5, pressure_Pa: 101325, molecule_diameter_nm: 0.37, density_kg_m3: 1.204, sound_speed_m_s: 343.2, gamma: 1.4, prandtl: 0.71 },
       },
@@ -2286,7 +2286,8 @@
           calVisc(m.property) && Number(m.gd) > 0 ? { "options.viscosity.gd_ref": Number(m.gd) } : {}) })),
       unknowns: c.unknowns.map((u) => ({ path: u.path, label: u.label, unit: u.unit, lo: Number(u.lo), hi: Number(u.hi), scale: u.scale, prior: u.prior,
         center: u.prior === "normal" && u.center !== "" ? Number(u.center) : null, sigma_dec: Number(u.sigma_dec || 1),
-        theory: (calTheoryFor(u.path) || {}).kapitza || null })),
+        theory: (calTheoryFor(u.path) || {}).kapitza || null,
+        links: (u.links || []).filter((l) => l.path).map((l) => ({ path: l.path, expr: (l.expr || "x").trim() || "x" })) })),
       options: { model_unc: Number(c.options.model_unc || 2) / 100, refine_rounds: Number(c.options.refine_rounds || 3) },
     };
   }
@@ -2361,7 +2362,7 @@
       const th = calTheoryFor(u.path), kz = th && th.kapitza;
       const cur = (cands.find((x) => x.path === u.path) || {}).current;
       return `<div class="param">
-        <div class="prow1"><select data-cu="${i}" data-uf="path">${cands.map((x) => `<option value="${esc(x.path)}" ${x.path === u.path ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select><button class="btn sm danger" data-cudel="${i}" title="Remove this unknown">${I("delete")}</button></div>
+        <div class="prow1"><span class="sym" title="The symbol of this unknown in link expressions">x${i + 1}</span><select data-cu="${i}" data-uf="path">${cands.map((x) => `<option value="${esc(x.path)}" ${x.path === u.path ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select><button class="btn sm danger" data-cudel="${i}" title="Remove this unknown">${I("delete")}</button></div>
         <div class="g2 calg">
           <div><label>From [${esc(u.unit || "")}]</label><input type="number" step="any" data-cu="${i}" data-uf="lo" value="${u.lo}"></div>
           <div><label>To</label><input type="number" step="any" data-cu="${i}" data-uf="hi" value="${u.hi}"></div>
@@ -2370,10 +2371,11 @@
           <div><label>Prior</label><select data-cu="${i}" data-uf="prior"><option value="uniform" ${u.prior !== "normal" ? "selected" : ""}>Uniform over the range</option><option value="normal" ${u.prior === "normal" ? "selected" : ""}>Centred on a value</option></select></div>
         </div>
         ${u.prior === "normal" ? `<div class="g2"><div><label class="f">Centre</label><input type="number" step="any" data-cu="${i}" data-uf="center" value="${esc(u.center ?? "")}"></div><div><label class="f">Spread (${u.scale === "log" ? "decades" : esc(u.unit || "units")}, 1σ)</label><input type="number" step="any" data-cu="${i}" data-uf="sigma_dec" value="${esc(u.sigma_dec ?? 1)}"></div></div>` : ""}
-        <div class="hint">Value in the case: ${cur === null || cur === undefined ? "—" : fmt(cur)} ${esc(u.unit || "")}${kz && kz.dmm ? ` · theory for a perfect interface (phonon mismatch): DMM ${fmt(kz.dmm)}, AMM ${fmt(kz.amm)} m²K/W — a real interface lies at or above <button class="btn xs" data-cutheory="${i}" title="Centre the prior one decade wide on the DMM value">use as prior</button>` : ""}</div></div>`;
+        <div class="hint">Value in the case: ${cur === null || cur === undefined ? "—" : fmt(cur)} ${esc(u.unit || "")}${kz && kz.dmm ? ` · theory for a perfect interface (phonon mismatch): DMM ${fmt(kz.dmm)}, AMM ${fmt(kz.amm)} m²K/W — a real interface lies at or above <button class="btn xs" data-cutheory="${i}" title="Centre the prior one decade wide on the DMM value">use as prior</button>` : ""}</div>${linksHTML("cal", i, u)}</div>`;
     }).join("");
     const runs = state.jobs.filter((j) => j.kind === "calibration").map((j) => `<div class="run ${j.id === c.resultJob ? "on" : ""}" data-open="${j.id}"><i class="dot ${j.state}"></i><div class="nm">${esc(j.name)}<small>${STATE[j.state] || j.state} · ${secs(j.elapsed_s)}</small></div><div class="acts"></div></div>`).join("") || '<div class="hint">No calibration yet.</div>';
     const theoryRows = ((c.theory || {}).pairs || []).filter((p) => p.kapitza).map((p) => [esc(p.name), fmt(p.kapitza.dmm), fmt(p.kapitza.amm), fmt(p.d_crit_um)]);
+    if (c.unknowns.some((u) => (u.links || []).length)) setTimeout(() => linkPreview("cal"), 0);
     return `<div class="sec"><div class="sh">${I("calibrate")}Problem</div><div class="sb">
         <div class="hint">The case in the editor is the base: matrix, fillers, structure and RVE. Each measurement is a sample of it — the case itself or with its content, particle size or another entry changed — and the value measured on it. The unknowns are found so that the RVE reproduces every measurement.</div>
         <label class="f">Name</label><input data-cal="name" value="${esc(c.name || "")}" placeholder="${esc(state.form.name)} · calibration">
@@ -2558,6 +2560,108 @@
   async function loadDoeCatalogue() {
     try { state.doeCat = await api("POST", "/api/doe/parameters", state.form); } catch (e) { state.doeCat = []; }
   }
+
+  /* Linked inputs (mpsim/links.py). A DOE parameter or a calibration unknown
+     can set further entries of the form: the same value ("x"), a ratio
+     ("0.8*x"), or a function of all factors ("sqrt(x1*x2)"). Two grades of
+     one filler then share one interfacial resistance, one conductivity, one
+     contact resistance - one factor instead of two, and they cannot drift
+     apart. The server parses and checks the expressions (one parser for the
+     editor, the study and the calibration); the editor shows the range each
+     linked entry takes. */
+  function linkFactors(kind) {
+    return kind === "cal" ? CAL().unknowns : state.doe.parameters;
+  }
+  function linkTargets(kind) {
+    return kind === "cal" ? calCandidates() : (state.doeCat || []);
+  }
+  function linkSuggestions(kind, f) {
+    // the same entry of the other fillers, those of the same material first
+    const m = /^phases\.(\d+)\.(.+)$/.exec(f.path || "");
+    if (!m) return [];
+    const ph = state.form.phases || [], i = +m[1], rest = m[2];
+    const cat = new Set(linkTargets(kind).map((c) => c.path));
+    const taken = new Set(linkFactors(kind).map((x) => x.path).concat((f.links || []).map((l) => l.path)));
+    const mine = (ph[i] || {}).material_id;
+    return ph.map((q, j) => ({ j, q })).filter(({ j }) => j !== i && cat.has(`phases.${j}.${rest}`) && !taken.has(`phases.${j}.${rest}`))
+      .sort((a, b) => (b.q.material_id === mine) - (a.q.material_id === mine))
+      .map(({ j, q }) => ({ path: `phases.${j}.${rest}`, name: q.name || `Phase ${j + 1}`, same: q.material_id === mine }));
+  }
+  function linksHTML(kind, i, f) {
+    const cat = linkTargets(kind);
+    const groups = {};
+    cat.forEach((c) => { (groups[c.group || "Entries"] = groups[c.group || "Entries"] || []).push(c); });
+    const own = new Set(linkFactors(kind).map((x) => x.path));
+    const opts = (sel) => `<option value="">— choose an entry —</option>` + Object.entries(groups).map(([g, items]) => `<optgroup label="${esc(g)}">` +
+      items.filter((c) => !own.has(c.path) || c.path === sel).map((c) => `<option value="${esc(c.path)}" ${c.path === sel ? "selected" : ""}>${esc(c.label)}${c.unit ? ` [${esc(c.unit)}]` : ""}</option>`).join("") + "</optgroup>").join("");
+    const rows = (f.links || []).map((ln, k) => `<div class="lrow">
+        <select data-ln="${kind}:${i}:${k}" data-lnf="path" title="The entry that follows">${opts(ln.path)}</select>
+        <div class="lexpr"><span>=</span><input class="mono" data-ln="${kind}:${i}:${k}" data-lnf="expr" value="${esc(ln.expr || "x")}" placeholder="x" spellcheck="false" title="x: this factor; x1, x2 ...: the factors in order; + - * / ^, sqrt, exp, log, log10, min, max, abs, pi"><button class="btn xs" data-lndel="${kind}:${i}:${k}" title="Remove this link">${I("delete")}</button></div>
+        <div class="lprev hint" data-lnprev="${kind}:${i}:${k}"></div></div>`).join("");
+    const sug = linkSuggestions(kind, f);
+    return `<div class="links">
+        <div class="lhead">Linked inputs <span class="hint">entries set with x${i + 1}</span></div>${rows}
+        <div class="row wrap lbtns">${sug.map((x) => `<button class="btn xs" data-lnadd="${kind}:${i}" data-lnpath="${esc(x.path)}" title="${esc(x.name)} takes the same value${x.same ? " (same material)" : ""}">${I("plus")}${esc(x.name)}${x.same ? " · same material" : ""}</button>`).join("")}
+          <button class="btn xs" data-lnadd="${kind}:${i}">${I("plus")}Link an entry</button></div></div>`;
+  }
+  let linkTimer = null;
+  function scheduleLinkPreview(kind) {
+    clearTimeout(linkTimer);
+    linkTimer = setTimeout(() => linkPreview(kind), 250);
+  }
+  async function linkPreview(kind) {
+    const fs = linkFactors(kind);
+    if (!fs.some((f) => (f.links || []).length)) return;
+    const factors = fs.map((f) => (kind === "cal"
+      ? { path: f.path, lo: Number(f.lo), hi: Number(f.hi), scale: f.scale, links: (f.links || []).filter((l) => l.path) }
+      : { path: f.path, min: Number(f.min), max: Number(f.max), scale: f.scale, links: (f.links || []).filter((l) => l.path) }));
+    let r;
+    try { r = await api("POST", "/api/links/preview", { kind, form: state.form, factors }); } catch (e) { return; }
+    const cat = linkTargets(kind);
+    fs.forEach((f, i) => {
+      let k2 = 0;
+      (f.links || []).forEach((ln, k) => {
+        const el = $(`[data-lnprev="${kind}:${i}:${k}"]`);
+        if (!el) return;
+        if (!ln.path) { el.textContent = ""; return; }
+        const res = (r.links || []).filter((x) => x.factor === i)[k2++];
+        const unit = (cat.find((c) => c.path === ln.path) || {}).unit || "";
+        const errs = (r.errors || []).filter((m) => m.includes(ln.path));
+        if (res && res.error) { el.innerHTML = `<span class="bad">${esc(res.error)}</span>`; return; }
+        if (errs.length) { el.innerHTML = `<span class="bad">${esc(errs[0])}</span>`; return; }
+        if (res) el.textContent = `→ ${fmt(res.lo)}${res.hi !== res.lo ? " … " + fmt(res.hi) : ""} ${unit && unit !== "-" ? unit : ""}`;
+      });
+    });
+  }
+  function onLinkField(e) {
+    const t = e.target, [kind, i, k] = t.dataset.ln.split(":");
+    const f = linkFactors(kind)[+i];
+    if (!f || !f.links || !f.links[+k]) return;
+    f.links[+k][t.dataset.lnf] = t.value;
+    if (kind === "cal") calSave();
+    if (t.dataset.lnf === "path" && e.type === "change") renderLeft();
+    scheduleLinkPreview(kind);
+  }
+  function onLinkClick(t) {
+    if (t.dataset.lnadd !== undefined) {
+      const [kind, i] = t.dataset.lnadd.split(":");
+      const f = linkFactors(kind)[+i];
+      if (!f) return true;
+      (f.links = f.links || []).push({ path: t.dataset.lnpath || "", expr: "x" });
+      if (kind === "cal") calSave();
+      renderLeft(); scheduleLinkPreview(kind);
+      return true;
+    }
+    if (t.dataset.lndel !== undefined) {
+      const [kind, i, k] = t.dataset.lndel.split(":");
+      const f = linkFactors(kind)[+i];
+      if (f && f.links) f.links.splice(+k, 1);
+      if (kind === "cal") calSave();
+      renderLeft(); scheduleLinkPreview(kind);
+      return true;
+    }
+    return false;
+  }
   function doeAddParam() {
     const used = new Set(state.doe.parameters.map((p) => p.path));
     const cand = state.doeCat.find((c) => !used.has(c.path) && Number(c.current) > 0) || state.doeCat.find((c) => !used.has(c.path));
@@ -2585,13 +2689,13 @@
     const opts = (sel) => Object.entries(groups).map(([g, items]) => `<optgroup label="${esc(g)}">` +
       items.map((c) => `<option value="${esc(c.path)}" ${c.path === sel ? "selected" : ""}>${esc(c.label)}${c.unit ? ` [${esc(c.unit)}]` : ""}</option>`).join("") + "</optgroup>").join("");
     const params = d.parameters.map((p, i) => `<div class="param">
-        <div class="prow1"><select data-pi="${i}" data-pf="path">${opts(p.path)}</select><button class="btn sm danger" data-pdel="${i}" title="Remove this parameter">${I("delete")}</button></div>
+        <div class="prow1"><span class="sym" title="The symbol of this parameter in link expressions">x${i + 1}</span><select data-pi="${i}" data-pf="path">${opts(p.path)}</select><button class="btn sm danger" data-pdel="${i}" title="Remove this parameter">${I("delete")}</button></div>
         <div class="prow2">
           <div><label>Minimum</label><input type="number" step="any" data-pi="${i}" data-pf="min" value="${p.min}"></div>
           <div><label>Maximum</label><input type="number" step="any" data-pi="${i}" data-pf="max" value="${p.max}"></div>
           <div><label>Levels</label><input type="number" min="1" max="24" data-pi="${i}" data-pf="steps" value="${p.steps}"></div>
           <div><label>Spacing</label><select data-pi="${i}" data-pf="scale"><option value="lin" ${p.scale !== "log" ? "selected" : ""}>Linear</option><option value="log" ${p.scale === "log" ? "selected" : ""}>Logarithmic</option></select></div>
-        </div></div>`).join("");
+        </div>${linksHTML("doe", i, p)}</div>`).join("");
     const n = doeCaseCount();
     const an = Object.keys(state.form.analyses || {}).filter((k) => state.form.analyses[k] && AN[k]);
     const studies = state.doeList.map((s) => {
@@ -2600,6 +2704,7 @@
       return `<div class="run ${s.id === state.doeId ? "on" : ""}" data-doeopen="${s.id}"><i class="dot ${st}"></i>
         <div class="nm">${esc(s.name)}<small>${s.n_cases} cases · ${Object.entries(c).map(([k, v]) => `${v} ${STATE[k] || k}`).join(" · ") || "queued"}</small></div><div class="acts"></div></div>`;
     }).join("") || '<div class="hint">No study yet.</div>';
+    if (d.parameters.some((p) => (p.links || []).length)) setTimeout(() => linkPreview("doe"), 0);
     return `<div class="sec"><div class="sh">${I("preset")}New study</div><div class="sb">
         <div class="hint">The current case is the base: its material, structure, domain and the ${an.length} selected analyses (${an.map((k) => AN[k].title).join(", ") || "none"}) apply to every case.</div>
         <label class="f">Study name</label><input data-doe="name" value="${esc(d.name || (state.form.name + " · DOE"))}">
@@ -2632,7 +2737,8 @@
     if (!d.parameters.length) { toast("At least one parameter is required."); return; }
     const body = {
       name: d.name || (state.form.name + " · DOE"), design: d.design, samples: +d.samples || 12, seed: +d.seed || 1,
-      parameters: d.parameters.map((p) => ({ path: p.path, label: p.label, unit: p.unit, min: +p.min, max: +p.max, steps: +p.steps, scale: p.scale })),
+      parameters: d.parameters.map((p) => ({ path: p.path, label: p.label, unit: p.unit, min: +p.min, max: +p.max, steps: +p.steps, scale: p.scale,
+        links: (p.links || []).filter((l) => l.path).map((l) => ({ path: l.path, expr: (l.expr || "x").trim() || "x" })) })),
       form: clone(state.form),
     };
     if (d.grid === "fixed") {
@@ -2687,7 +2793,9 @@
     if (!fields.length) return;
     const has = (k) => fields.some((f) => f.key === k);
     if (!has(sc.x)) sc.x = fields[0].key;
-    if (!has(sc.y)) sc.y = (fields.find((f) => f.key.startsWith("m:")) || fields[fields.length - 1]).key;
+    // the first response that is a property, not a realised content
+    if (!has(sc.y)) sc.y = (fields.find((f) => f.key.startsWith("m:") && !f.key.startsWith("m:real_"))
+                            || fields.find((f) => f.key.startsWith("m:")) || fields[fields.length - 1]).key;
     if (sc.c && !has(sc.c)) sc.c = "";
     if (sc.s && !has(sc.s)) sc.s = "";
     const fill = (id, cur, none) => {
@@ -2727,34 +2835,50 @@
     const tile = (l, v, dd) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${dd || ""}</div></div>`;
     const elapsed = d.rows.reduce((s, r) => s + (r.elapsed_s || 0), 0);
     const nbad = (counts.failed || 0) + (counts.stopped || 0) + (counts.missing || 0);
-    const head = ["#", "Case", "State", ...d.parameters.map((p) => `${p.label}${p.unit ? ` [${p.unit}]` : ""}`),
-                  ...d.metrics.map((m) => `${m.label}${m.unit && m.unit !== "-" ? ` [${m.unit}]` : ""}`)];
+    // what each case really holds (the generated structure) beside what was
+    // asked for: right after the inputs, a cell marked where it differs from
+    // the target by more than 2 % - a dense packing can fall short of it
+    const realM = d.metrics.filter((m) => m.realised), propM = d.metrics.filter((m) => !m.realised);
+    const allM = [...realM, ...propM], chartM = [...propM.slice(0, 6), ...realM.slice(0, 2)];
+    const devOf = (r, m) => {
+      const t = (r.targets || {})[m.key], v = r.metrics[m.key];
+      return t && v !== undefined && v !== null ? Math.abs(v - t) / Math.abs(t) : 0;
+    };
+    const head = [["#", ""], ["Case", ""], ["State", ""], ...d.parameters.map((p) => [`${p.label}${p.unit ? ` [${p.unit}]` : ""}`, "n"]),
+                  ...allM.map((m) => [`${m.label}${m.unit && m.unit !== "-" ? ` [${m.unit}]` : ""}`, m.realised ? "n real" : "n"])];
     const rows = d.rows.map((r, i) => {
       const cells = [String(i + 1), esc(r.label),
         r.state === "running" ? `<div class="bar"><div style="width:${Math.round(100 * r.progress)}%"></div></div>` : (STATE[r.state] || r.state)];
       d.parameters.forEach((p) => cells.push(fmt(r.values[p.path])));
-      d.metrics.forEach((m) => cells.push(fmt(r.metrics[m.key])));
-      return `<tr class="doerow ${r.state}" data-doerun="${r.job_id}">${cells.map((c, k) => `<td class="${k > 1 ? "n" : ""}">${c}</td>`).join("")}</tr>`;
+      realM.forEach((m) => {
+        const t = (r.targets || {})[m.key], dv = devOf(r, m);
+        cells.push(r.metrics[m.key] === undefined ? "—" : `<span class="${dv > 0.02 ? "dev" : ""}" title="${t ? `target ${fmt(t)}, ${dv >= 0.0005 ? (100 * dv).toFixed(1) + " % off" : "reached"}` : ""}">${fmt(r.metrics[m.key])}</span>`);
+      });
+      propM.forEach((m) => cells.push(fmt(r.metrics[m.key])));
+      return `<tr class="doerow ${r.state}" data-doerun="${r.job_id}">${cells.map((c, k) => `<td class="${k > 1 ? "n" : ""}${k >= 3 + d.parameters.length && k < 3 + d.parameters.length + realM.length ? " real" : ""}">${c}</td>`).join("")}</tr>`;
     }).join("");
+    let worst = 0, nOff = 0;
+    d.rows.forEach((r) => { const w = Math.max(0, ...realM.map((m) => devOf(r, m))); worst = Math.max(worst, w); nOff += w > 0.02; });
+    const realNote = nOff ? `<div class="note">In ${nOff} case${nOff === 1 ? "" : "s"} the generated structure holds up to ${(100 * worst).toFixed(1)} % less (or more) than the target content: the packing could not fit it at these settings. The <b>realised</b> columns give what each case really holds; read the results against them (they can also be chosen as a scatter axis).</div>` : "";
     const scatterBox = `<div class="box" style="grid-column:1/-1"><div class="bt">Scatter<div class="grow"></div>
         <span class="hint">the selectors above the page choose what each axis, the colour and the size show</span></div>
       ${canvas("doeScatter", 360)}</div>`;
-    const charts = scatterBox + d.metrics.slice(0, 6).map((m) => `<div class="box"><div class="bt">${esc(m.label)}${m.unit && m.unit !== "-" ? ` <span class="hint">${esc(m.unit)}</span>` : ""}</div>${canvas("doe_" + m.key, 250)}</div>`).join("");
+    const charts = scatterBox + chartM.map((m) => `<div class="box"><div class="bt">${esc(m.label)}${m.unit && m.unit !== "-" ? ` <span class="hint">${esc(m.unit)}</span>` : ""}</div>${canvas("doe_" + m.key.replace(/[^A-Za-z0-9_-]/g, "_"), 250)}</div>`).join("");
     // why the queued cases wait (a free place or memory), from the run list
     const live = (counts.running || 0) + (counts.queued || 0);
     const waitJob = (state.jobs || []).find((j) => j.doe === state.doeId && j.state === "queued" && j.wait);
     const waitTxt = waitJob ? waitJob.wait.replace(/^\d+ ahead · /, "") : "";
     el.innerHTML = `<div class="big">${tile("Cases", d.n_cases, design)}${tile("Completed", counts.done || 0, "")}${tile("Running / queued", `${counts.running || 0} / ${counts.queued || 0}`, "")}
         ${tile("Failed / stopped", `${counts.failed || 0} / ${counts.stopped || 0}`, "")}${tile("Total solver time", secs(elapsed), "")}</div>
-      ${waitTxt ? `<div class="note">Queued cases: ${esc(waitTxt)}. The memory for runs side by side is set in Home → Machine.</div>` : ""}
+      ${waitTxt ? `<div class="note">Queued cases: ${esc(waitTxt)}. The memory for runs side by side is set in Home → Machine.</div>` : ""}${realNote}
       <div class="box"><div class="bt">Cases<div class="grow"></div>${live ? `<button class="btn sm danger" data-doestop="${state.doeId}" title="Stop the running and queued cases of this study now">${I("stop")}Stop study</button>` : ""}${nbad ? `<button class="btn sm" data-doeretry title="Queue these cases again with their own values; the study then points at the new runs">${I("run")}Re-run ${nbad} failed case${nbad === 1 ? "" : "s"}</button>` : ""}<span class="hint">a row opens that run in the Result Viewer</span></div>
-        <div class="tablewrap" style="max-height:52vh">${`<table class="grid"><tr>${head.map((h, i) => `<th class="${i > 1 ? "n" : ""}">${esc(h)}</th>`).join("")}</tr>${rows}</table>`}</div></div>
+        <div class="tablewrap" style="max-height:52vh">${`<table class="grid doetab"><tr>${head.map(([h, c]) => `<th class="${c}">${esc(h)}</th>`).join("")}</tr>${rows}</table>`}</div></div>
       ${d.metrics.length ? `<div class="rgrid" style="margin-top:12px">${charts}</div>` : ""}`;
     drawScatter(d);
     const p0 = d.parameters[0], p1 = d.parameters[1];
     if (!p0) return;
-    d.metrics.slice(0, 6).forEach((m) => {
-      const cv = $("#doe_" + m.key);
+    chartM.forEach((m) => {
+      const cv = $("#doe_" + m.key.replace(/[^A-Za-z0-9_-]/g, "_"));
       if (!cv) return;
       const pts = d.rows.filter((r) => r.metrics[m.key] !== undefined && r.metrics[m.key] !== null);
       if (!pts.length) { CH.line(cv, { series: [{ x: [], y: [] }], xlabel: p0.label, ylabel: "" }); return; }
@@ -3434,6 +3558,7 @@
         const el = $("#lbody [data-libfilter]"); if (el) { el.focus(); el.setSelectionRange(pos, pos); }
       }
       else if (t.dataset.k) onField(e);
+      else if (t.dataset.ln) onLinkField(e);
       else if (t.dataset.pi !== undefined || t.dataset.doe) onDoeField(e);
       else if (t.dataset.cm !== undefined || t.dataset.cu !== undefined || t.dataset.cal || t.dataset.calopt) onCalField(e);
     });
@@ -3462,12 +3587,14 @@
       // on change rather than on input: a half-typed core count must not be sent
       else if (t.dataset.set) onSetting(e);
       else if (t.dataset.opt) onOptOption(e);
+      else if (t.dataset.ln) onLinkField(e);
       else if (t.dataset.pi !== undefined || t.dataset.doe) onDoeField(e);
       else if (t.dataset.cm !== undefined || t.dataset.cu !== undefined || t.dataset.cal || t.dataset.calopt) onCalField(e);
     });
     lb.addEventListener("click", (e) => {
-      const t = e.target.closest("[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-anall],[data-annone],[data-pdel],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory]");
+      const t = e.target.closest("[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-anall],[data-annone],[data-pdel],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory],[data-lnadd],[data-lndel]");
       if (!t) return;
+      if (onLinkClick(t)) return;
       if (onCalClick(t)) return;
       if (t.dataset.libsel) { state.libSel = t.dataset.libsel; renderLeft(); renderRibbon(); return; }
       // an explicit button, not a click on the matrix row, opens the library

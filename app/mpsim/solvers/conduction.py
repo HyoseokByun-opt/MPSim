@@ -465,16 +465,20 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
              anisotropic particle in each cell (-1 none), "K": (n, 3, 3)
              tensor of each such particle in the box frame, "label_axes":
              {label: (kx, ky, kz)} for a material anisotropic along the box
-             axes (the matrix)} - in the units of vals. Not for films.
+             axes (the matrix)} - in the units of vals. For films only
+             the label_axes count (the particles' turned tensors do not).
     Returns a dict with the effective column, the energy split, the field and
     solver statistics.
     """
     if aniso is not None and film:
-        aniso = None                       # films: the label values (see solve_film_z)
+        # films: a material anisotropic along the box axes (a laminate matrix)
+        # counts; the turned tensors of anisotropic particles do not
+        aniso = ({"label_axes": aniso["label_axes"], "aid": None, "K": np.zeros((0, 3, 3))}
+                 if aniso.get("label_axes") else None)
     if film and direction == 2:
         return solve_film_z(labels, vals, rpair=rpair, tol=tol, maxiter=maxiter, callback=callback,
                             should_stop=should_stop, workers=workers, cmask=cmask, rcpair=rcpair,
-                            flux_h=flux_h)
+                            flux_h=flux_h, label_axes=(aniso or {}).get("label_axes"))
     labels = np.ascontiguousarray(labels, dtype=np.uint8)
     vals = np.asarray(vals, dtype=np.float64)
     nlab = len(vals)
@@ -624,7 +628,7 @@ def _apply_film_z(u, kx, ky, kz, gb, gt, out):
 
 
 def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=None, should_stop=None,
-                 workers=None, cmask=None, rcpair=None, flux_h=None):
+                 workers=None, cmask=None, rcpair=None, flux_h=None, label_axes=None):
     """Through-thickness conduction of a film between two plates.
 
     x and y are periodic; the bottom face is held at 1, the top face at 0
@@ -633,6 +637,8 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
     unit drop across the film; the column also gives the x and y flux the
     drop drives. The potential itself is solved for (no periodic split), so
     "u" is the full field, 1 at the bottom face and 0 at the top.
+    label_axes: {label: (kx, ky, kz)} of materials anisotropic along the box
+    axes (a laminate matrix such as FR-4), in the units of vals.
     """
     labels = np.ascontiguousarray(labels, dtype=np.uint8)
     vals = np.asarray(vals, dtype=np.float64)
@@ -649,11 +655,18 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
     shape = labels.shape
     n0, n1, n2 = shape
     kf = [np.empty(shape) for _ in range(3)]
-    for ax in range(3):
-        _faces(labels, v, rp, cm, rc, use_c, ax, kf[ax])
+    if label_axes:
+        kv = aniso_axes(labels, v, {"label_axes": label_axes}, scale)
+        for ax in range(3):
+            _faces_v(labels, kv[ax], rp, cm, rc, use_c, ax, kf[ax])
+        kz = kv[2]
+    else:
+        for ax in range(3):
+            _faces(labels, v, rp, cm, rc, use_c, ax, kf[ax])
+        kz = v[labels]
     kf[2][:, :, -1] = 0.0
-    gb = 2.0 * v[labels[:, :, 0]]          # half a cell between the plate and the first layer
-    gt = 2.0 * v[labels[:, :, -1]]
+    gb = 2.0 * kz[:, :, 0]                 # half a cell between the plate and the first layer
+    gt = 2.0 * kz[:, :, -1]
     b = np.zeros(shape)
     b[:, :, 0] = gb * 1.0                  # bottom plate at 1, top plate at 0
 

@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.2.2-0b62c4" alt="version 5.2.2">
+  <img src="https://img.shields.io/badge/version-5.2.3-0b62c4" alt="version 5.2.3">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-62%20checks-2da44e" alt="62 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-63%20checks-2da44e" alt="63 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -89,7 +89,12 @@ Its capabilities include:
   credible intervals, and the next measurement that would add the most information.
 - **Studies.** DOE (full factorial, one factor at a time, Latin hypercube; a filler's share of a fixed filler content as a
   factor; one fixed grid for every case or each case planned on its own), Gaussian-process surrogates, Sobol
-  sensitivity indices, single-objective optima and NSGA-II trade-off fronts.
+  sensitivity indices, single-objective optima and NSGA-II trade-off fronts. The table puts beside every input what the
+  generated structure really holds (filler content, a filler's share), so a dense case that falls short is read as it is.
+- **Linked inputs.** One quantity, several entries: a DOE factor or a calibration unknown can set further entries -
+  the same value (`x`), a ratio (`0.8*x`) or a function of all factors (`sqrt(x1*x2)`). Two grades of one filler then
+  share one interfacial resistance: one factor instead of two, and the measurements determine one value instead of
+  spreading over two.
 - **All cores in use.** Every solve that does not need another one — each property and direction, each Stokes and
   diffusion direction, each EMI frequency, the structure analyses — runs side by side on the cores given to a run, within
   the free memory, and several runs share the PC at once (a porous RVE with permeability, diffusion and the structure
@@ -138,9 +143,29 @@ through it.
 Each result states which method produced it. Conduction and thermal-expansion results are compared with rigorous
 bounds (Wiener, Hashin–Shtrikman, Schapery); a value outside a rigorous bound is reported as a failed check.
 
+### Flow of filled compounds
+
+Underfills and mould compounds are filled to 50-65 vol% and must still flow into gaps of tens of micrometres. MPSim
+shears the compound's own particles in the resin - lubrication between neighbours, contacts with friction, van der
+Waals attraction, each particle free to move and turn - and reads the viscosity from the stress they carry. The run
+below: fused silica 15 µm + 3 µm at 55 vol% in epoxy, 2,222 particles in a box sheared top against bottom, coloured by
+how much faster than the flow around it each particle moves (red: pushing past its neighbours).
+
+<p align="center">
+  <img src="docs/images/viscosity_shear.gif" alt="Particles of a mould underfill sheared in the resin (particle dynamics)" width="46%">
+</p>
+<p align="center">
+  <img src="docs/images/viscosity_showcase.png" alt="Relative viscosity settling to steady state and the flow curve of the compound" width="100%">
+</p>
+
+The viscosity overshoots while the shear structure builds up and settles from a strain of about 6; it is averaged over
+the second half of the run (a strain of 10 by default). The same particle dynamics handles cubes, platelets and stacks
+of platelets as rigid multi-sphere particles, runs on an NVIDIA GPU when there is one, and gives the flow curve of the
+compound, its maximum packing fraction and the capillary underfill filling time.
+
 ## Verification
 
-`5_SELF_TEST.bat` solves **62 problems whose answers are known** (41 in the quick set) and compares the results.
+`5_SELF_TEST.bat` solves **63 problems whose answers are known** (42 in the quick set) and compares the results.
 Among them:
 
 | Check | Reference | Result |
@@ -166,6 +191,20 @@ Among them:
 | Blends: two sphere sizes at 55 vol%, cubes with flakes at 45 vol% | no voxel inside two particles | 0 shared voxels, none trimmed |
 | Complete pipelines: filled RVE, thin film, porous RVE, viscosity with live results | all files, all analyses | passed |
 | DOE: a filler's share with the total kept; fixed grid | 5–50 % of 55 vol%, 160³ on every case | passed |
+| Linked inputs: one R_int for two grades of a filler (calibration) | known value 3e-8 m²K/W | 3.0e-8 linked (4.5e-8 when only one grade is calibrated) |
+| Stop: a run in its parallel solves | ends with every process it started | within seconds |
+
+**Benchmarks against published data** (presets of v5.2.3, run as loaded):
+
+| Preset | Reference | Reported | Computed |
+|---|---|---|---|
+| Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 18 (2025) 3882 | 640 W/m·K | 644 W/m·K, with 12.5 MW/m²K at the interface |
+| Power-module baseplate · AlSiC 63 vol% | Lai et al., *Micromachines* 14 (2023) 1491 | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.84 ppm/K |
+| mmWave substrate · PTFE + silica 60 wt% | Rajesh et al. (X band) | Dk 2.9 | Dk 3.01 |
+| PCB thermal vias · FR-4 + Cu-plated vias | parallel paths (exact) | k<sub>z</sub> 9.285 W/m·K | 9.285 W/m·K |
+| Glass core substrate · Cu-filled TGVs | parallel paths (exact) | k<sub>z</sub> 36.0 W/m·K | 36.03 W/m·K |
+| Die-attach solder · SAC305 + 15 % voids | Maxwell, dilute voids (upper bound) | 79.1 % of dense | 77.1 % |
+| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 49 (2013) 4172 | μr 7.5 (printed) | μr 5.1 (separate spheres) |
 
 **RVE size.** The 7× and 10× criteria come from repeated runs on independent random structures, evaluated with the
 statistical method of Kanit et al. (2003). The random scatter of one realisation (95 % interval) was ±0.12 % / ±0.14 %
@@ -346,7 +385,7 @@ More cases are listed in appendix D of the user guide.
 If you use MPSim in published work, please cite the software (GitHub shows the citation under
 **Cite this repository**, from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.2.2, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.2.3, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

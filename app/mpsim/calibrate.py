@@ -64,6 +64,7 @@ import numpy as np
 from . import analytical as AN
 from . import doe as DOE
 from . import generate as GEN
+from . import links as LK
 from . import materials as M
 from . import parallel as PAR
 from . import pipeline as PL
@@ -267,6 +268,15 @@ def _validate(job):
         errors.append(f"At most {MAX_UNKNOWNS} unknowns at a time: more are not determined by a few "
                       f"effective-property measurements; fix the others at theory or literature values")
     seen = set()
+    # links: an unknown that also sets other entries (the same value, or a
+    # function of the unknowns) - one interfacial resistance for two grades
+    # of a filler. The structure of a sample is generated once, so only
+    # values a solve reads may be linked, as for the unknowns themselves.
+    errors += LK.check(unk, [u.get("path", "") for u in unk],
+                       lambda path: None if unknown_kind(path) else
+                       "only material values, interface resistances and the particle surface parameters of the "
+                       "particle dynamics can follow an unknown (the structure of a sample stays as generated)")
+    linked = {path for _, path, _ in LK.factor_links(unk)}
     for u in unk:
         p = u.get("path", "")
         if unknown_kind(p) is None:
@@ -289,6 +299,8 @@ def _validate(job):
         for path in (m.get("set") or {}):
             if path in seen:
                 errors.append(f"Measurement {i+1} sets '{path}', which is being calibrated")
+            elif path in linked:
+                errors.append(f"Measurement {i+1} sets '{path}', which follows an unknown through a link")
     if errors:
         raise ValueError("\n".join(errors))
 
@@ -304,6 +316,8 @@ class _Unknown:
         self.sigma_dec = float(u.get("sigma_dec") or 0.5)   # log scale: decades; linear: in units
         self.theory = u.get("theory")
         self.unit = u.get("unit") or PROP_UNITS.get(self.path.split(".")[-1], "")
+        self.links = [{"path": ln["path"], "expr": str(ln.get("expr") or "x").strip() or "x"}
+                      for ln in (u.get("links") or []) if (ln.get("path") or "").strip()]
 
     def value(self, uu):
         uu = np.asarray(uu, float)
@@ -351,13 +365,27 @@ def _design(p, n, seed=3):
     return grid
 
 
+def _raw(unknowns):
+    """The unknowns as the link module reads them (path and links)."""
+    return [{"path": u.path, "links": u.links} for u in unknowns]
+
+
+def theta_values(unknowns, theta):
+    """{path: value} of the unknowns and of every entry linked to them, for
+    one parameter set (floats) or a whole grid (arrays of equal length)."""
+    out = {u.path: v for u, v in zip(unknowns, theta)}
+    for path, v in LK.linked_values(_raw(unknowns), list(theta)).items():
+        out.setdefault(path, v)
+    return out
+
+
 def _set_theta(form, unknowns, theta):
     f = copy.deepcopy(form)
-    for u, v in zip(unknowns, theta):
-        if u.path.startswith("contact_rc."):
-            f.setdefault("contact_rc", {})[u.path.split(".", 1)[1]] = float(v)
+    for path, v in theta_values(unknowns, [float(x) for x in theta]).items():
+        if path.startswith("contact_rc."):
+            f.setdefault("contact_rc", {})[path.split(".", 1)[1]] = float(v)
         else:
-            DOE.set_path(f, u.path, float(v))
+            DOE.set_path(f, path, float(v))
     return f
 
 
@@ -367,7 +395,8 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
     samples)."""
     samples = []
     reuse_dirs = [os.path.join(out_dir)] + list(job.get("_structure_dirs") or [])
-    any_contact = any(u.path.endswith("r_contact") or u.path.startswith("contact_rc.") for u in unknowns)
+    any_contact = any(p.endswith("r_contact") or p.startswith("contact_rc.")
+                      for p in [u.path for u in unknowns] + [ln["path"] for u in unknowns for ln in u.links])
     mid = [u.value(0.5) for u in unknowns]
     for i, m in enumerate(job["measurements"]):
         form = copy.deepcopy(base)
@@ -456,12 +485,11 @@ def _dem_phi_eff(sample, bound_nm):
 
 def _dem_jammed(sample, unknowns, Ug):
     """Grid points (unit cube) at which a viscosity sample would be jammed."""
-    j = next((k for k, u in enumerate(unknowns) if u.path == "options.viscosity.dem.bound_nm"), None)
-    if j is None:
+    cols = theta_values(unknowns, [u.value(Ug[:, j]) for j, u in enumerate(unknowns)])
+    b = cols.get("options.viscosity.dem.bound_nm")
+    if b is None:
         b = np.full(len(Ug), float(sample["spec"]["options"]["viscosity"]["dem"]["bound_nm"]))
-    else:
-        b = unknowns[j].value(Ug[:, j])
-    return _dem_phi_eff(sample, b) >= sample["dem"]["phi_jam"]
+    return _dem_phi_eff(sample, np.broadcast_to(np.asarray(b, float), (len(Ug),))) >= sample["dem"]["phi_jam"]
 
 
 def _dem_value(sample, theta_form, should_stop, cb=None):
@@ -793,7 +821,8 @@ def _suggest(samples, unknowns, theta, sig_model, F0):
     """Extra measurements ranked by how much they would add (D-optimal on
     the theory model): each sample with another particle size (x0.3, x3) or
     another content (+-10 vol%), for thermal conductivity."""
-    tk = [u for u in unknowns if re.match(r"^(matrix|phases\.\d+)\.props\.k$|^phases\.\d+\.r_int$", u.path)]
+    rx = r"^(matrix|phases\.\d+)\.props\.k$|^phases\.\d+\.r_int$"
+    tk = [u for u in unknowns if re.match(rx, u.path) and all(re.match(rx, ln["path"]) for ln in u.links)]
     if len(tk) != len(unknowns):
         return [], "Suggestions use the effective-medium model and cover the matrix and filler conductivities and R_int only"
     cands = []
@@ -1056,7 +1085,7 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
                   "design": {"points": [[float(u.value(x)) for u, x in zip(unknowns, uu)] for uu in U],
                              "values": Y.tolist()},
                   "theory": theory(base), "theory_preview": theory_rows,
-                  "apply": {u.path: float(r["map"]) for u, r in zip(unknowns, summ)}}
+                  "apply": {k: float(v) for k, v in theta_values(unknowns, [float(r["map"]) for r in summ]).items()}}
         # what the run list shows, also after a restart (it reads this file)
         result["headline"] = [{"key": "cal_" + str(j), "label": r["label"], "value": r["map"], "unit": r["unit"]}
                               for j, r in enumerate(summ)]
@@ -1115,23 +1144,21 @@ def _dem_vec(km, fillers, n=200):
 def _theory_model(spec, unknowns, thetas):
     """k of one sample for parameter sets thetas (P, p) on the DEM model."""
     P = len(thetas)
-    km = np.full(P, float(spec["matrix"]["props"]["k"]))
+    thetas = np.asarray(thetas, float)
+    cols = theta_values(unknowns, [thetas[:, j] for j in range(thetas.shape[1])])
+
+    def col(path, default):
+        v = cols.get(path)
+        return np.full(P, float(default)) if v is None else np.broadcast_to(np.asarray(v, float), (P,))
+    km = col("matrix.props.k", spec["matrix"]["props"]["k"])
     fillers = []
     for i, ph in enumerate(spec["phases"]):
         d = float(ph["size_um"].get("d") or 1.0) * 1e-6
         if ph.get("shell"):
             d += 2.0 * ph["shell"]["thickness_um"] * 1e-6
-        k = np.full(P, float(ph["props"]["k"]))
-        r = np.full(P, float(ph.get("r_int") or 0.0))
-        for j, u in enumerate(unknowns):
-            if u.path == f"phases.{i}.props.k":
-                k = thetas[:, j]
-            elif u.path == f"phases.{i}.r_int":
-                r = thetas[:, j]
+        k = col(f"phases.{i}.props.k", ph["props"]["k"])
+        r = col(f"phases.{i}.r_int", ph.get("r_int") or 0.0)
         fillers.append((float(ph["vf"]), k, r, d))
-    for j, u in enumerate(unknowns):
-        if u.path == "matrix.props.k":
-            km = thetas[:, j]
     return _dem_vec(km, fillers)
 
 
@@ -1148,7 +1175,8 @@ def preview(job):
     unknowns = [_Unknown(u) for u in job["unknowns"]]
     meas = job["measurements"]
     rx = re.compile(r"^(matrix|phases\.\d+)\.props\.k$|^phases\.\d+\.r_int$")
-    if any(m.get("property") != "k" for m in meas) or not all(rx.match(u.path) for u in unknowns):
+    if any(m.get("property") != "k" for m in meas) or not all(
+            rx.match(p) for p in [u.path for u in unknowns] + [ln["path"] for u in unknowns for ln in u.links]):
         return {"available": False,
                 "reason": "The effective-medium preview covers thermal conductivity with the matrix and filler "
                           "conductivities and R_int as unknowns; the RVE calibration covers the rest"}

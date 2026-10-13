@@ -927,7 +927,7 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     st = np.asarray(out["strain"])
     e = np.asarray(out["eta"])
     keep = max(1, len(st) // 200)
-    s0 = 1.0 if tot > 1.0 else 0.5 * tot     # the averaging starts here (as in the solver)
+    s0 = SU.settle_of(tot)                    # the averaging starts here (as in the solver)
     res = {"mu_r": out["eta_mean"], "se": out["eta_se"], "n": out["n"], "phi": phi, "gd": gd, "mu_resin": mu_res,
            "backend": out["backend"], "gpu_fallback": out.get("gpu_fallback"),
            "seconds": out["seconds"], "steps": out["steps"], "box_um": out["box_um"],
@@ -1653,8 +1653,9 @@ def thermal_aniso(spec, labels, ginfo, gen_phases, h, log=None):
         for li, ax in label_axes.items():
             log(f"   anisotropic thermal conductivity: {table[li]['name']} k {ax[0]:g} / {ax[1]:g} / {ax[2]:g} W/m·K "
                 f"along the box axes x / y / z")
-        if spec["rve"].get("film"):
-            log("   (a film: its thermal solves use each material's k - anisotropy is not applied to films)")
+        if spec["rve"].get("film") and core_of:
+            log("   (a film: the particles' own anisotropy is not applied - their k is used; a matrix anisotropic "
+                "along the box axes is)")
     return out
 
 
@@ -2507,6 +2508,24 @@ def _cond_refs(key, spec, vf_labels, vals):
     phi = np.asarray(vf_labels, float)
     lo, hi = AN.wiener(phi, vals)
     refs = {"Wiener bounds": [lo, hi]}
+    if key == "thermal":
+        # anisotropic materials: bounds per direction - a material along the
+        # box axes with its value along that axis, a turned particle with the
+        # smallest and largest of its axes (rigorous whatever the turn)
+        axes = [M.k_axes(t["props"]) for t in table]
+        if any(a is not None for a in axes):
+            per = []
+            for d in range(3):
+                lo_v, hi_v = [], []
+                for t, a, v in zip(table, axes, vals):
+                    if a is None:
+                        lo_v.append(v); hi_v.append(v)
+                    elif t["kind"] == "matrix":
+                        lo_v.append(float(a[d])); hi_v.append(float(a[d]))
+                    else:
+                        lo_v.append(float(min(a))); hi_v.append(float(max(a)))
+                per.append([AN.wiener(phi, lo_v)[0], AN.wiener(phi, hi_v)[1]])
+            refs["_wiener_dir"] = per
     if _isotropic_structure(spec):
         refs["Hashin–Shtrikman"] = list(AN.hashin_shtrikman(phi, vals))
     simple = all(t["kind"] in ("matrix", "core") for t in table)
@@ -2524,26 +2543,43 @@ def _cond_refs(key, spec, vf_labels, vals):
     return refs
 
 
+def _interface_resistance(spec):
+    """Whether the thermal solve carries interface or contact resistances."""
+    return (any(float(ph.get("r_int") or 0) > 0 or float(ph.get("r_contact") or 0) > 0 for ph in spec["phases"])
+            or any(float(v or 0) > 0 for v in (spec.get("contact_rc") or {}).values()))
+
+
 def _cond_checks(key, tensor, refs, spec, stats):
     title = COND[key]["title"]
     out = []
     lo, hi = refs["Wiener bounds"]
+    # interface and contact resistances act as further, thin phases of low
+    # conductivity: the lower bounds of the phases alone no longer hold (Al/SiC
+    # with R_int 1e-8 m2K/W came out below the series bound, as it should)
+    upper_only = key == "thermal" and _interface_resistance(spec)
     for i, d in enumerate("xyz"):
         v = tensor[i, i]
         if not np.isfinite(v):
             continue
-        ok = lo * (1 - 1e-3) <= v <= hi * (1 + 1e-3)
-        out.append({"id": f"{key}_wiener_{d}", "group": title, "label": f"{d}{d} component within the Wiener bounds",
+        if refs.get("_wiener_dir"):
+            lo, hi = refs["_wiener_dir"][i]
+        ok = (v <= hi * (1 + 1e-3)) if upper_only else (lo * (1 - 1e-3) <= v <= hi * (1 + 1e-3))
+        out.append({"id": f"{key}_wiener_{d}", "group": title,
+                    "label": f"{d}{d} component within the Wiener bounds" + (" (upper)" if upper_only else ""),
                     "value": v, "target": [lo, hi], "unit": COND[key]["unit"],
                     "status": "pass" if ok else "fail",
-                    "note": "Rigorous bounds that every microstructure satisfies"})
+                    "note": "Rigorous bounds that every microstructure satisfies"
+                            + ("; with interface resistances only the upper one (they add thin phases of low "
+                               "conductivity, which can take the value below the lower bound of the phases alone)"
+                               if upper_only else "")})
     if "Hashin–Shtrikman" in refs:
         hlo, hhi = refs["Hashin–Shtrikman"]
         diag = [tensor[i, i] for i in range(3) if np.isfinite(tensor[i, i])]
         if diag:
             m = float(np.mean(diag))
-            ok = hlo * (1 - 0.01) <= m <= hhi * (1 + 0.01)
-            out.append({"id": f"{key}_hs", "group": title, "label": "Isotropic mean within the Hashin–Shtrikman bounds",
+            ok = (m <= hhi * (1 + 0.01)) if upper_only else (hlo * (1 - 0.01) <= m <= hhi * (1 + 0.01))
+            out.append({"id": f"{key}_hs", "group": title,
+                        "label": "Isotropic mean within the Hashin–Shtrikman bounds" + (" (upper)" if upper_only else ""),
                         "value": m, "target": [hlo, hhi], "unit": COND[key]["unit"],
                         "status": "pass" if ok else "warn",
                         "note": "Bounds for statistically isotropic structures; a finite RVE may deviate slightly"})

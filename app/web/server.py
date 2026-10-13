@@ -912,6 +912,60 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         return send_file(out, mimetype="image/png", as_attachment=False, max_age=0)
 
     # ---------------------------------------------------------- calibration
+    @app.post("/api/links/preview")
+    def api_links_preview():
+        """Check the links of a study's parameters or a calibration's unknowns
+        and give the range each linked entry takes over the factors' ranges
+        (every corner of the factor box and its centre), for the editor."""
+        import itertools as _it
+        from mpsim import doe as DOE
+        from mpsim import links as LK
+        b = request.get_json(force=True, silent=True) or {}
+        form = copy.deepcopy(b.get("form") or {})
+        factors = [f for f in (b.get("factors") or []) if f.get("path")]
+        if b.get("kind") == "cal":
+            from mpsim import calibrate as CAL
+
+            def allowed(path):
+                return None if CAL.unknown_kind(path) else (
+                    "only material values, interface resistances and particle surface parameters can follow an "
+                    "unknown (the structure of a sample stays as generated)")
+        else:
+            try:
+                known = {c["path"] for c in DOE.parameter_catalogue(form)}
+            except Exception:                                       # noqa: BLE001
+                known = set()
+
+            def allowed(path):
+                return None if path in known else "not an entry a study can set in this case"
+        errors = LK.check(factors, [f["path"] for f in factors], allowed)
+
+        def ends(f):
+            if f.get("values"):
+                v = [float(x) for x in f["values"]]
+                return min(v), max(v)
+            lo = float(f.get("min", f.get("lo", 0)) or 0)
+            hi = float(f.get("max", f.get("hi", 0)) or 0)
+            return min(lo, hi), max(lo, hi)
+        box = []
+        for f in factors:
+            try:
+                box.append(ends(f))
+            except (TypeError, ValueError):
+                box.append((0.0, 0.0))
+        mid = [(math.sqrt(a * c) if (f.get("scale") == "log" and a > 0 and c > 0) else 0.5 * (a + c))
+               for f, (a, c) in zip(factors, box)]
+        pts = [mid] + [list(c) for c in _it.product(*box)][:256]
+        syms = LK.symbols(len(factors))
+        out = []
+        for j, path, expr in LK.factor_links(factors):
+            try:
+                vals = [LK.evaluate(expr, dict(zip(syms, p_), x=p_[j])) for p_ in pts]
+                out.append({"factor": j, "path": path, "lo": min(vals), "hi": max(vals), "mid": vals[0]})
+            except LK.LinkError as e:
+                out.append({"factor": j, "path": path, "error": str(e)})
+        return jsonify({"errors": errors, "links": out})
+
     @app.post("/api/calibration/theory")
     def api_cal_theory():
         """Theory values for the editor (mismatch-model interfacial
@@ -1080,7 +1134,10 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         base = _copy.deepcopy(s["base_form"])
         base["_limits"] = app.config["LIMITS"]
         case = {"values": {k: float(v) for k, v in values.items()}, "label": body.get("label") or "optimum"}
-        form = DOE.apply_case(base, case)
+        try:
+            form = DOE.apply_case(base, case, parameters=s.get("parameters"))
+        except ValueError as e:
+            return jsonify({"ok": False, "errors": str(e).split("\n")}), 400
         try:
             S.normalize(_copy.deepcopy(form))
         except ValueError as e:
@@ -1112,7 +1169,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             old = app.queue.get(case["job_id"])
             if old is not None and old.state not in ("failed", "stopped"):
                 continue
-            form = DOE.apply_case(_copy.deepcopy(s["base_form"]), {"values": case["values"], "label": case["label"]})
+            form = DOE.apply_case(_copy.deepcopy(s["base_form"]), {"values": case["values"], "label": case["label"]},
+                                  parameters=s.get("parameters"))
             form["_limits"] = app.config["LIMITS"]
             meta = {"name": form["name"], "analyses": s.get("analyses") or [], "doe": sid,
                     "mem_gb": est_mem_gb(form)}

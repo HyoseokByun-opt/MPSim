@@ -8,6 +8,12 @@ the other fillers take the rest in their own proportions. The cases are ordinary
 so every result, figure and report of a DOE case is the same as for a case
 entered by hand.
 
+Linked inputs (links.py): a parameter may set further entries of the form,
+the same value or a function of the parameters ("phases.1.r_int = x",
+"contact_rc.0-1 = sqrt(x1*x2)"), so that one quantity that appears in several
+places - the interfacial resistance of two grades of one filler - is one
+factor of the design.
+
 Designs:
     full    full factorial over all parameter levels
     oat     one factor at a time around the centre level (the reference case
@@ -22,6 +28,8 @@ import itertools
 import math
 
 import numpy as np
+
+from . import links as LK
 
 MAX_CASES = 64
 
@@ -161,11 +169,41 @@ def set_filler_share(form, i, share):
         form["phases"][k]["fraction"]["value"] = round((tot - new_i) * w, 9)
 
 
-def apply_case(base_form, case, index=None):
-    """Complete form of one case (the base form with the parameters set)."""
+def linked(parameters, values):
+    """{path: value} that the links of `parameters` set for the factor values
+    `values` ({path: value} of the parameters themselves)."""
+    params = [p for p in parameters or [] if p.get("path")]
+    if not any(p.get("links") for p in params):
+        return {}
+    try:
+        vals = [float(values[p["path"]]) for p in params]
+    except KeyError as e:
+        raise ValueError(f"No value for the parameter {e.args[0]}") from None
+    return LK.linked_values(params, vals)
+
+
+def check_links(parameters, form):
+    """Messages for links that cannot be applied to this form (empty: fine):
+    a bad expression, an entry set twice, a target the form does not have."""
+    params = [p for p in parameters or [] if p.get("path")]
+    known = {c["path"] for c in parameter_catalogue(form)}
+
+    def allowed(path):
+        if path in known:
+            return None
+        return "this entry is not one a study can set in this case"
+    return LK.check(params, [p["path"] for p in params], allowed)
+
+
+def apply_case(base_form, case, index=None, parameters=None):
+    """Complete form of one case (the base form with the parameters set).
+    `parameters`: the study's parameters, whose links set further entries."""
     form = copy.deepcopy(base_form)
     mix = []
-    for path, value in case["values"].items():
+    values = dict(case["values"])
+    for path, value in linked(parameters, case["values"]).items():
+        values.setdefault(path, value)
+    for path, value in values.items():
         if path.startswith("mix."):
             mix.append((int(path.split(".")[1]), value))
         else:
@@ -232,11 +270,24 @@ def parameter_catalogue(form):
             out.append({"path": f"phases.{i}.shell.thickness", "label": f"{name}: shell thickness", "unit": ph.get("size", {}).get("unit", "um"), "group": g})
         out += [
             {"path": f"phases.{i}.r_int", "label": f"{name}: interfacial resistance R_int", "unit": "m²K/W", "group": g},
+            {"path": f"phases.{i}.props.sigma", "label": f"{name}: electrical conductivity", "unit": "S/m", "group": g},
+            {"path": f"phases.{i}.props.eps_r", "label": f"{name}: permittivity", "unit": "-", "group": g},
             {"path": f"phases.{i}.r_contact", "label": f"{name}: contact resistance R_c", "unit": "m²K/W", "group": g},
             {"path": f"phases.{i}.props.k", "label": f"{name}: thermal conductivity", "unit": "W/m·K", "group": g},
             {"path": f"phases.{i}.props.E", "label": f"{name}: Young's modulus", "unit": "GPa", "group": g},
         ]
+    # contact resistance between two different fillers (the pair entry of
+    # the contact matrix; empty takes the mean of the two fillers' own)
+    fill = [k for k in _fillers(form) if (form["phases"][k].get("shape") != "network")]
+    for a_, b_ in itertools.combinations(fill, 2):
+        na = form["phases"][a_].get("name") or f"Phase {a_+1}"
+        nb = form["phases"][b_].get("name") or f"Phase {b_+1}"
+        out.append({"path": f"contact_rc.{a_}-{b_}", "label": f"Contact resistance {na} – {nb}", "unit": "m²K/W",
+                    "group": "Contacts between fillers"})
     for p in out:
         if not p["path"].startswith("mix."):
-            p["current"] = get_path(form, p["path"])
+            try:
+                p["current"] = get_path(form, p["path"])
+            except (IndexError, KeyError, TypeError, ValueError, AttributeError):
+                p["current"] = None
     return out

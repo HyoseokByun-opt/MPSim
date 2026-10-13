@@ -1646,8 +1646,27 @@ class _LiveDem:
         self.slot.particles(x, v, s.strain, eta)
 
 
+DEFAULT_STRAIN = 10.0
+
+
+def settle_of(strain):
+    """Where the averaging of a run of this strain starts: its second half.
+
+    A dense suspension sheared from rest first builds its shear
+    microstructure: the stress overshoots and settles over several units of
+    strain. Silica 15 + 3 um at 55 vol% (MUF preset, 15 units of strain):
+    mean relative viscosity per unit of strain 19, 25, 28, 40, 30, 28, then
+    22-26 from strain 6 on (plateau 24.1). Averaged from strain 1, a run of 5
+    overestimated the plateau by 27 % and one of 10 by 15 %; the second half
+    of a run of 10 is 4.6 % off, with a standard error of 3.6 %.
+    """
+    strain = float(strain)
+    return 0.5 * strain if strain <= 2.0 else max(1.0, 0.5 * strain)
+
+
+
 def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
-                    strain=5.0, settle=1.0, seed=1, backend="auto", log=None, progress=None, should_stop=None,
+                    strain=DEFAULT_STRAIN, settle=None, seed=1, backend="auto", log=None, progress=None, should_stop=None,
                     bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None, bodies=None):
     """See _shear_viscosity. live: a mpsim.live.Slot for the live view (its
     static_info may give the phase names, colours and the phase of every
@@ -1674,14 +1693,15 @@ def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, h
 
 
 def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
-                     strain=5.0, settle=1.0, seed=1, backend="auto", log=None, progress=None, should_stop=None,
+                     strain=DEFAULT_STRAIN, settle=None, seed=1, backend="auto", log=None, progress=None, should_stop=None,
                      bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None, bodies=None):
     """Relative viscosity of spheres of the given radii (m) at volume fraction
     phi in a resin of viscosity mu_resin (Pa s) sheared at gd (1/s), from the
     particle dynamics. The surface roughness and the closest approach are
     lengths, so their weight against the particle - and the van der Waals
     attraction against the viscous force, A / (mu gd a^3) - changes with the
-    particle size. Averaged over the strain after `settle`.
+    particle size. Averaged over the strain after `settle` (default: the
+    second half of the run, settle_of).
 
     bound_m: a resin layer bound to the surface that moves with the particle
     (adsorbed resin, coupling agent): the radius for the flow and the
@@ -1739,6 +1759,8 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
             if log:
                 log(f"    a particle had more than {s.maxn} neighbours: restarted with {maxn}")
     st, e = np.asarray(out["strain"]), np.asarray(out["eta"])
+    if settle is None:
+        settle = settle_of(strain)
     # a strain no longer than the settling one (1 is accepted): its second half
     if float(strain) <= settle:
         settle = 0.5 * float(strain)
