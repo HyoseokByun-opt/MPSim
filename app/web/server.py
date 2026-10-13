@@ -562,7 +562,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         """
         b = request.get_json(force=True, silent=True) or {}
         return jsonify(app.queue.configure(concurrency=b.get("concurrency"),
-                                           threads=b.get("threads")))
+                                           threads=b.get("threads"),
+                                           mem_budget_gb=b.get("mem_budget_gb")))
 
     def find_reuse(spec, prefer=None):
         """The finished run of this case whose structure a new submission can
@@ -719,7 +720,10 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                          "progress": j.progress, "stage": j.stage,
                          "elapsed_s": ((j.ended or time.time()) - j.started) if j.started else 0,
                          "headline": (j.summary or {}).get("headline") if j.state == "done" else None,
-                         "queue_position": app.queue.position(j) if j.state == "queued" else 0})
+                         "queue_position": app.queue.position(j) if j.state == "queued" else 0,
+                         # why a queued run waits (a free place, or memory)
+                         "wait": app.queue.wait_reason(j) if j.state == "queued" else "",
+                         "threads": j.threads if j.state == "running" else None})
         return jsonify(rows)
 
     @app.get("/api/jobs/<jid>")
@@ -734,6 +738,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         return jsonify({"seq": job.seq, "state": job.state, "progress": job.progress,
                         "stage": job.stage, "stage_detail": job.stage_detail, "solver": job.solver,
                         "queue_position": app.queue.position(job) if job.state == "queued" else 0,
+                        "wait": app.queue.wait_reason(job) if job.state == "queued" else "",
                         "elapsed_s": ((job.ended or time.time()) - job.started) if job.started else 0,
                         "events": [{"seq": s, "kind": k, "data": p} for s, k, p in ev
                                    if k in ("line", "stage", "partial", "finished", "state", "figure",
@@ -1122,6 +1127,17 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             app.doe.save(s)
         return jsonify({"ok": True, "requeued": len(done), "cases": done})
 
+    @app.post("/api/doe/<sid>/stop")
+    def api_doe_stop(sid):
+        """Stop a whole study: its queued cases first, then the running ones,
+        so that no queued case starts in the place a stopped one leaves."""
+        s = app.doe.get(sid)
+        if s is None:
+            abort(404, "DOE study not found")
+        jobs = [app.queue.get(c["job_id"]) for c in s["cases"]]
+        live = [j for j in jobs if j is not None and j.state in ("running", "queued")]
+        return jsonify({"ok": True, "stopped": app.queue.stop_many(live)})
+
     @app.delete("/api/doe/<sid>")
     def api_doe_delete(sid):
         s = app.doe.get(sid)
@@ -1130,12 +1146,16 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         if s.get("owner") not in (owner(), None):
             abort(403, "DOE studies of other users cannot be deleted")
         if request.args.get("runs") == "1":
-            for case in s["cases"]:
-                job = app.queue.get(case["job_id"])
-                if job is None:
-                    continue
-                if job.state in ("running", "queued"):
-                    app.queue.stop(job)
+            jobs = [app.queue.get(c["job_id"]) for c in s["cases"]]
+            live = [j for j in jobs if j is not None and j.state in ("running", "queued")]
+            app.queue.stop_many(live)
+            # a stopped run ends within seconds (JobQueue.stop); its directory
+            # goes with the others once its process is gone
+            t0 = time.time()
+            while any(j.state == "running" for j in live) and time.time() - t0 < 10:
+                time.sleep(0.2)
+            for job in jobs:
+                if job is None or job.state == "running":
                     continue
                 shutil.rmtree(job.out_dir, ignore_errors=True)
                 with app.queue.lock:

@@ -308,7 +308,7 @@
   function ribbonGroups() {
     const f = state.form, an = f.analyses || {};
     const toggle = (k) => RB("an:" + k, AN[k].icon, AN[k].short || AN[k].title, { on: !!an[k], dis: !!disabledReason(k), color: AN[k].color, tip: `${AN[k].title} — ${AN[k].out}` });
-    const running = ["running", "queued"].includes(state.activeState);
+    const running = ["running", "queued"].includes(state.activeState) || anyLive();
     // building belongs to the two stages that build something - the geometry on
     // Structure, the voxel grid on Domain - so Execute only runs and stops
     // full means every parallel slot is taken; the button says so instead of
@@ -545,11 +545,13 @@
   }
   async function onSetting(e) {
     const el = e.target, body = {};
-    body[el.dataset.set] = el.value === "" ? null : Number(el.value);
+    // the memory budget: empty returns to 70 % of the RAM, 0 switches it off
+    body[el.dataset.set] = el.value === "" ? (el.dataset.set === "mem_budget_gb" ? -1 : null) : Number(el.value);
     try {
       state.settings = await api("POST", "/api/settings", body);
-      toast(`${state.settings.concurrency} analysis(es) at a time · `
-        + `${state.settings.threads} core${state.settings.threads === 1 ? "" : "s"} each`);
+      const sb = state.settings;
+      toast(`${sb.concurrency} analysis(es) at a time · ${sb.threads} core${sb.threads === 1 ? "" : "s"} each · `
+        + (sb.mem_budget_gb ? `${fmt(sb.mem_budget_gb)} GB memory for runs side by side` : "no memory limit"));
     } catch (err) { toast("The setting could not be applied: " + err.message); }
     renderLeft(); renderRibbon(); pollRuns();
   }
@@ -682,8 +684,15 @@
           <div><label class="f">Cores each <span class="u">0 = auto (¼)</span></label>
             <input type="number" min="0" max="${4 * cores}" step="1" data-set="threads" value="${s.auto_threads ? 0 : th}"></div>
         </div>
+
         <div class="hint" style="margin-top:6px">Now: <b>${conc}</b> at a time × <b>${th}</b> core${th === 1 ? "" : "s"} = ${used} of ${cores}${used > cores ? " — oversubscribed, which slows every run down" : ""}.
           ${s.auto_threads ? "Automatic: a quarter of the PC per analysis, and never more than an equal share when several run at once." : "A fixed number of cores per analysis."}</div>
+        <div class="g2" style="margin-top:6px">
+          <div><label class="f">Memory for parallel runs <span class="u">GB</span></label>
+            <input type="number" min="0" step="any" data-set="mem_budget_gb" value="${s.mem_budget_auto ? "" : (s.mem_budget_gb ?? "")}" placeholder="${s.mem_budget_gb ? fmt(s.mem_budget_gb) + " (70 %)" : "70 % of RAM"}"></div>
+          <div><label class="f">Installed RAM</label><div class="mono" style="padding:6px 0">${s.ram_gb ? fmt(s.ram_gb) + " GB" : "—"}</div></div>
+        </div>
+        <div class="hint">A run starts beside the others only while the memory they are expected to take fits this budget (empty: 70 % of the RAM; 0: no limit), so that parallel runs never page to disk. A large grid can therefore run alone although more places are set: an Accurate RVE of 470³ voxels reserves about 35 GB. The run list says when a run waits for memory. While memory lets fewer runs go at once than are set, the automatic cores of the waiting places go to the runs that do run.</div>
         <div class="hint">A change applies to the next analysis to start; nothing running is disturbed. An analysis splits its cores between its independent solves (properties, directions, elastic load cases) and the threads inside each solve, and takes the split that finishes first: a PuMA FE solve runs about 4× faster on 14 threads, several solves side by side do more work per core.</div>
       </div></div>`;
   }
@@ -1031,7 +1040,7 @@
       <i class="dot ${j.state}"></i><div class="nm">${esc(j.name || j.id)}
         <div class="rtags">${chips(j)}${j.grid ? `<span class="rgrid">${esc(j.grid)}</span>` : ""}</div>
         ${j.doe_label ? `<small class="rvars">${esc(j.doe_label)}</small>` : (j.structure ? `<small class="rstruct" title="${esc(j.structure)}">${esc(j.structure)}</small>` : "")}
-        <small>${STATE[j.state]}${j.state === "running" ? " · " + Math.round(100 * j.progress) + " %" : ""}${j.state === "queued" ? " · position " + j.queue_position : ""} · ${secs(j.elapsed_s)}</small></div>
+        <small>${STATE[j.state]}${j.state === "running" ? " · " + Math.round(100 * j.progress) + " %" + (j.threads ? ` · ${j.threads} cores` : "") : ""}${j.state === "queued" ? " · " + esc(j.wait || "position " + j.queue_position) : ""} · ${secs(j.elapsed_s)}</small></div>
       <div class="acts">${["running", "queued"].includes(j.state) ? `<button class="btn sm danger" data-stop="${j.id}" title="Stop">${I("stop")}</button>` : `<button class="btn sm" data-del="${j.id}" title="Delete">${I("delete")}</button>`}</div></div>`;
     // A study queues up to 64 cases. Listed one by one they bury every earlier
     // result, so a study collapses into a single row that opens on a click.
@@ -1049,8 +1058,8 @@
       const el = cases.reduce((s, x) => s + (x.elapsed_s || 0), 0);
       out.push(`<div class="run study ${open ? "open" : ""}" data-doegroup="${j.doe}">
         <i class="dot ${dot}"></i><div class="nm">${esc((study && study.name) || "DOE study")}
-          <small>DOE · ${cases.length} case${cases.length === 1 ? "" : "s"} · ${n("done")} done${live ? ` · ${live} in flight` : ""}${n("failed") + n("stopped") ? ` · ${n("failed") + n("stopped")} failed` : ""} · ${secs(el)}</small></div>
-        <div class="acts"><button class="btn sm" data-doeopen2="${j.doe}" title="Open the study">${I("preset")}</button>
+          <small>DOE · ${cases.length} case${cases.length === 1 ? "" : "s"} · ${n("done")} done${live ? ` · ${n("running")} running, ${n("queued")} queued` : ""}${n("failed") ? ` · ${n("failed")} failed` : ""}${n("stopped") ? ` · ${n("stopped")} stopped` : ""} · ${secs(el)}</small></div>
+        <div class="acts">${live ? `<button class="btn sm danger" data-doestop="${j.doe}" title="Stop the study: its running and queued cases">${I("stop")}</button>` : ""}<button class="btn sm" data-doeopen2="${j.doe}" title="Open the study">${I("preset")}</button>
           <button class="btn sm" data-doedel="${j.doe}" title="Delete the study and all its runs">${I("delete")}</button>
           <button class="btn sm" data-doetoggle="${j.doe}" title="${open ? "Collapse" : "Show the cases"}">${open ? "−" : "+"}</button></div></div>`
         + (open ? `<div class="substack">${cases.map(one).join("")}</div>` : ""));
@@ -1252,7 +1261,32 @@
       toast("The run could not be started:\n" + err.message, 7000);
     }
   }
-  async function stopActive() { if (state.active) { await api("POST", `/api/jobs/${state.active}/stop`); toast("A stop has been requested."); } }
+  /* Stop means stop, now: the server ends the run's process at once. A case of
+     a DOE study stops its whole study (queued cases first, so that none starts
+     in the place a stopped one leaves); the run list stops a single case. With
+     no run followed here, every run in flight stops. */
+  const isLive = (j) => j && ["running", "queued"].includes(j.state);
+  function anyLive() { return (state.jobs || []).some(isLive); }
+  async function stopActive() {
+    const act = (state.jobs || []).find((j) => j.id === state.active);
+    const activeLive = ["running", "queued"].includes(state.activeState);
+    try {
+      if (activeLive && act && act.doe) {
+        const r = await api("POST", `/api/doe/${act.doe}/stop`);
+        toast(`The DOE study is stopped: ${r.stopped} case${r.stopped === 1 ? "" : "s"}.`);
+      } else if (activeLive && state.active) {
+        await api("POST", `/api/jobs/${state.active}/stop`);
+        toast("The run is stopped.");
+      } else {
+        const ls = (state.jobs || []).filter(isLive);
+        const sids = [...new Set(ls.filter((j) => j.doe).map((j) => j.doe))];
+        for (const sid of sids) await api("POST", `/api/doe/${sid}/stop`);
+        for (const j of ls.filter((x) => !x.doe)) await api("POST", `/api/jobs/${j.id}/stop`);
+        toast(ls.length ? `${ls.length} run${ls.length === 1 ? "" : "s"} stopped.` : "No run is going.");
+      }
+    } catch (err) { toast("The stop failed: " + err.message); }
+    pollRuns();
+  }
   function attach(id, preview) {
     state.active = id; state.seq = 0; state.history = {}; state.partial = {}; state.activeState = null; state.activePreview = !!preview;
     state.lastStage = null;
@@ -1295,9 +1329,9 @@
       $("#progBar").style.width = `${pct}%`;
       $("#sbState").innerHTML = `<i class="dot ${ev.state}"></i>${STATE[ev.state] || ev.state}${["running", "queued"].includes(ev.state) ? ` · ${pct} %` : ""}`;
       const sv = ev.solver;
-      $("#sbStage").textContent = ev.state === "queued" ? `Queue position ${ev.queue_position}` : `${ev.stage || ""}${ev.stage_detail ? " · " + ev.stage_detail : ""}${sv ? ` · ${sv.name}: iteration ${sv.it}, residual ${fmt(sv.res)}` : ""} · ${secs(ev.elapsed_s)}`;
+      $("#sbStage").textContent = ev.state === "queued" ? `Queue position ${ev.queue_position}${ev.wait ? " · " + ev.wait : ""}` : `${ev.stage || ""}${ev.stage_detail ? " · " + ev.stage_detail : ""}${sv ? ` · ${sv.name}: iteration ${sv.it}, residual ${fmt(sv.res)}` : ""} · ${secs(ev.elapsed_s)}`;
       const running = ["running", "queued"].includes(ev.state);
-      $("#btnStop").disabled = !running;
+      $("#btnStop").disabled = !running && !anyLive();
       if (prev !== ev.state && state.tab && ["home", "analysis", "simulation"].includes(state.tab)) renderRibbon();
       if (state.dtab === "conv") drawConv(sv);
       renderPartial();
@@ -1489,6 +1523,7 @@
     // the ribbon is not rebuilt under the pointer every four seconds.
     const inflight = running + queued;
     if (inflight !== state._inflight) { state._inflight = inflight; renderRibbon(); }
+    $("#btnStop").disabled = !inflight && !["running", "queued"].includes(state.activeState || "");
     // a run going on (started in another tab, a study, or before this page
     // loaded) is followed when the one followed here has finished: its live
     // solve, console and result then appear here as for a run started here
@@ -1498,7 +1533,8 @@
     // happened to start with, or the status bar contradicts the Home tab
     const st = state.settings;
     if (state.health) {
-      $("#sbServer").textContent = `${running} running · ${queued} queued · `
+      const memWait = state.jobs.some((j) => j.state === "queued" && /memory/.test(j.wait || ""));
+      $("#sbServer").textContent = `${running} running · ${queued} queued${memWait ? " (waiting for memory)" : ""} · `
         + (st ? `${st.concurrency} at a time × ${st.threads} of ${st.cores} cores`
               : `${state.health.cores} cores`);
     }
@@ -2704,9 +2740,14 @@
         <span class="hint">the selectors above the page choose what each axis, the colour and the size show</span></div>
       ${canvas("doeScatter", 360)}</div>`;
     const charts = scatterBox + d.metrics.slice(0, 6).map((m) => `<div class="box"><div class="bt">${esc(m.label)}${m.unit && m.unit !== "-" ? ` <span class="hint">${esc(m.unit)}</span>` : ""}</div>${canvas("doe_" + m.key, 250)}</div>`).join("");
-    el.innerHTML = `<div class="big">${tile("Cases", d.n_cases, design)}${tile("Completed", counts.done || 0, "")}${tile("Running / queued", (counts.running || 0) + (counts.queued || 0), "")}
-        ${tile("Failed", (counts.failed || 0) + (counts.stopped || 0), "")}${tile("Total solver time", secs(elapsed), "")}</div>
-      <div class="box"><div class="bt">Cases<div class="grow"></div>${nbad ? `<button class="btn sm" data-doeretry title="Queue these cases again with their own values; the study then points at the new runs">${I("run")}Re-run ${nbad} failed case${nbad === 1 ? "" : "s"}</button>` : ""}<span class="hint">a row opens that run in the Result Viewer</span></div>
+    // why the queued cases wait (a free place or memory), from the run list
+    const live = (counts.running || 0) + (counts.queued || 0);
+    const waitJob = (state.jobs || []).find((j) => j.doe === state.doeId && j.state === "queued" && j.wait);
+    const waitTxt = waitJob ? waitJob.wait.replace(/^\d+ ahead · /, "") : "";
+    el.innerHTML = `<div class="big">${tile("Cases", d.n_cases, design)}${tile("Completed", counts.done || 0, "")}${tile("Running / queued", `${counts.running || 0} / ${counts.queued || 0}`, "")}
+        ${tile("Failed / stopped", `${counts.failed || 0} / ${counts.stopped || 0}`, "")}${tile("Total solver time", secs(elapsed), "")}</div>
+      ${waitTxt ? `<div class="note">Queued cases: ${esc(waitTxt)}. The memory for runs side by side is set in Home → Machine.</div>` : ""}
+      <div class="box"><div class="bt">Cases<div class="grow"></div>${live ? `<button class="btn sm danger" data-doestop="${state.doeId}" title="Stop the running and queued cases of this study now">${I("stop")}Stop study</button>` : ""}${nbad ? `<button class="btn sm" data-doeretry title="Queue these cases again with their own values; the study then points at the new runs">${I("run")}Re-run ${nbad} failed case${nbad === 1 ? "" : "s"}</button>` : ""}<span class="hint">a row opens that run in the Result Viewer</span></div>
         <div class="tablewrap" style="max-height:52vh">${`<table class="grid"><tr>${head.map((h, i) => `<th class="${i > 1 ? "n" : ""}">${esc(h)}</th>`).join("")}</tr>${rows}</table>`}</div></div>
       ${d.metrics.length ? `<div class="rgrid" style="margin-top:12px">${charts}</div>` : ""}`;
     drawScatter(d);
@@ -3501,7 +3542,7 @@
     });
 
     document.body.addEventListener("click", async (e) => {
-      const b = e.target.closest("[data-open],[data-stop],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel]");
+      const b = e.target.closest("[data-open],[data-stop],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel],[data-doestop]");
       if (!b) return;
       // the cases of a study are shown only when asked for; the study row itself
       // opens the study rather than any one of its runs
@@ -3531,6 +3572,13 @@
       if (b.dataset.optopen) { state.opt.data = null; await openDoe(b.dataset.optopen); renderLeft(); return; }
       if (b.dataset.optqueue) { await queueOptPoint(b.dataset.optqueue); return; }
       if (b.dataset.stop) { e.stopPropagation(); await api("POST", `/api/jobs/${b.dataset.stop}/stop`); pollRuns(); }
+      else if (b.dataset.doestop) {
+        e.stopPropagation();
+        try { const r = await api("POST", `/api/doe/${b.dataset.doestop}/stop`); toast(`The DOE study is stopped: ${r.stopped} case${r.stopped === 1 ? "" : "s"}.`); }
+        catch (err) { toast("The stop failed: " + err.message); }
+        await pollRuns();
+        if (state.center === "doe" && state.doeId) openDoe(state.doeId);
+      }
       else if (b.dataset.del) {
         e.stopPropagation();
         if (confirm("Delete this result permanently?")) {

@@ -283,7 +283,13 @@ class SolvePool:
     def __init__(self, workers, threads_each, log_dir=None):
         self.workers = int(workers)
         self.threads_each = int(threads_each)
-        self.tmp = tempfile.mkdtemp(prefix="mpsim_par_")
+        # inside the run's directory when the server runs it (MPSIM_TMP), so
+        # that a stopped run's shared grids go with the stop instead of
+        # staying in the system's temporary folder
+        base = os.environ.get("MPSIM_TMP") or None
+        if base:
+            os.makedirs(base, exist_ok=True)
+        self.tmp = tempfile.mkdtemp(prefix="mpsim_par_", dir=base)
         ctx = mp.get_context("spawn")
         self.ex = ProcessPoolExecutor(max_workers=self.workers, mp_context=ctx, initializer=_init,
                                       initargs=(self.threads_each, log_dir))

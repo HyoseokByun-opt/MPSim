@@ -1541,6 +1541,53 @@ def t_api():
         return f"{len(mats['materials'])} materials, plans of {n_ok} presets succeeded"
 
 
+@check("Stop: a running analysis ends within seconds with every process it started, and stays stopped", quick=False)
+def t_stop_now():
+    import psutil
+    from web.jobs import JobQueue, STOPPED_FILE
+    # a run that is busy for a long while: thermal and viscosity of a dense
+    # filled RVE (packing, three solves, particle dynamics)
+    form = {"name": "selftest stop", "matrix": {"material_id": "epoxy"},
+            "phases": [{"material_id": "al2o3", "name": "Al2O3", "shape": "sphere", "size": {"d": 6, "unit": "um"},
+                        "fraction": {"value": 50, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 96, "voxel_um": 0.75, "auto_enlarge": False, "quality": "fast"},
+            "analyses": {"thermal": True, "viscosity": True}, "options": {"directions": "xyz"}}
+    with tempfile.TemporaryDirectory() as d:
+        q = JobQueue(concurrency=1, threads=4)
+        job = q.submit(None, form, d, {"name": "selftest stop", "analyses": ["thermal", "viscosity"]})
+        # stopped while its three thermal solves run in their worker
+        # processes - the part a stop used to wait for
+        t0 = time.time()
+        kids = []
+        while time.time() - t0 < 300 and job.state in ("queued", "running"):
+            if job.state == "running" and "Thermal" in (job.stage or ""):
+                kids = [p.pid for p in psutil.Process(job.proc.pid).children(recursive=True)]
+                if kids:
+                    break
+            time.sleep(0.2)
+        expect(job.state == "running", f"the run did not reach its solves ({job.state})")
+        time.sleep(1.0)
+        pid = job.proc.pid
+        kids = [p.pid for p in psutil.Process(pid).children(recursive=True)]
+        stage = job.stage
+        t1 = time.time()
+        q.stop(job)
+        while time.time() - t1 < 20 and job.state == "running":
+            time.sleep(0.1)
+        dt = time.time() - t1
+        expect(job.state == "stopped", f"state {job.state} after the stop")
+        expect(dt < 6.0, f"the stop took {dt:.1f} s")
+        time.sleep(1.0)
+        alive = [x for x in [pid] + kids if psutil.pid_exists(x) and psutil.Process(x).status() != psutil.STATUS_ZOMBIE]
+        expect(not alive, f"processes still alive after the stop: {alive}")
+        expect(os.path.exists(os.path.join(job.out_dir, STOPPED_FILE)), "no stop marker in the run directory")
+        q2 = JobQueue(concurrency=1)
+        q2.restore(d)
+        back = q2.get(job.id)
+        expect(back is not None and back.state == "stopped", f"after a restart the run is {back and back.state}")
+        return f"stopped in {dt:.1f} s during '{stage or 'start-up'}', {len(kids)} child process(es) ended with it"
+
+
 @check("Complete pipeline: small filled RVE → result, layer card, viewer data, report", quick=False)
 def t_pipeline():
     from mpsim import pipeline

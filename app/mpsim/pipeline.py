@@ -86,8 +86,25 @@ def _clean(o):
 
 
 def _dump(path, obj):
+    # aside and renamed: a stopped run's process ends at once, mid-write too.
+    # Windows refuses the rename while a reader (the server serving the
+    # partial result) has the file open: a few tries, then in place
+    data = json.dumps(_clean(obj), ensure_ascii=False, indent=1)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(data)
+    for _ in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.05)
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(_clean(obj), fh, ensure_ascii=False, indent=1)
+        fh.write(data)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
 
 
 def _mean_ci(samples):
@@ -275,8 +292,11 @@ def save_structure(out_dir, key, gen_labels, ginfo, contact_mask):
     np.savez_compressed(tmp, labels=gen_labels,
                         contact=(contact_mask if contact_mask is not None else np.zeros(0, bool)))
     os.replace(tmp, os.path.join(d, key + ".npz"))
-    with open(os.path.join(d, key + ".pkl"), "wb") as fh:
+    # written aside and renamed, as the labels: a stop ends the run's process
+    # at once and must not leave half a file for the next run to reuse
+    with open(os.path.join(d, key + ".part.pkl"), "wb") as fh:
         pickle.dump({k: v for k, v in ginfo.items() if k != "contact_mask"}, fh, protocol=4)
+    os.replace(os.path.join(d, key + ".part.pkl"), os.path.join(d, key + ".pkl"))
 
 
 def load_structure(dirs, key):

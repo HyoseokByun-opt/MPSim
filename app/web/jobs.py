@@ -20,12 +20,46 @@ import multiprocessing as mp
 import os
 import queue
 import re
+import shutil
 import threading
 import time
 import traceback
 import uuid
 
 MAX_EVENTS = 6000
+# written into a run's directory when it is stopped (see JobQueue.stop)
+STOPPED_FILE = "stopped.json"
+TMP_DIR = "_tmp"                 # a run's scratch files (see _child)
+
+
+def kill_tree(pid):
+    """End a process and every process it started (pool workers, the
+    particle dynamics' process, their managers)."""
+    try:
+        import psutil
+        try:
+            top = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return
+        procs = top.children(recursive=True) + [top]
+        for p in procs:
+            try:
+                p.kill()
+            except psutil.Error:
+                pass
+        psutil.wait_procs(procs, timeout=5)
+        return
+    except ImportError:
+        pass
+    if os.name == "nt":
+        import subprocess
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+    else:
+        import signal
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def _child(spec, out_dir, out_q, stop_ev, threads):
@@ -35,6 +69,9 @@ def _child(spec, out_dir, out_q, stop_ev, threads):
     os.environ.setdefault("OMP_NUM_THREADS", str(threads))
     os.environ.setdefault("NUMBA_NUM_THREADS", str(threads))
     os.environ.setdefault("MKL_NUM_THREADS", str(threads))
+    # scratch files of the run (the solve pool's shared grids) in its own
+    # directory: a stop ends the process at once and removes them with it
+    os.environ["MPSIM_TMP"] = os.path.join(out_dir, TMP_DIR)
 
     def send(kind, **payload):
         try:
@@ -64,6 +101,8 @@ def _child(spec, out_dir, out_q, stop_ev, threads):
         for ln in traceback.format_exc().splitlines():
             send("line", text="   " + ln)
         send("finished", summary={"error": str(e)})
+    finally:
+        shutil.rmtree(os.path.join(out_dir, TMP_DIR), ignore_errors=True)
 
 
 class Job:
@@ -89,6 +128,8 @@ class Job:
         self.lock = threading.Lock()
         self.proc = None
         self.stop_ev = None
+        self.stopping = False          # a stop was asked for: the end is "stopped", not "failed"
+        self.threads = None            # the cores it was started with
         self.summary = None
         self.stage = ""
         self.stage_detail = ""
@@ -113,9 +154,11 @@ class Job:
 
     def snapshot(self, with_lines=True):
         pos = self.queue.position(self) if (self.queue and self.state == "queued") else 0
+        wait = self.queue.wait_reason(self) if (self.queue and self.state == "queued") else ""
         return {
             "id": self.id, "state": self.state, "meta": self.meta,
-            "queue_position": pos, "stage": self.stage, "stage_detail": self.stage_detail,
+            "queue_position": pos, "wait": wait, "threads": self.threads,
+            "stage": self.stage, "stage_detail": self.stage_detail,
             "progress": self.progress, "solver": self.solver,
             "history": {k: v[-400:] for k, v in self.history.items()}, "partial": self.partial,
             "figures": self.figures,
@@ -153,6 +196,7 @@ class JobQueue:
         # RAM leaves room for the operating system and the browser.
         self.ram_gb = total_ram_gb()
         self.mem_budget_gb = mem_budget_gb if mem_budget_gb else round(0.7 * self.ram_gb, 1)
+        self.mem_budget_auto = not mem_budget_gb
         self.estimator = None          # set by the server: form -> GB
         threading.Thread(target=self._loop, daemon=True).start()
 
@@ -256,7 +300,10 @@ class JobQueue:
                   folder=folder, case=info.get("case", case))
         job.created = info.get("created", os.path.getmtime(d))
         res = os.path.join(d, "result.json")
-        if os.path.exists(res):
+        if not os.path.exists(res) and os.path.exists(os.path.join(d, STOPPED_FILE)):
+            job.state = "stopped"
+            job.summary = {"aborted": True}
+        elif os.path.exists(res):
             try:
                 with open(res, encoding="utf-8") as fh:
                     job.summary = json.load(fh)
@@ -347,17 +394,71 @@ class JobQueue:
         return waiting.index(job) + 1 if job in waiting else 0
 
     def stop(self, job):
-        if job.state == "queued":
-            job.state = "stopped"
-            job.ended = time.time()
-            job.summary = {"aborted": True}
-            job.add("finished", {"summary": job.summary})
-            return True
+        """Stop a run now.
+
+        A queued run is taken out of the queue. A running one is told to stop
+        (the stop event, which the solvers read between their iterations) and,
+        if its process has not ended within STOP_GRACE seconds, the process is
+        ended with everything it started - the solve pool's workers, the
+        particle dynamics' process. Waiting for the next check let a stop wait
+        for a whole packing stage or a structure surface; a stop is meant to
+        stop."""
+        with self.lock:
+            if job.state == "queued":
+                job.state = "stopped"
+                job.ended = time.time()
+                job.summary = {"aborted": True}
+                job.add("finished", {"summary": job.summary})
+                self._mark_stopped(job)
+                return True
         if job.state == "running" and job.stop_ev is not None:
+            if job.stopping:
+                return True
+            job.stopping = True
             job.stop_ev.set()
-            job.add("line", {"text": "A stop has been requested; the run stops after the current iteration."})
+            msg = "!! Stopped by the user."
+            job.lines.append(msg)
+            job.add("line", {"text": msg})
+            try:
+                with open(os.path.join(job.out_dir, "run.log"), "a", encoding="utf-8") as fh:
+                    fh.write(msg + "\n")
+            except OSError:
+                pass
+            self._mark_stopped(job)
+            threading.Thread(target=self._end, args=(job,), daemon=True).start()
             return True
         return False
+
+    def stop_many(self, jobs):
+        """Stop several runs (a DOE study): the queued ones first, so that none
+        of them starts in the place a stopped one leaves."""
+        jobs = list(jobs)
+        n = 0
+        for j in sorted(jobs, key=lambda j: j.state != "queued"):
+            n += bool(self.stop(j))
+        return n
+
+    STOP_GRACE = 1.0
+
+    @staticmethod
+    def _mark_stopped(job):
+        # read back by restore(): a stopped run stays "stopped" after a restart
+        try:
+            with open(os.path.join(job.out_dir, STOPPED_FILE), "w", encoding="utf-8") as fh:
+                json.dump({"stopped": time.time()}, fh)
+        except OSError:
+            pass
+
+    def _end(self, job):
+        """End a stopped run's process and its children, after STOP_GRACE."""
+        p = job.proc
+        if p is None:
+            return
+        p.join(timeout=self.STOP_GRACE)
+        if p.is_alive():
+            kill_tree(p.pid)
+            p.join(timeout=5)
+        shutil.rmtree(os.path.join(job.out_dir, TMP_DIR), ignore_errors=True)
 
     @staticmethod
     def default_threads(cores, concurrency):
@@ -369,7 +470,7 @@ class JobQueue:
         solve is still the most work per core."""
         return max(1, min(cores // 4, cores // max(1, concurrency)))
 
-    def configure(self, concurrency=None, threads=None):
+    def configure(self, concurrency=None, threads=None, mem_budget_gb=None):
         """Change how many jobs run at once and how many cores each one gets.
 
         Safe while work is in flight. `_loop` re-reads `concurrency` on every
@@ -377,9 +478,15 @@ class JobQueue:
         second, and lowering it never kills a running job - it only stops new
         ones from starting until the count has fallen. `threads` is read when a
         job starts, so it applies to the next job rather than to a running one.
+        `mem_budget_gb`: the memory the runs in flight may reserve together; 0
+        switches the check off, a negative value returns to 70 % of the RAM.
         """
         cores = os.cpu_count() or 2
         with self.lock:
+            if mem_budget_gb is not None:
+                v = float(mem_budget_gb)
+                self.mem_budget_auto = v < 0
+                self.mem_budget_gb = round(0.7 * self.ram_gb, 1) if v < 0 else max(0.0, v)
             if concurrency is not None:
                 self.concurrency = max(1, min(int(concurrency), 64))
             if threads is not None:
@@ -398,6 +505,7 @@ class JobQueue:
                 "running": len(run),
                 "queued": sum(1 for j in self.jobs.values() if j.state == "queued"),
                 "ram_gb": round(self.ram_gb, 1), "mem_budget_gb": self.mem_budget_gb,
+                "mem_budget_auto": bool(getattr(self, "mem_budget_auto", True)),
                 "mem_reserved_gb": round(sum(self._expected(j) for j in run), 2)}
 
     # --------------------------------------------------------------- pump
@@ -456,25 +564,81 @@ class JobQueue:
             pass
         return True
 
+    def wait_reason(self, job):
+        """Why a queued run has not started yet, for the run list: the first
+        in line waits for a free slot or for memory, the others behind it."""
+        with self.lock:
+            waiting = sorted((self.jobs[i] for i in self.order if self.jobs[i].state == "queued"),
+                             key=lambda j: j.created)
+        if job not in waiting:
+            return ""
+        head = waiting[0]
+        run = self.running()
+        if len(run) >= self.concurrency:
+            why = f"all {self.concurrency} places in use"
+        else:
+            mine = self._expected(head)
+            held = sum(self._expected(j) for j in run)
+            why = ""
+            if run and self.mem_budget_gb and held + mine > self.mem_budget_gb:
+                why = (f"waiting for memory: needs about {mine:.1f} GB, the runs in progress hold "
+                       f"{held:.1f} of the {self.mem_budget_gb:.1f} GB budget")
+            elif run and self.mem_budget_gb:
+                try:
+                    import psutil
+                    free = psutil.virtual_memory().available / 2 ** 30
+                    if free < mine + 1.0:
+                        why = f"waiting for memory: needs about {mine:.1f} GB, {free:.1f} GB are free on the PC"
+                except Exception:                              # noqa: BLE001
+                    pass
+            why = why or "starting"
+        pos = waiting.index(job) + 1
+        return why if pos == 1 else f"{pos - 1} ahead · {why}"
+
     def _loop(self):
         while True:
             try:
                 if len(self.running()) < self.concurrency:
+                    # picked and started under the lock, so that a stop of the
+                    # queued runs (stop_many) cannot be overtaken by a start
                     with self.lock:
                         waiting = [self.jobs[i] for i in self.order if self.jobs[i].state == "queued"]
-                    if waiting:
-                        nxt = min(waiting, key=lambda j: j.created)
-                        if self._fits(nxt):
-                            self._start(nxt)
+                        if waiting:
+                            nxt = min(waiting, key=lambda j: j.created)
+                            if self._fits(nxt):
+                                self._start(nxt)
             except Exception:                                  # noqa: BLE001
                 traceback.print_exc()
             time.sleep(0.3)
+
+    def _threads_for(self, job):
+        """The cores a starting run gets. Automatic: the machine's share for
+        `concurrency` runs at once - but when memory lets fewer than that run
+        side by side (an Accurate grid of 470^3 reserves ~35 GB each), the
+        cores those runs cannot use go to the ones that do run, instead of
+        three quarters of the PC waiting idle beside a single run."""
+        if not self.auto_threads:
+            return self.threads
+        cores = os.cpu_count() or 2
+        side = self.side_by_side(job)
+        if side < self.concurrency:
+            return max(1, cores // max(1, side))
+        return self.threads
+
+    def side_by_side(self, job):
+        """How many runs the size of `job` the memory budget holds at once
+        (at most `concurrency`)."""
+        mine = self._expected(job)
+        if not self.mem_budget_gb or mine <= 0:
+            return self.concurrency
+        return max(1, min(self.concurrency, int(self.mem_budget_gb // mine)))
 
     def _start(self, job):
         ctx = mp.get_context("spawn")
         out_q = ctx.Queue()
         stop_ev = ctx.Event()
-        proc = ctx.Process(target=_child, args=(job.spec, job.out_dir, out_q, stop_ev, self.threads),
+        job.threads = self._threads_for(job)
+        proc = ctx.Process(target=_child, args=(job.spec, job.out_dir, out_q, stop_ev, job.threads),
                            daemon=False)
         job.proc = proc
         job.stop_ev = stop_ev
@@ -506,8 +670,12 @@ class JobQueue:
             logf.close()
         job.proc.join(timeout=15)
         if job.state == "running":
-            job.state = "failed"
-            job.summary = {"error": "The solver process terminated abnormally (possibly insufficient memory)"}
+            if job.stopping:
+                job.state = "stopped"
+                job.summary = {"aborted": True}
+            else:
+                job.state = "failed"
+                job.summary = {"error": "The solver process terminated abnormally (possibly insufficient memory)"}
             job.add("finished", {"summary": job.summary})
         job.ended = time.time()
 
