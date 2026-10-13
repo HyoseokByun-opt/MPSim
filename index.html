@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.2.2",
+  "softwareVersion": "5.2.3",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -91,6 +91,16 @@
   .card .tag { display: inline-block; font-size: 12px; font-weight: 600; color: var(--chipink); background: var(--chip);
                border-radius: 999px; padding: 2px 10px; margin-bottom: 8px; }
   .shot { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+  .flow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.43fr); gap: 18px; align-items: start; }
+  .flow .plots { background: #fff; margin: 0; }
+  .flow .anim { margin: 0; text-align: center; }
+  .flow .anim img { width: 100%; height: auto; display: block; border-radius: 12px; }
+  .flow .anim figcaption { color: var(--ink2); font-size: 13.5px; margin-top: 8px; }
+  @media (max-width: 860px) { .flow { grid-template-columns: 1fr; } }
+  table.bench { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.bench th, table.bench td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.bench th { color: var(--ink2); font-weight: 600; }
+  @media (max-width: 700px) { table.bench { font-size: 12.5px; } table.bench th:nth-child(2), table.bench td:nth-child(2) { display: none; } }
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 8px; }
   .stat { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; background: var(--bg2); }
   .stat b { display: block; font-size: 26px; color: var(--accent); line-height: 1.2; }
@@ -127,6 +137,7 @@
     <nav aria-label="Sections">
       <a href="#how">How it works</a>
       <a href="#analyses">Analyses</a>
+      <a href="#flow">Flow</a>
       <a href="#verification">Verification</a>
       <a href="#download">Download</a>
       <a href="#cite">Cite</a>
@@ -145,11 +156,11 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.2.2</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.2.3</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
-           alt="Eight renderings made with MPSim: a blend of spheres, platelets and fibres; heat flux in an AlN thermal interface material; current through percolating silver flakes; thermal stress in a silica moulding compound; field enhancement around BaTiO3; Stokes flow through porous alumina; its pore network; moisture flux in a moulding compound">
+           alt="Eight renderings made with MPSim: a blend of spheres, platelets and fibres; heat flux in an AlN thermal interface material; current through percolating silver flakes; thermal stress in a silica moulding compound; particles of a mould underfill sheared in the resin; Stokes flow through porous alumina; its pore network; moisture flux in a moulding compound">
     </figure>
   </div>
 
@@ -195,7 +206,24 @@
         <div class="card"><span class="tag">Inverse problems</span><h3>Calibration</h3>
           <ul><li>Unknown material values from measurements, a filler's surface from a measured viscosity</li><li>Credible intervals, identifiability, next measurement</li></ul></div>
         <div class="card"><span class="tag">Studies</span><h3>DOE and optimisation</h3>
-          <ul><li>Factorial and Latin-hypercube studies, filler shares, one fixed grid for every case</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
+          <ul><li>Factorial and Latin-hypercube studies, filler shares, one fixed grid for every case</li><li>Linked inputs: one factor sets several entries (x, 0.8·x, sqrt(x1·x2))</li><li>What each case really holds beside its inputs</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="flow">
+    <div class="wrap">
+      <h2>Flow of filled compounds</h2>
+      <p class="sub">Underfills and mould compounds are filled to 50–65 vol% and must still flow into gaps of tens of micrometres.
+        MPSim shears the compound's own particles in the resin — lubrication between neighbours, contacts with friction, van der
+        Waals attraction, every particle free to move and turn — and reads the viscosity from the stress they carry.</p>
+      <div class="flow">
+        <figure class="anim"><img src="assets/viscosity_shear.gif" width="560" height="560" loading="lazy"
+             alt="Particles of a mould underfill (fused silica 15 + 3 µm, 55 vol%) sheared in epoxy, coloured by their speed relative to the shear flow">
+          <figcaption>Fused silica 15 + 3 µm, 55 vol% in epoxy: 2,222 particles sheared top against bottom, coloured by how much
+            faster than the flow around it each one moves (red: pushing past its neighbours).</figcaption></figure>
+        <figure class="shot plots"><img src="assets/viscosity_plots.webp" width="1325" height="895" loading="lazy"
+             alt="The relative viscosity settling to steady state over the sheared strain, and the flow curve of the compound against the resin"></figure>
       </div>
     </div>
   </section>
@@ -216,10 +244,10 @@
       <p class="sub">The engine is checked against problems whose answers are known, and every run reports its own checks —
         RVE size, resolution, particle count, convergence and rigorous bounds — as passed, warning or failed, with the reason.</p>
       <div class="stats">
-        <div class="stat"><b>62</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>63</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
-        <div class="stat"><b>21</b><span>ready-to-run presets for semiconductor materials</span></div>
-        <div class="stat"><b>52</b><span>materials in the library, all editable</span></div>
+        <div class="stat"><b>29</b><span>ready-to-run presets for semiconductor materials, seven checked against published data</span></div>
+        <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
       </div>
       <h3 style="margin:30px 0 8px">Presets</h3>
       <ul class="presets">
@@ -230,8 +258,21 @@
         <li>Sintered silver die attach</li><li>EMI shielding · Ni rods</li><li>Noise-suppression sheet · Sendust flakes</li>
         <li>Low-Dk · hollow silica</li><li>High-k · BaTiO₃</li><li>Low CTE · ZrW₂O₈</li><li>Porous low-k film</li>
         <li>Porous ceramic · Al₂O₃</li><li>UPW membrane · PTFE</li><li>Sintered gas filter · SUS316L</li>
-        <li>Fibrous insulation · E-glass</li>
+        <li>Fibrous insulation · E-glass</li><li>MUF DOE · Al₂O₃ + BN platelet stacks</li>
+        <li>Heat spreader · Cu + diamond</li><li>Power-module baseplate · AlSiC</li><li>mmWave substrate · PTFE + silica</li>
+        <li>PCB thermal vias</li><li>Glass core substrate · Cu TGVs</li><li>Die-attach solder voids</li>
+        <li>Package-level power inductor · carbonyl iron</li>
       </ul>
+      <h3 style="margin:30px 0 8px">Against published data</h3>
+      <table class="bench">
+        <tr><th>Preset</th><th>Reference</th><th>Reported</th><th>Computed</th></tr>
+        <tr><td>Cu + diamond 50 vol%, 400 µm</td><td>Wang et al., Materials 18 (2025) 3882</td><td>640 W/m·K</td><td>644 W/m·K (interface 12.5 MW/m²K)</td></tr>
+        <tr><td>AlSiC 63 vol%</td><td>Lai et al., Micromachines 14 (2023) 1491</td><td>178 W/m·K, 8.21 ppm/K</td><td>189 W/m·K, 8.84 ppm/K</td></tr>
+        <tr><td>PTFE + silica 60 wt%</td><td>Rajesh et al. (X band)</td><td>Dk 2.9</td><td>Dk 3.01</td></tr>
+        <tr><td>FR-4 + Cu-plated thermal vias</td><td>parallel paths (exact)</td><td>k<sub>z</sub> 9.285 W/m·K</td><td>9.285 W/m·K</td></tr>
+        <tr><td>Glass core + Cu TGVs</td><td>parallel paths (exact)</td><td>k<sub>z</sub> 36.0 W/m·K</td><td>36.03 W/m·K</td></tr>
+        <tr><td>SAC305 + 15 % voids</td><td>Maxwell (upper bound)</td><td>79.1 % of dense</td><td>77.1 %</td></tr>
+      </table>
     </div>
   </section>
 
@@ -265,7 +306,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.2.2},
+  version   = {5.2.3},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
