@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.2.4-0b62c4" alt="version 5.2.4">
+  <img src="https://img.shields.io/badge/version-5.2.5-0b62c4" alt="version 5.2.5">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -219,13 +219,20 @@ Among them:
 
 | Preset | Reference | Reported | Computed |
 |---|---|---|---|
-| Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 18 (2025) 3882 | 640 W/m·K | 644 W/m·K, with 12.5 MW/m²K at the interface |
-| Power-module baseplate · AlSiC 63 vol% | Lai et al., *Micromachines* 14 (2023) 1491 | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.84 ppm/K |
-| mmWave substrate · PTFE + silica 60 wt% | Rajesh et al. (X band) | Dk 2.9 | Dk 3.01 |
-| PCB thermal vias · FR-4 + Cu-plated vias | parallel paths (exact) | k<sub>z</sub> 9.285 W/m·K | 9.285 W/m·K |
-| Glass core substrate · Cu-filled TGVs | parallel paths (exact) | k<sub>z</sub> 36.0 W/m·K | 36.03 W/m·K |
-| Die-attach solder · SAC305 + 15 % voids | Maxwell, dilute voids (upper bound) | 79.1 % of dense | 77.1 % |
-| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 49 (2013) 4172 | μr 7.5 (printed) | μr 5.1 (separate spheres) |
+| Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 2025 [1] | 640 W/m·K | 644 W/m·K, with 12.5 MW/m²K at the interface |
+| Power-module baseplate · AlSiC 63 vol% | Guo et al., *J. USTB* 2014 [2] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.84 ppm/K |
+| mmWave substrate · PTFE + silica 60 wt% | Murali et al., *Compos. Part A* 2009 [3] | Dk 2.9 | Dk 3.01 |
+| PCB thermal vias · FR-4 + Cu-plated vias | exact solution [4] | k<sub>z</sub> 9.285 W/m·K | 9.285 W/m·K |
+| Glass core substrate · Cu-filled TGVs | exact solution [4] | k<sub>z</sub> 36.0 W/m·K | 36.03 W/m·K |
+| Die-attach solder · SAC305 + 15 % voids | Maxwell 1873, upper bound [5] | 79.1 % of dense | 77.1 % |
+| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [6] | μr 7.5 (printed) | μr 5.1 (separate spheres) |
+
+1. Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, *Materials* **18** (16), 3882 (2025). [doi:10.3390/ma18163882](https://doi.org/10.3390/ma18163882) — 400 µm diamond, 50 vol%: 640 W/m·K.
+2. M. Guo, J. Liu, C. Jia, S. Guo, Y. Li, H. Zhou, “Microstructure and properties of SiCp/Al electronic packaging materials fabricated by pseudo-semi-solid thixoforming”, *Journal of University of Science and Technology Beijing* **36** (4), 489–495 (2014). [doi:10.13374/j.issn1001-053x.2014.04.011](https://doi.org/10.13374/j.issn1001-053x.2014.04.011) — as tabulated in L. Lai et al., *Micromachines* **14** (8), 1491 (2023), Table 2, [doi:10.3390/mi14081491](https://doi.org/10.3390/mi14081491).
+3. K. P. Murali, S. Rajesh, O. Prakash, A. R. Kulkarni, R. Ratheesh, “Preparation and properties of silica filled PTFE flexible laminates for microwave circuit applications”, *Composites Part A* **40** (8), 1179–1185 (2009). [doi:10.1016/j.compositesa.2009.05.007](https://doi.org/10.1016/j.compositesa.2009.05.007) — 60 wt% micron silica, X band.
+4. Exact solution: parallel conduction through straight vias that span the board, k_z = f·k_Cu + (1 − f)·k_laminate for an area fraction f of copper.
+5. J. C. Maxwell, *A Treatise on Electricity and Magnetism, vol. 1*, Clarendon Press, Oxford (1873), Art. 314 — insulating spheres: k/k_m = 2(1 − φ)/(2 + φ), an upper bound at this content.
+6. Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, *IEEE Transactions on Magnetics* **49** (7), 4172–4175 (2013). [doi:10.1109/TMAG.2013.2250925](https://doi.org/10.1109/TMAG.2013.2250925) — screen-printed 54 vol% core.
 
 **RVE size.** The 7× and 10× criteria come from repeated runs on independent random structures, evaluated with the
 statistical method of Kanit et al. (2003). The random scatter of one realisation (95 % interval) was ±0.12 % / ±0.14 %
@@ -407,7 +414,7 @@ More cases are listed in appendix D of the user guide.
 If you use MPSim in published work, please cite the software (GitHub shows the citation under
 **Cite this repository**, from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.2.4, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.2.5, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 
