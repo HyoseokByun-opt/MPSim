@@ -215,24 +215,21 @@ Among them:
 | Stop: a run in its parallel solves | ends with every process it started | within seconds |
 | Arrangement after shear flow: silica 4 + 1.6 µm, 45 vol%, strain 2 | contents kept, periodic, pairs tilted by the flow | close pairs 3.7 → 5.5 per sphere, tilt +0.014 → -0.024 |
 
-**Benchmarks against published data** (presets of v5.2.3, run as loaded; v5.2.4 adds the MUF from flow to the cured part above):
+Two presets are also checks of the solver against an exact solution: copper vias that run straight through a laminate conduct through it exactly as parallel paths, k<sub>z</sub> = f·k<sub>Cu</sub> + (1 − f)·k<sub>laminate</sub>. The PCB thermal-via and glass-core TGV presets give 9.2851 and 36.0295 W/m·K, equal to that value to the fourth decimal; in v5.2.3 this check found that thin films ignored the anisotropy of their laminate.
+
+**Comparison with published measurements.** Four presets rebuild a material whose properties were measured and published; each ran as loaded. A difference that remains is explained in the preset's description.
 
 | Preset | Reference | Reported | Computed |
 |---|---|---|---|
 | Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 2025 [1] | 640 W/m·K | 644 W/m·K, with 12.5 MW/m²K at the interface |
 | Power-module baseplate · AlSiC 63 vol% | Guo et al., *J. USTB* 2014 [2] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.84 ppm/K |
 | mmWave substrate · PTFE + silica 60 wt% | Murali et al., *Compos. Part A* 2009 [3] | Dk 2.9 | Dk 3.01 |
-| PCB thermal vias · FR-4 + Cu-plated vias | exact solution [4] | k<sub>z</sub> 9.285 W/m·K | 9.285 W/m·K |
-| Glass core substrate · Cu-filled TGVs | exact solution [4] | k<sub>z</sub> 36.0 W/m·K | 36.03 W/m·K |
-| Die-attach solder · SAC305 + 15 % voids | Maxwell 1873, upper bound [5] | 79.1 % of dense | 77.1 % |
-| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [6] | μr 7.5 (printed) | μr 5.1 (separate spheres) |
+| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [4] | μr 7.5 (printed) | μr 5.1 (separate spheres) |
 
 1. Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, *Materials* **18** (16), 3882 (2025). [doi:10.3390/ma18163882](https://doi.org/10.3390/ma18163882) — 400 µm diamond, 50 vol%: 640 W/m·K.
 2. M. Guo, J. Liu, C. Jia, S. Guo, Y. Li, H. Zhou, “Microstructure and properties of SiCp/Al electronic packaging materials fabricated by pseudo-semi-solid thixoforming”, *Journal of University of Science and Technology Beijing* **36** (4), 489–495 (2014). [doi:10.13374/j.issn1001-053x.2014.04.011](https://doi.org/10.13374/j.issn1001-053x.2014.04.011) — as tabulated in L. Lai et al., *Micromachines* **14** (8), 1491 (2023), Table 2, [doi:10.3390/mi14081491](https://doi.org/10.3390/mi14081491).
 3. K. P. Murali, S. Rajesh, O. Prakash, A. R. Kulkarni, R. Ratheesh, “Preparation and properties of silica filled PTFE flexible laminates for microwave circuit applications”, *Composites Part A* **40** (8), 1179–1185 (2009). [doi:10.1016/j.compositesa.2009.05.007](https://doi.org/10.1016/j.compositesa.2009.05.007) — 60 wt% micron silica, X band.
-4. Exact solution: parallel conduction through straight vias that span the board, k_z = f·k_Cu + (1 − f)·k_laminate for an area fraction f of copper.
-5. J. C. Maxwell, *A Treatise on Electricity and Magnetism, vol. 1*, Clarendon Press, Oxford (1873), Art. 314 — insulating spheres: k/k_m = 2(1 − φ)/(2 + φ), an upper bound at this content.
-6. Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, *IEEE Transactions on Magnetics* **49** (7), 4172–4175 (2013). [doi:10.1109/TMAG.2013.2250925](https://doi.org/10.1109/TMAG.2013.2250925) — screen-printed 54 vol% core.
+4. Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, *IEEE Transactions on Magnetics* **49** (7), 4172–4175 (2013). [doi:10.1109/TMAG.2013.2250925](https://doi.org/10.1109/TMAG.2013.2250925) — screen-printed 54 vol% core.
 
 **RVE size.** The 7× and 10× criteria come from repeated runs on independent random structures, evaluated with the
 statistical method of Kanit et al. (2003). The random scatter of one realisation (95 % interval) was ±0.12 % / ±0.14 %
@@ -250,8 +247,8 @@ failed, with the reason. Chapter 31 of the user guide explains how to read them.
 
 | User guide | PDF |
 |---|---|
-| English, 162 pages | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) |
-| Korean, 151 pages | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) |
+| English, 180 pages | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) |
+| Korean, 168 pages | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) |
 
 Every simulation chapter explains how the property is measured in the laboratory, how the program computes it, how to
 read each number and rendering, and the assumptions behind it; chapter 32 works through two semiconductor-material
