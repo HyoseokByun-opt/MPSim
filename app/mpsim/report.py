@@ -198,6 +198,20 @@ def write(out_dir, r):
                 + (f"{tp:,} voxel neighbour pairs of two particles remain, {rz.get('contact_faces', 0):,} across a face."
                    if tp else "No two particles touch at this resolution."))
     P.append(f"<p>Placement method: {e(rz['route'] or '-')}. {e(ctxt)}</p>")
+    sh = rz.get("sheared")
+    if sh:
+        fab = sh.get("fabric") or {}
+        pp = fab.get("pairs_per_sphere") or []
+        stxt = (f"Arrangement after shear flow: the random packing was sheared in the resin to a strain of "
+                f"{_fmt(sh['strain'])} by particle dynamics (flow along x, velocity gradient through z, {sh['n']:,} spheres, "
+                f"{e(sh.get('backend') or '')}, {_fmt(sh.get('seconds'))} s); across the flow the spheres moved "
+                f"{_fmt(sh.get('moved_um'))} µm (median), and {_fmt(sh.get('separation_um'))} µm on average to restore the "
+                f"packing's gap.")
+        if len(pp) == 3 and fab.get("random") and fab.get("sheared"):
+            stxt += (f" Close pairs (surfaces within 5 % of their radii): {_fmt(pp[0])} per sphere in the random packing, "
+                     f"{_fmt(pp[2])} after the flow; their tilt ⟨n_x n_z⟩ {fab['random'][0][2]:+.3f} → "
+                     f"{fab['sheared'][0][2]:+.3f} (0 at random, below 0 along the flow's compression axis).")
+        P.append(f"<p>{stxt}</p>")
     P.append(_table(["Region", "Kind", "Volume fraction", "Mass fraction"],
                     [[e(l["name"]), e(l["kind"]), _fmt(100 * l["vf"], "%"), _fmt(100 * l["wt"], "%")] for l in r["composition"]["labels"]]))
     P.append(f"<p>Density {_fmt(r['composition']['density'])} g/cm³ · specific heat {_fmt(r['composition']['cp'])} J/kg·K"

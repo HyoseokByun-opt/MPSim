@@ -243,7 +243,7 @@
   function defaultForm() {
     return {
       name: "New case", matrix: matEntry("epoxy"), phases: [phaseEntry("al2o3", "sphere")],
-      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: true, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um" },
+      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: true, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10 },
       analyses: { thermal: true },
       options: {
         directions: "xyz", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", contacts: "apart", parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: "auto", reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
@@ -941,6 +941,7 @@
           <div class="g2" style="margin-top:4px"><div><label class="f">Matrix skin at each face <span class="u">empty = 1 voxel</span></label><div class="row"><input type="number" step="any" min="0" data-k="rve.skin_um" data-uk="rve.T_unit" data-num placeholder="1 voxel" style="flex:1"><span class="hint" style="padding-top:6px">${LEN_LABEL[f.rve.T_unit || "um"]}</span></div></div><div></div></div>
           <div class="hint">x and y repeat periodically; z is the real film thickness. Every particle lies wholly inside the film: none is cut by the faces or continues through them, and a thin matrix skin stays at each face (0 lets particles touch the faces - the electrode plates of the through-thickness solve, through contacts whose area depends on the voxel size). Conduction and permittivity: along the film (x, y) the two faces are insulated; through it (z) two plates on the faces drive the flux, as in a measurement across the film. z is solved and displayed first.</div>`
           : `<div class="hint" style="margin-top:6px">The RVE repeats in x, y and z: a bulk material, or a layer much thicker than its particles.</div>`}</div></div>
+      ${arrangementSec(f)}
       <div class="sec"><div class="sh">${I("auto")}Grid</div><div class="sb">
         <label class="chk"><span class="switch"><input type="checkbox" data-k="rve.auto"><span></span></span> Automatic voxel size and RVE size</label>
         ${!f.rve.auto ? `<div class="g2"><div><label class="f">${f.rve.film ? "Lateral edge length (x, y)" : "RVE edge length"}</label><div class="row uin"><input type="number" step="any" data-k="rve.L_um" data-uk="rve.L_unit" data-num style="flex:1"><select data-k="rve.L_unit">${unitOpts()}</select></div></div>
@@ -952,6 +953,19 @@
         <div class="hint">With two or more realisations, results carry a 95 % confidence interval.</div></div></div>
       <div class="sec"><div class="sh">${I("cube")}Recommended RVE</div><div class="sb">${tiles}${notes}${mem}</div></div>
       <div class="sec"><div class="sh">${I("checks")}Criteria before solving</div><div class="sb">${counts || '<div class="hint">Computing…</div>'}</div></div>`;
+  }
+
+  // How the particles are arranged: a random packing, or that packing sheared
+  // in the resin by the particle dynamics (spheres in a periodic cube)
+  function arrangementSec(f) {
+    const sh = f.rve.arrangement === "sheared";
+    const why = f.rve.film ? "a thin film" : (f.phases || []).some((p) => p.shape !== "sphere" && p.shape !== "network") ? "particles other than spheres" : "";
+    return `<div class="sec"><div class="sh">${I("permeability")}Particle arrangement</div><div class="sb">
+        <div class="seg" id="arrSeg"><button data-arr="random" class="${sh ? "" : "on"}">Random packing</button><button data-arr="sheared" class="${sh ? "on" : ""}">After shear flow</button></div>
+        ${sh ? `<div class="g2" style="margin-top:6px"><div><label class="f">Sheared strain</label><input type="number" min="1" max="100" step="1" data-k="rve.shear_strain" data-num></div><div></div></div>
+          ${why ? `<div class="note warn">The arrangement after shear flow is made for spheres in a periodic cube; this structure has ${why}.</div>` : ""}
+          <div class="hint">The random packing is sheared in the resin by the particle dynamics of the viscosity analysis - lubrication, contacts with friction, van der Waals and adhesion as set there - and the particles are drawn where the flow leaves them: the arrangement a dispensed or moulded compound keeps when it cures. Flow along x, its velocity gradient through z (across the gap the compound flows in), vorticity along y. The strain is a whole number, so that the sheared box is periodic again; 10 lets the structure forget its random start. It takes as long as the viscosity at one shear rate (minutes on a GPU).</div>`
+          : `<div class="hint" style="margin-top:6px">Particles packed at random. <b>After shear flow</b> shears this packing in the resin first (spheres): the structure of a cured underfill or mould compound.</div>`}</div></div>`;
   }
 
   function anCard(key, options = "") {
@@ -3592,7 +3606,7 @@
       else if (t.dataset.cm !== undefined || t.dataset.cu !== undefined || t.dataset.cal || t.dataset.calopt) onCalField(e);
     });
     lb.addEventListener("click", (e) => {
-      const t = e.target.closest("[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-anall],[data-annone],[data-pdel],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory],[data-lnadd],[data-lndel]");
+      const t = e.target.closest("[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-arr],[data-anall],[data-annone],[data-pdel],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory],[data-lnadd],[data-lndel]");
       if (!t) return;
       if (onLinkClick(t)) return;
       if (onCalClick(t)) return;
@@ -3602,6 +3616,12 @@
       if (t.dataset.uselib) {
         const en = getPath(state.form, t.dataset.uselib), m = mat(en.material_id);
         if (m) { en.props = clone(m.props); saveForm(); schedulePlan(0); renderLeft(); toast("The library values are used."); }
+        return;
+      }
+      if (t.dataset.arr) {
+        state.form.rve.arrangement = t.dataset.arr;
+        if (!state.form.rve.shear_strain) state.form.rve.shear_strain = 10;
+        saveForm(); renderLeft(); schedulePlan(0);
         return;
       }
       if (t.dataset.film !== undefined) {

@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.2.3-0b62c4" alt="version 5.2.3">
+  <img src="https://img.shields.io/badge/version-5.2.4-0b62c4" alt="version 5.2.4">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-63%20checks-2da44e" alt="63 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-64%20checks-2da44e" alt="64 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -163,9 +163,29 @@ the second half of the run (a strain of 10 by default). The same particle dynami
 of platelets as rigid multi-sphere particles, runs on an NVIDIA GPU when there is one, and gives the flow curve of the
 compound, its maximum packing fraction and the capillary underfill filling time.
 
+### From flow to the cured part
+
+A compound does not cure in a random packing: it cures where its flow leaves it. *Domain → Particle arrangement → After
+shear flow* shears the packing in the resin with the same particle dynamics and draws the particles where the flow
+leaves them; heat, expansion, stiffness, signal and moisture are then solved on that one cured structure. Below, the MUF
+above sheared to a strain of 10 and cured - 2,568 particles in a 60 µm RVE of 240³ voxels - with heat driven
+through it from the die side to the substrate side (z, across the gap the compound flowed in). The cut travels through
+the cube: heat runs through the silica and crosses from particle to particle where the flow pressed them close.
+
+<p align="center">
+  <img src="docs/images/heat_flux.gif" alt="Heat flux inside the cured mould underfill, a cut travelling through the RVE" width="46%">
+</p>
+<p align="center">
+  <img src="docs/images/muf_datasheet.png" alt="Every property of the cured compound from one structure: flow, settling, structure, heat, expansion, stiffness, Dk/Df, moisture" width="72%">
+</p>
+
+The flow leaves its mark on the structure: close pairs of particles (surfaces within 5 % of their radii) rise from
+2.5 to 4.5 per sphere and lean along the compression axis of the shear (⟨n<sub>x</sub>n<sub>z</sub>⟩ -0.004 → -0.024). Through the gap the
+cured compound conducts 0.573 W/m·K, +0.7 % against the random packing it started from (0.569).
+
 ## Verification
 
-`5_SELF_TEST.bat` solves **63 problems whose answers are known** (42 in the quick set) and compares the results.
+`5_SELF_TEST.bat` solves **64 problems whose answers are known** (42 in the quick set) and compares the results.
 Among them:
 
 | Check | Reference | Result |
@@ -193,8 +213,9 @@ Among them:
 | DOE: a filler's share with the total kept; fixed grid | 5–50 % of 55 vol%, 160³ on every case | passed |
 | Linked inputs: one R_int for two grades of a filler (calibration) | known value 3e-8 m²K/W | 3.0e-8 linked (4.5e-8 when only one grade is calibrated) |
 | Stop: a run in its parallel solves | ends with every process it started | within seconds |
+| Arrangement after shear flow: silica 4 + 1.6 µm, 45 vol%, strain 2 | contents kept, periodic, pairs tilted by the flow | close pairs 3.7 → 5.5 per sphere, tilt +0.014 → -0.024 |
 
-**Benchmarks against published data** (presets of v5.2.3, run as loaded):
+**Benchmarks against published data** (presets of v5.2.3, run as loaded; v5.2.4 adds the MUF from flow to the cured part above):
 
 | Preset | Reference | Reported | Computed |
 |---|---|---|---|
@@ -242,7 +263,8 @@ latest) and are included, together with an HTML version, in the offline package.
 
 The RVE grid limit is 500³ by default and can be changed per server. The planner estimates the peak memory of each
 solver before it runs and warns with the numbers instead of refusing. Estimates per voxel: conduction about
-230 bytes (500³ ≈ 29 GB), elasticity about 2.5 kB (200³ ≈ 20 GB, 500³ ≈ 320 GB), Stokes flow about 2.3 kB.
+230 bytes (500³ ≈ 29 GB), elasticity about 300 bytes with FANS, the default (240³ measured at 3 GB, 500³ ≈ 38 GB; 2.5 kB
+with PuMA FE), Stokes flow about 2.3 kB.
 
 ## Installation
 
@@ -346,7 +368,7 @@ app/
     doe.py, optimise.py, calibrate.py        studies, surrogate models, calibration
     visual.py, report.py viewer data, publication figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (52 materials), presets.json (21 presets)
+    data/                materials.json (68 materials), presets.json (30 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README's images (the user guides are attached to the releases)
@@ -385,7 +407,7 @@ More cases are listed in appendix D of the user guide.
 If you use MPSim in published work, please cite the software (GitHub shows the citation under
 **Cite this repository**, from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.2.3, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.2.4, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

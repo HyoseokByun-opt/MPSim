@@ -70,6 +70,18 @@ KN_FACTOR = 1000.0      # contact stiffness against the strongest attraction (se
 # 4.9 % between three packings each (the 8 blocks of one run said 1.4 and
 # 3.4 %), 150 spheres to a strain of 2 by 17 % and 32 % between five
 RUN_SCATTER = 2.5
+
+
+def n_effective(radii):
+    """The number of particles the scatter between runs goes with: by volume,
+    (sum v)^2 / sum v^2 - every particle when they are alike, the few large
+    ones of a blend (they carry the stress). Two runs of silica 15 + 3 um at
+    55 vol% (2222 particles, about 50 of 15 um; averaged over the second half
+    of a strain of 15 and 10) gave 24.0 and 33.5; the volume count is 74,
+    which makes the scatter of one run 11-13 % instead of the 2 % that 2222
+    particles would say."""
+    v = np.asarray(radii, float) ** 3
+    return float(v.sum() ** 2 / max(float(np.sum(v * v)), 1e-300))
 # pairs are listed this far (in largest radii) beyond the range of their
 # forces; the lists are rebuilt before any pair could have closed half of it.
 # Absolute, so pairs of small spheres have the same margin as large ones
@@ -803,10 +815,11 @@ class Suspension:
         return it
 
     def run(self, strain, every=0.05, progress=None, should_stop=None, max_disp=2e-3, dt_max=5e-3,
-            frames=0.0, frame_every=0.02, live=None):
+            frames=0.0, frame_every=0.02, live=None, land=False):
         """Shears the box to the given total strain. Returns the time series
         of the relative viscosity and its parts; with frames > 0 also the
-        positions and speeds (relative to the shear) over that last strain."""
+        positions and speeds (relative to the shear) over that last strain.
+        land: the last step is shortened to end exactly at `strain`."""
         K = self.K
         V = self.L ** 3
         # rigid particles: a member up to rc_off from its centre moves with the
@@ -870,6 +883,8 @@ class Suspension:
             dt = min(dt_max, max_disp / umax)
             if dt > 1.5 * dt_prev:
                 dt = 1.5 * dt_prev                           # the implicit springs assumed dt_prev
+            if land and self.strain + dt > strain:
+                dt = max(strain - self.strain, 1e-12)
             dt_prev = dt
             # the offset of the step's end first: a particle crossing the
             # sheared faces lands where the image boxes are then (with the
@@ -1667,7 +1682,7 @@ def settle_of(strain):
 
 def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
                     strain=DEFAULT_STRAIN, settle=None, seed=1, backend="auto", log=None, progress=None, should_stop=None,
-                    bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None, bodies=None):
+                    bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None, bodies=None, start_m=None, box_m=None):
     """See _shear_viscosity. live: a mpsim.live.Slot for the live view (its
     static_info may give the phase names, colours and the phase of every
     sphere: {"names", "colors", "phase"}). On the GPU first; a run that fails there (the
@@ -1675,7 +1690,7 @@ def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, h
     on the CPU. out['gpu_fallback'] says why, when it happened."""
     kw = dict(roughness_m=roughness_m, hmin_m=hmin_m, hamaker_J=hamaker_J, mu_f=mu_f, strain=strain, settle=settle,
               seed=seed, log=log, progress=progress, should_stop=should_stop, bound_m=bound_m,
-              adhesion_J_m2=adhesion_J_m2, frames=frames, live=live, bodies=bodies)
+              adhesion_J_m2=adhesion_J_m2, frames=frames, live=live, bodies=bodies, start_m=start_m, box_m=box_m)
     try:
         out = _shear_viscosity(radii_m, phi, mu_resin, gd, backend=backend, **kw)
     except InterruptedError:
@@ -1694,7 +1709,7 @@ def shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, h
 
 def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, hamaker_J=0.0, mu_f=0.5,
                      strain=DEFAULT_STRAIN, settle=None, seed=1, backend="auto", log=None, progress=None, should_stop=None,
-                     bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None, bodies=None):
+                     bound_m=0.0, adhesion_J_m2=0.0, frames=None, live=None, bodies=None, start_m=None, box_m=None):
     """Relative viscosity of spheres of the given radii (m) at volume fraction
     phi in a resin of viscosity mu_resin (Pa s) sheared at gd (1/s), from the
     particle dynamics. The surface roughness and the closest approach are
@@ -1714,9 +1729,20 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
     bodies: particles that are not all spheres (see pack_clumps; radii_m are
     then their volume-equivalent radii, hamaker_J one per particle or one
     for all). They are rigid clumps of spheres (RigidSuspension), with the
-    intrinsic viscosity bodies['intrinsic'] for their own stresslet."""
+    intrinsic viscosity bodies['intrinsic'] for their own stresslet.
+
+    start_m, box_m: spheres that start where they are (centres in m, a
+    cubic box of edge box_m) instead of a packing of their own - a generated
+    RVE sheared into the arrangement the flow leaves (phi then follows from
+    the box). The run then ends exactly at `strain`, and out['final_m'] holds
+    the centres there: with a whole-number strain the sheared images of the
+    box line up with the plain periodic ones again."""
     r0 = np.asarray(radii_m, float)
     rigid = None
+    if start_m is not None:
+        if bodies is not None:
+            raise ValueError("a start from given positions is for spheres")
+        phi = float(4.0 / 3.0 * math.pi * np.sum(r0 ** 3) / float(box_m) ** 3)
     if bodies is None:
         r = r0 + float(bound_m)
         phi = float(phi) * float(np.sum(r ** 3) / np.sum(r0 ** 3))
@@ -1745,12 +1771,16 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
                 f"neighbour slots each, cell grid {s.nc}³: about {s.memory_bytes / 2 ** 30:.2f} GB on the "
                 f"{'GPU' if s.backend == 'cuda' else 'CPU'}")
         try:
+            if start_m is not None:
+                # the box is the given one: its edge in units of the largest radius
+                s.K["x"].from_numpy(np.mod(np.asarray(start_m, float) / a0, s.L))
             s.pack()
             # frames of the last strain for the viewer (frames=0: none)
             if lv is not None:
                 lv.start(s)
             out = s.run(strain, every=0.02, progress=progress, should_stop=should_stop,
-                        frames=min(1.0, strain / 2) if frames is None else frames, live=lv)
+                        frames=min(1.0, strain / 2) if frames is None else frames, live=lv,
+                        land=start_m is not None)
             break
         except NeighbourOverflow:
             if s.maxn >= 4096:
@@ -1777,7 +1807,7 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
     if nb >= 3:
         batches = [e[(st >= settle + k) & (st < settle + k + 1.0)].mean() for k in range(nb)]
         se = max(se, float(np.std(batches, ddof=1) / math.sqrt(nb)))
-    se = max(se, RUN_SCATTER / math.sqrt(s.nbod * span) * eta_mean)
+    se = max(se, RUN_SCATTER / math.sqrt(n_effective(r0) * span) * eta_mean)
     if out["frames"]:
         out["frames_um"] = np.stack(out.pop("frames")) * (a0 * 1e6)
         out["frames_speed"] = np.stack(out["frames_speed"])
@@ -1786,6 +1816,9 @@ def _shear_viscosity(radii_m, phi, mu_resin, gd, roughness_m=5e-9, hmin_m=1e-9, 
         out["frames_um"] = None
     # the spheres the viewer draws (the members of rigid particles) and the
     # particle each belongs to
+    if start_m is not None:
+        out["final_m"] = np.mod(s.positions(), s.L) * a0
+        out["final_strain"] = float(s.strain)
     out["anim_radii_m"] = np.asarray(r, float)
     out["anim_body"] = np.asarray(s.mb if rigid is not None else np.arange(len(r)), np.int64)
     out.update(eta_mean=eta_mean, eta_se=se,

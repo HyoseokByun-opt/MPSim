@@ -1656,6 +1656,61 @@ def t_stop_now():
         return f"stopped in {dt:.1f} s during '{stage or 'start-up'}', {len(kids)} child process(es) ended with it"
 
 
+@check("Arrangement after shear flow: contents kept, periodic, close pairs tilted by the flow; spheres only", quick=False)
+def t_sheared():
+    import json
+    import numpy as np
+    from mpsim import generate as GEN
+    from mpsim import pipeline as PL
+    from mpsim import rve as R
+    from mpsim import spec as S
+    form = {"name": "sheared", "matrix": {"material_id": "epoxy"},
+            "phases": [{"material_id": "sio2", "name": "Silica 4 um", "shape": "sphere", "size": {"d": 4, "unit": "um"},
+                        "fraction": {"value": 32, "basis": "vol"}},
+                       {"material_id": "sio2", "name": "Silica 1.6 um", "shape": "sphere", "size": {"d": 1.6, "unit": "um"},
+                        "fraction": {"value": 13, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 16, "voxel_um": 0.4, "auto_enlarge": False, "quality": "fast",
+                    "arrangement": "sheared", "shear_strain": 2},
+            "analyses": {"thermal": True}, "options": {"viscosity": {"dem": {"backend": "cpu"}}}}
+    for bad, word in (({"shape": "spheroid", "size": {"d": 4, "aspect": 0.3, "unit": "um"}}, "spheres"), (None, "thin film")):
+        g = json.loads(json.dumps(form))
+        if bad:
+            g["phases"][0].update(bad)
+        else:
+            g["rve"].update(film=True, T_um=12)
+        try:
+            S.normalize(g)
+            raise AssertionError(f"a sheared arrangement of {word} passed")
+        except ValueError as e:
+            expect(word in str(e), str(e))
+    spec = S.normalize(form)
+    need = S.required_analyses(set(spec["analyses"]))
+    plan = R.plan(PL._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"]), need, {})
+    gp = PL._generator_phases(spec)
+    k0 = PL.structure_key(gp, plan, "apart", 1, False)
+    k1 = PL.structure_key(gp, plan, "apart", 1, False, sheared=PL.shear_key(spec))
+    expect(k0 != k1, "the sheared structure has the random packing's key")
+    lab, info = GEN.generate(plan["N"], plan["h_um"], gp, seed=1, log=lambda *a: None, contacts="apart",
+                             shear=PL.shear_packing(spec, lambda *a: None, lambda *a, **k: None,
+                                                    PL.Progress(lambda *a, **k: None, 1.0), None))
+    sh = info["sheared"]
+    vf = [float(np.mean(lab == i + 1)) for i in range(2)]
+    expect(all(abs(v / ph["vf"] - 1.0) < 0.01 for v, ph in zip(vf, spec["phases"])), f"contents {vf}")
+    expect(sh["strain"] == 2.0, f"ended at strain {sh['strain']}")
+    expect(sh["separation_um"] < 0.25 * plan["h_um"], f"pushed {sh['separation_um']:.3g} µm apart after the shear")
+    expect(sh["moved_um"] > 0.2, f"the flow moved the spheres {sh['moved_um']:.3g} µm across it")
+    parts = info["particles"]
+    rad = np.asarray(parts["P"])[:, 0]
+    cr = GEN.contact_ratio(np.asarray(parts["centers"]), rad, plan["N"] * plan["h_um"])
+    expect(cr >= 1.0 - 1e-9, f"spheres overlap across the periodic faces (ratio {cr:.4f})")
+    fr, fs = sh["fabric"]["random"][0][2], sh["fabric"]["sheared"][0][2]
+    n_r, _, n_s = sh["fabric"]["pairs_per_sphere"]
+    expect(fs < fr and n_s > n_r, f"close pairs: tilt {fr:+.3f} -> {fs:+.3f}, {n_r:.2f} -> {n_s:.2f} per sphere")
+    return (f"{len(rad)} spheres sheared to 2 in {sh['seconds']:.0f} s: moved {sh['moved_um']:.2f} µm across the flow, "
+            f"pushed {sh['separation_um']:.3f} µm after; close pairs {n_r:.2f} -> {n_s:.2f} per sphere, tilt "
+            f"{fr:+.3f} -> {fs:+.3f}; contents {100 * vf[0]:.2f} / {100 * vf[1]:.2f} %")
+
+
 @check("Complete pipeline: small filled RVE → result, layer card, viewer data, report", quick=False)
 def t_pipeline():
     from mpsim import pipeline

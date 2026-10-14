@@ -923,6 +923,24 @@ def _sphere_pairs(pos, rad, box):
     return cand[:, 0], cand[:, 1], np.linalg.norm(dv, axis=1)
 
 
+def fabric(pos, rad, L, reach=0.05):
+    """Orientation tensor <n n> of the pairs of near neighbours (surfaces
+    closer than `reach` of the sum of their radii; periodic cube of edge L)
+    and their number per sphere. A random packing gives 1/3 on the diagonal
+    and 0 off it; shear flow tilts the close pairs towards the axis along
+    which the flow compresses (x z off-diagonal below 0 for flow along x
+    and its gradient along z)."""
+    box = np.array([L, L, L], float)
+    i, j, d = _sphere_pairs(pos, rad, box)
+    m = d < (rad[i] + rad[j]) * (1.0 + reach)
+    if not m.any():
+        return np.full((3, 3), np.nan), 0.0
+    dv = pos[j[m]] - pos[i[m]]
+    dv -= box * np.round(dv / box)
+    nv = dv / np.linalg.norm(dv, axis=1)[:, None]
+    return nv.T @ nv / len(nv), 2.0 * float(m.sum()) / len(pos)
+
+
 def separate_spheres(pos, rad, L, Lz=None, Wt=0.0, max_iter=200, tol=1e-6):
     """Push the last overlaps of a sphere packing out.
 
@@ -1651,7 +1669,7 @@ def rasterize_owner(N, h, info, phases, nz=None, offset_um=0.0):
 
 
 def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart",
-             want_contact_faces=False, nz=None, skin=0):
+             want_contact_faces=False, nz=None, skin=0, shear=None):
     """Build one realisation.
 
     `phases` items: shape, size_um, dist, vf, orientation {mode, spread_deg},
@@ -1663,6 +1681,11 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     faces or wraps through them. The packings run in a box whose z period
     exceeds the film by more than the largest particle, with walls at the two
     faces; RSA rejects a position that crosses a face.
+
+    shear: spheres only (not a film) - a function (centres µm, radii µm,
+    phase of each, box µm) -> (centres, info) that shears the packing in the
+    resin (pipeline.shear_packing); the spheres are drawn where the flow
+    leaves them, kept apart as the packing keeps them.
 
     skin: voxels of matrix kept at each face of a film. A particle that
     touches a face touches the electrode plate there, through a contact whose
@@ -1866,6 +1889,40 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         rate = _mc_sweeps(pos, 0.5 * d_excl, float(L), sweeps, 0.05 * float(d_excl.min()),
                           int(rng.integers(1 << 30)), float(Lz_pack), float(Wt))
         log(f"  Monte-Carlo equilibration: {sweeps} sweeps (acceptance {100*rate:.0f} %)")
+        if shear is not None and not film:
+            # the arrangement the flow leaves: the packing sheared in the resin
+            # as it was packed - each sphere with half the packing's gap around
+            # it, so that the flow arranges the spheres as they are drawn and
+            # only the last contact overlaps are pushed out afterwards
+            pos0 = np.mod(pos, float(L))
+            pos, sh = shear(pos0, 0.5 * d_excl, ph_arr, float(L))
+            pos = np.ascontiguousarray(np.mod(pos, float(L)), float)
+            p_sh = pos.copy()
+            fd, nd = fabric(pos, 0.5 * d_excl, float(L))          # as the flow left them
+            # the packing's gap restored by the least motion: every pair closer
+            # than it pushed apart along its centre line (a regrowth from a
+            # smaller size would rearrange the packing)
+            pos, left, worst = separate_spheres(pos, 0.5 * d_excl, float(L), float(Lz_pack), float(Wt), max_iter=4000)
+            if left:
+                log(f"  {left} sphere pairs keep less than the packing's gap after the shear (up to "
+                    f"{100 * worst:.2f} % of their distance)")
+            dmov = pos - p_sh
+            dmov -= float(L) * np.round(dmov / float(L))
+            sh["separation_um"] = float(np.mean(np.linalg.norm(dmov, axis=1)))
+            # how the flow arranged the close pairs: the structure as drawn
+            # (with the packing's gap) against the random packing it started from
+            f0, n0 = fabric(pos0, 0.5 * d_excl, float(L))
+            f1, n1 = fabric(pos, 0.5 * d_excl, float(L))
+            sh["fabric"] = {"random": f0.tolist(), "flow": fd.tolist(), "sheared": f1.tolist(),
+                            "pairs_per_sphere": [n0, nd, n1]}
+            log(f"  close pairs (surfaces within 5 % of their radii) and their tilt <n_x n_z> - 0 when random, below 0 "
+                f"when the flow presses pairs along its compression axis: random packing {n0:.2f} per sphere, "
+                f"{f0[0, 2]:+.3f}; as the flow left them {nd:.2f}, {fd[0, 2]:+.3f}; drawn {n1:.2f}, {f1[0, 2]:+.3f}")
+            info["sheared"] = sh
+            info["route"] += (f", then sheared in the resin to a strain of {sh['strain']:.3g} (particle dynamics: "
+                              f"flow x, gradient z)")
+            log(f"  kept apart again by the packing's gap: the spheres moved {sh['separation_um']:.3g} µm on average "
+                f"({sh['separation_um'] / h:.2f} voxels)")
         info["pack_scale"] = scale
         codes = np.zeros(n, np.int64)
         Rs = np.tile(np.eye(3), (n, 1, 1))

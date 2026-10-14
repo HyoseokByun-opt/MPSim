@@ -214,17 +214,113 @@ def _generator_phases(spec):
 STRUCTURE_VERSION = 5
 
 
-def structure_key(gen_phases, plan, contacts, seed, want_cf):
+def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None):
     """What identifies one generated realisation: the generator's own inputs
-    (phase names aside), the grid, the contact handling and the seed."""
+    (phase names aside), the grid, the contact handling and the seed - and,
+    for the arrangement after shear flow, what it depends on (shear_key)."""
     geo = [{k: v for k, v in ph.items() if k != "name"} for ph in gen_phases]
     key = {"v": STRUCTURE_VERSION, "phases": geo, "N": int(plan["N"]),
            "h": float(f"{plan['h_um']:.12g}"), "nz": int(plan["Nz"]) if plan.get("film") else None,
            "contacts": contacts, "seed": int(seed), "cf": bool(want_cf)}
     if plan.get("skin"):
         key["skin"] = int(plan["skin"])          # only a film with a skin: other keys stay as they were
+    if sheared:
+        key["sheared"] = sheared                 # only a sheared one: random packings keep their keys
     blob = json.dumps(key, sort_keys=True, default=float)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def shear_phases(spec):
+    """The particle phases of a structure arranged by shear flow: spheres of
+    a solid (no shells, no pores, no permitted overlap), at least one."""
+    return [i for i, ph in enumerate(spec["phases"]) if ph["shape"] != G.NETWORK and ph["vf"] > 0]
+
+
+def shear_key(spec):
+    """What the arrangement after shear flow depends on (None for a random
+    packing): the strain, and what sets the forces between the particles
+    against the viscous ones - the resin at the reference rate, roughness,
+    closest approach, friction, bound layer, adhesion and Hamaker constants."""
+    rv = spec["rve"]
+    if rv.get("arrangement") != "sheared":
+        return None
+    vo = spec["options"]["viscosity"]
+    do = vo["dem"]
+    solid = shear_phases(spec)
+    hks, _ = dem_hamaker(spec, solid, do)
+    mu = float(VI.matrix_flow(vo["model"], [vo["gd_ref"]])[0])
+    return {"strain": int(rv["shear_strain"]), "stress": float(f"{mu * vo['gd_ref']:.10g}"),
+            "dem": {k: do[k] for k in ("roughness_nm", "hmin_nm", "mu_f", "bound_nm", "adhesion_mJ_m2")},
+            "A": [float(f"{a:.10g}") for a in hks]}
+
+
+def shear_packing(spec, log, event, prog, should_stop):
+    """The function generate() calls to shear a sphere packing in the resin
+    (None for a random packing): the particle dynamics of the viscosity
+    analysis (its options: lubrication, contacts with friction, van der
+    Waals, adhesion; on the GPU when there is one) starts from the packed
+    spheres in the RVE's own box and shears them to a whole-number strain,
+    where the sheared images line up with the periodic ones again. The flow
+    runs along x with its velocity gradient through z - across the gap a
+    compound flows in - and the vorticity along y."""
+    if spec["rve"].get("arrangement") != "sheared":
+        return None
+    from .solvers import suspension as SU
+    vo = spec["options"]["viscosity"]
+    do = vo["dem"]
+    solid = shear_phases(spec)
+    hks, _ = dem_hamaker(spec, solid, do)
+    hk_of = dict(zip(solid, hks))
+    gd = vo["gd_ref"]
+    mu = float(VI.matrix_flow(vo["model"], [gd])[0])
+    S = float(int(spec["rve"]["shear_strain"]))
+
+    def fn(pos, rad, ph, L):
+        name = "Structure generation · shear flow"
+        dev = SU.device_text(do["backend"], log)
+        detail = (f"{len(rad)} spheres of the packing sheared in the resin to a strain of {S:g} on {dev} "
+                  f"(particle dynamics, each sphere with half the packing's gap around it)")
+        last = {"t": 0.0, "s": -1.0}
+
+        def cb(strain, eta, its):
+            now = time.time()
+            if now - last["t"] >= 1.0:
+                last["t"] = now
+                event("stage", name=name, detail=f"{detail} · strain {strain:.2f} of {S:g}, μr {eta:.3g}",
+                      progress=prog.sub(0.2 + 0.8 * min(strain / S, 0.999)))
+            if strain >= last["s"] + 1.0:
+                last["s"] = math.floor(strain)
+                log(f"    strain {strain:.2f}: μr {eta:.4g}")
+        event("stage", name=name, detail=detail, progress=prog.sub(0.2))
+        log(f"  shear flow: {len(rad)} spheres sheared in the resin to a strain of {S:g} (flow along x, its gradient "
+            f"through z), resin {mu:.4g} Pa·s at {gd:g} 1/s, friction {do['mu_f']:g}, roughness {do['roughness_nm']:g} nm")
+        # the solver shears in its xy plane: x the flow, y the gradient, z the vorticity
+        Xd = np.column_stack([pos[:, 0], pos[:, 2], np.mod(-pos[:, 1], L)])
+        out = SU.shear_viscosity(np.asarray(rad, float) * 1e-6, 0.5, mu, gd, roughness_m=do["roughness_nm"] * 1e-9,
+                                 hmin_m=do["hmin_nm"] * 1e-9,
+                                 hamaker_J=np.array([hk_of.get(int(i), 1e-20) for i in ph]), mu_f=do["mu_f"],
+                                 strain=S, backend=do["backend"], log=log, progress=cb, should_stop=should_stop,
+                                 bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, frames=0,
+                                 start_m=Xd * 1e-6, box_m=float(L) * 1e-6)
+        F = np.asarray(out["final_m"], float) * 1e6
+        SU.release()                       # the device memory goes back before the solves
+        new = np.column_stack([F[:, 0], np.mod(-F[:, 2], L), F[:, 1]])
+        # how far the flow rearranged them: the motion across the flow (y, z) -
+        # along x each sphere is carried by the shear at the heights it passed
+        d = (new - pos)[:, 1:]
+        d -= L * np.round(d / L)
+        st = np.asarray(out["strain"])
+        m = st >= SU.settle_of(S)
+        cpp = float(np.mean(np.asarray(out["contacts_per_particle"])[m])) if m.any() else None
+        info = {"strain": float(out["final_strain"]), "mu_r": float(out["eta_mean"]), "mu_r_se": float(out["eta_se"]),
+                "gd": gd, "mu_resin": mu, "n": int(len(rad)), "moved_um": float(np.median(np.linalg.norm(d, axis=1))),
+                "contacts_per_particle": cpp, "backend": out["backend"], "seconds": float(out["seconds"]),
+                "axes": "flow x, velocity gradient z, vorticity y"}
+        log(f"  shear flow done: strain {info['strain']:.4g}; across the flow the spheres moved {info['moved_um']:.3g} µm "
+            f"from the random packing (median, {info['moved_um'] / np.median(rad):.2f} radii); "
+            f"{cpp if cpp is not None else 0:.2f} contacts per sphere ({out['backend']}, {info['seconds']:.0f} s)")
+        return new, info
+    return fn
 
 
 def film_skin(spec, plan):
@@ -1454,7 +1550,7 @@ def rebuild_view(run_dir, log=print):
     gen_phases = _generator_phases(spec)
     plan.setdefault("skin", film_skin(spec, plan) if plan.get("film") else None)
     key = structure_key(gen_phases, plan, spec["options"]["contacts"], spec["rve"]["seed"],
-                        wants_contact_faces(spec))
+                        wants_contact_faces(spec), sheared=shear_key(spec))
     got = load_structure([run_dir], key)
     if got is None:
         raise FileNotFoundError("this run kept no structure (it was made before structures were kept)")
@@ -2059,12 +2155,13 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
     threads = threads or max(1, (os.cpu_count() or 4) // 4)
     dirs = opts["directions"]
     n_vox = int(labels.size)
-    mem_est = R.memory_estimate(labels.shape[0], set(need) | {"thermal"}, nz=labels.shape[2])
+    mem_est = R.memory_estimate(labels.shape[0], set(need) | {"thermal"}, nz=labels.shape[2],
+                                elastic=opts.get("elastic_method", "fans"))
     # memory of one solve of each kind, GB: rve.memory_estimate per voxel,
     # Stokes from a measurement (PuMA's matrix-free solve held 0.64 GB on an
     # 80^3 RVE, ~1.25 kB per voxel; the planner's 2.3 kB is its upper bound)
     mem_of = {"fv": mem_est.get("conduction", n_vox * 230 / 1e9), "fe": mem_est.get("conduction", n_vox * 230 / 1e9),
-              "elastic": n_vox * (3 * 24 * 8 * 4 + 240) / 1e9, "stokes": n_vox * 1300 / 1e9,
+              "elastic": n_vox * R.elastic_bytes(opts.get("elastic_method", "fans")) / 1e9, "stokes": n_vox * 1300 / 1e9,
               "tort": n_vox * 230 / 1e9, "emi": n_vox * 2 * 230 / 1e9, "radiation": n_vox * 16 / 1e9}
     for k in ("morph", "perc", "poros", "network", "grains"):
         mem_of[k] = n_vox * 100 / 1e9
@@ -2653,7 +2750,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         log("!! NASA PuMA could not be imported; the built-in verification solvers are used instead: "
             + str(PB.unavailable_reason()))
         backend = "builtin"
-    plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"]), need, limits)
+    plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], elastic_method=spec["options"]["elastic_method"]), need, limits)
     log(f"== {spec['name']}")
     if prev is not None:
         log(f"   Continuing this run: {', '.join(sorted(kept))} kept, {', '.join(sorted(need)) or 'nothing'} added.")
@@ -2686,7 +2783,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         + (2.0 * len(dirs) if "permeability" in need else 0.0) \
         + (0.5 * len(dirs) if "tortuosity" in need else 0.0) \
         + (0.5 * len(dirs) + 1.0 if "moisture" in need else 0.0) \
-        + (3.0 if ("cte" in need and opts.get("above_tg")) else 0.0)         + (4.0 if "viscosity" in need else 0.0)
+        + (3.0 if ("cte" in need and opts.get("above_tg")) else 0.0)         + (4.0 if "viscosity" in need else 0.0)         + (4.0 if spec["rve"].get("arrangement") == "sheared" else 0.0)
     vdem = opts["viscosity"]["dem"]
     once_units = (2.0 + (3.0 + vdem["rates"] if vdem["on"] else 0.0) if "viscosity" in need else 0.0) + sum(u for k, u in (("morphology", 1.0), ("porosimetry", 1.0), ("pore_network", 1.0),
                                     ("grains", 1.0), ("radiation", 0.5), ("acoustics", 0.3),
@@ -3137,12 +3234,15 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
     for r in range(0 if direct else seeds):
         first = r == 0
         seed = spec["rve"]["seed"] + 1000 * r
-        prog.stage("Structure generation", f"realisation {r+1}/{seeds} · {_grid(N, Nz)} voxels", units=1.0)
+        sheared = shear_key(spec)
+        prog.stage("Structure generation", f"realisation {r+1}/{seeds} · {_grid(N, Nz)} voxels"
+                   + (f" · sheared to a strain of {sheared['strain']}" if sheared else ""),
+                   units=5.0 if sheared else 1.0)
         # the contact faces are kept whenever a contact resistance is set, not
         # only when this run solves heat: the structure stays the same one for
         # every selection of analyses
         want_cf = wants_contact_faces(spec)
-        skey = structure_key(gen_phases, plan, opts["contacts"], seed, want_cf)
+        skey = structure_key(gen_phases, plan, opts["contacts"], seed, want_cf, sheared=sheared)
         got = load_structure([out_dir] + list(reuse.get("from") or []), skey) if opts.get("reuse_runs", True) else None
         if got is not None:
             gen_labels, ginfo, src = got
@@ -3154,7 +3254,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         else:
             gen_labels, ginfo = GEN.generate(N, h, gen_phases, seed=seed, log=log, should_stop=should_stop,
                                              contacts=opts["contacts"], want_contact_faces=want_cf, nz=Nz,
-                                             skin=skin)
+                                             skin=skin, shear=shear_packing(spec, log, event, prog, should_stop))
             try:
                 save_structure(out_dir, skey, gen_labels, ginfo, ginfo.get("contact_mask"))
             except Exception as e:                                   # noqa: BLE001
@@ -3176,6 +3276,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "voxel_conflicts": ginfo.get("voxel_conflicts", 0),
                  "shrunk": ginfo.get("shrunk"),
                  "pack_scale": ginfo.get("pack_scale"),
+                 "sheared": ginfo.get("sheared"),
                  "phases": ginfo["phases"], "vf_labels": vf_labels.tolist(),
                  "interface_area_ratio": {str(k): v for k, v in area_ratio.items()}}
         log(f"   realisation {r+1}: {ginfo['route']} · {ginfo['seconds']:.1f} s · "

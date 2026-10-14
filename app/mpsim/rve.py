@@ -423,7 +423,7 @@ def plan(phases, rve=None, props=None, limits=None):
                            "note": "Random sequential addition may not reach this fraction. "
                                    "Aligned orientation or permitted overlap should be considered."})
 
-    mem = memory_estimate(N, props, nz=Nz)
+    mem = memory_estimate(N, props, nz=Nz, elastic=rve.get("elastic_method", "fans"))
     # Once the ceilings are raised or switched off, the grid is no longer what
     # stops a run - memory is. So it is reported in the same place and with the
     # actual number, which leaves the decision with whoever knows the machine
@@ -465,9 +465,22 @@ def machine_ram_gb():
         return None
 
 
-def memory_estimate(N, props, nz=None):
+# FANS (the default elasticity): five CG vectors of 3 doubles per voxel, the
+# Fourier preconditioner's half spectra, then the strain and stress fields of
+# 6 doubles - about 250 bytes per voxel at its peak, with margin 300
+FANS_BYTES = 300
+PUMA_ELASTIC_BYTES = 3 * 24 * 8 * 4 + 240
+
+
+def elastic_bytes(method="fans"):
+    """Peak bytes per voxel of one elastic solve of the given method."""
+    return FANS_BYTES if method in ("fans", "fft", None) else PUMA_ELASTIC_BYTES
+
+
+def memory_estimate(N, props, nz=None, elastic="fans"):
     """Rough peak memory per solver, GB. From the array counts of each
-    solver, not from a probe run. nz: a film's voxels in z (N otherwise)."""
+    solver, not from a probe run. nz: a film's voxels in z (N otherwise).
+    elastic: the elasticity method (options.elastic_method)."""
     n = N * N * (N if nz is None else nz)
     out = {"structure": n * (4 + 1 + 8) / 1e9}
     # the multi-core FE path adds its DOF incidence tables: ~80 bytes per
@@ -476,7 +489,8 @@ def memory_estimate(N, props, nz=None):
     if props & {"thermal", "electrical", "dielectric", "magnetic", "emi"}:
         out["conduction"] = n * 230 / 1e9
     if props & {"cte", "elastic"}:
-        out["thermo-elasticity (PuMA FE)"] = n * (3 * 24 * 8 * 4 + 240) / 1e9
+        lab = "thermo-elasticity (FANS)" if elastic_bytes(elastic) == FANS_BYTES else "thermo-elasticity (PuMA FE)"
+        out[lab] = n * elastic_bytes(elastic) / 1e9
     if props & {"permeability", "acoustics"}:
         out["Stokes flow (PuMA FE)"] = n * 4 * 24 * 8 * 3 / 1e9
     if props & {"porosimetry", "pore_network", "morphology", "grains"}:

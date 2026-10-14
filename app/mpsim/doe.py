@@ -224,6 +224,8 @@ def parameter_catalogue(form):
         {"path": "rve.L_um", "label": "RVE edge length", "unit": "µm", "group": "Domain"},
         {"path": "rve.N", "label": "Grid size", "unit": "voxels", "group": "Domain"},
         {"path": "rve.T_um", "label": "Film thickness (thin-film domain)", "unit": "µm", "group": "Domain"},
+        {"path": "rve.shear_strain", "label": "Strain of the shear flow (arrangement after shear flow)", "unit": "-",
+         "group": "Domain"},
         {"path": "options.delta_T", "label": "ΔT", "unit": "K", "group": "Options"},
         {"path": "options.thickness_mm", "label": "Layer thickness", "unit": "mm", "group": "Options"},
         {"path": "options.filtration.face_velocity_m_s", "label": "Filtration face velocity", "unit": "m/s", "group": "Options"},

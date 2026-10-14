@@ -252,6 +252,12 @@ def normalize(form):
         # matrix kept at each face of a film; None = one voxel, 0 = particles may touch the faces
         "skin_um": (_num(rv.get("skin_um"), "matrix skin at the faces", lo=0.0, allow_none=True)
                     if rv.get("film") else None),
+        # how the particles are arranged: a random packing, or that packing
+        # sheared in the resin by the particle dynamics (the arrangement a
+        # dispensed or moulded compound keeps when it cures); a whole-number
+        # strain, so that the sheared box is periodic again
+        "arrangement": "sheared" if rv.get("arrangement") == "sheared" else "random",
+        "shear_strain": int(round(_num(rv.get("shear_strain", 10) or 10, "strain of the shear flow", 1, 100))),
     }
 
     # ---- analyses -----------------------------------------------------------
@@ -464,6 +470,22 @@ def normalize(form):
         if not any(t.get("E_r") and t.get("alpha2") for t in [out["matrix"]["props"]] + [p["props"] for p in phases]):
             errors.append("Elasticity above Tg needs E above Tg and the CTE above Tg of at least one material "
                           "(Material tab, optional properties)")
+    if out["rve"]["arrangement"] == "sheared":
+        parts_ = [p for p in phases if p["shape"] != G.NETWORK and p["vf"] > 0]
+        if out["rve"]["film"]:
+            errors.append("The arrangement after shear flow is made in a periodic cube, not in a thin film")
+        if out["matrix"]["void"]:
+            errors.append("The arrangement after shear flow needs a liquid matrix (the resin); the matrix here is a gas")
+        if not parts_:
+            errors.append("The arrangement after shear flow needs particles")
+        if any(p["shape"] != "sphere" for p in parts_):
+            errors.append("The arrangement after shear flow is made for spheres; "
+                          + ", ".join(p["name"] for p in parts_ if p["shape"] != "sphere") + " are not spheres")
+        if any(p["shape"] == G.NETWORK and p["vf"] > 0 for p in phases):
+            errors.append("The arrangement after shear flow is made of particles; a network phase cannot flow")
+        if any(p.get("shell") or p["void"] or p.get("overlap") for p in parts_):
+            errors.append("The arrangement after shear flow needs solid spheres apart from each other "
+                          "(no shells, pores or permitted overlap)")
     if "viscosity" in chosen:
         if out["matrix"]["void"]:
             errors.append("Viscosity needs a liquid matrix (the resin); the matrix here is a gas")
