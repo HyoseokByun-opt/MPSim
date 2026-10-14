@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.2.3",
+  "softwareVersion": "5.2.4",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -97,6 +97,15 @@
   .flow .anim img { width: 100%; height: auto; display: block; border-radius: 12px; }
   .flow .anim figcaption { color: var(--ink2); font-size: 13.5px; margin-top: 8px; }
   @media (max-width: 860px) { .flow { grid-template-columns: 1fr; } }
+  .sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .sheet .tile { background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--c); border-radius: 10px;
+                 padding: 10px 14px 12px; }
+  .sheet .lab { display: block; color: var(--c); font-weight: 600; font-size: 12.5px; letter-spacing: .04em; text-transform: uppercase; }
+  .sheet .lab i { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .sheet b { display: block; font-size: 25px; line-height: 1.25; margin: 4px 0 6px; }
+  .sheet .l { display: block; color: var(--ink2); font-size: 13.5px; line-height: 1.5; }
+  @media (prefers-color-scheme: dark) { .sheet .lab { color: color-mix(in srgb, var(--c) 62%, #fff); } }
+  @media (max-width: 520px) { .sheet { grid-template-columns: 1fr; } }
   table.bench { width: 100%; border-collapse: collapse; font-size: 14px; }
   table.bench th, table.bench td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   table.bench th { color: var(--ink2); font-weight: 600; }
@@ -156,7 +165,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.2.3</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.2.4</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -228,6 +237,31 @@
     </div>
   </section>
 
+  <section id="cured">
+    <div class="wrap">
+      <h2>From flow to the cured part</h2>
+      <p class="sub">A compound cures where its flow leaves it. MPSim shears the packing in the resin with the same particle
+        dynamics, cures it as it lies, and solves heat, expansion, stiffness, Dk/Df and moisture on that one structure - every
+        property a package engineer asks of an underfill, from one model.</p>
+      <div class="flow">
+        <figure class="anim"><img src="assets/heat_flux.gif" width="560" height="560" loading="lazy"
+             alt="Heat flux inside the cured mould underfill, a cut travelling through the RVE">
+          <figcaption>The MUF above, sheared to a strain of 10 and cured: 2,568 particles, 240³ voxels. Heat driven from the
+            die side to the substrate side runs through the silica and crosses where the flow pressed particles close (red).</figcaption></figure>
+        <div class="sheet" aria-label="Every property of the cured compound from one structure">
+          <div class="tile" style="--c:#1c7ed6"><span class="lab">Flow<i> · before cure</i></span><b>33 Pa·s</b><span class="l">at 10 1/s; relative viscosity 24 ± 3</span><span class="l">fills a 50 µm × 10 mm gap in 108 min</span><span class="l">maximum packing φm 0.77</span></div>
+          <div class="tile" style="--c:#4263eb"><span class="lab">Settling<i> · before gel</i></span><b>2.9 µm</b><span class="l">the 15 µm silica sinks in 30 min</span><span class="l">hindered by its neighbours</span><span class="l">41× slower than alone</span></div>
+          <div class="tile" style="--c:#0b62c4"><span class="lab">Structure<i> · after the flow</i></span><b>4.5 close pairs</b><span class="l">per sphere, 2.5 in a random packing</span><span class="l">tilted along the compression axis (-0.024)</span><span class="l">sheared to a strain of 10, cured as it lies</span></div>
+          <div class="tile" style="--c:#e8590c"><span class="lab">Heat<i> · die to substrate</i></span><b>0.573 W/m·K</b><span class="l">through the gap (z); x 0.573, y 0.579</span><span class="l">2.9× the resin (0.2)</span><span class="l">random packing 0.569 (+0.7 % after the flow)</span></div>
+          <div class="tile" style="--c:#2b8a3e"><span class="lab">Expansion<i> · warpage</i></span><b>18.4 ppm/K</b><span class="l">below Tg; resin 60, silica 0.5</span><span class="l">Kerner (separate spheres) 22.6</span><span class="l">touching particles hold it lower</span></div>
+          <div class="tile" style="--c:#0ca678"><span class="lab">Stiffness<i> · stress</i></span><b>13.3 GPa</b><span class="l">Young&#x27;s modulus; resin 3, silica 72</span><span class="l">Poisson&#x27;s ratio 0.26</span><span class="l">within the Hashin–Shtrikman bounds</span></div>
+          <div class="tile" style="--c:#7048e8"><span class="lab">Signal<i> · Dk and Df</i></span><b>Dk 3.84</b><span class="l">Df 0.0068</span><span class="l">resin Dk 3.9, Df 0.015</span><span class="l">silica keeps Dk, cuts the loss</span></div>
+          <div class="tile" style="--c:#1098ad"><span class="lab">Moisture<i> · reliability</i></span><b>0.77 wt%</b><span class="l">saturated uptake (resin 2.5 wt%)</span><span class="l">diffusivity 1.99e-12 m²/s</span><span class="l">half-saturated in 7 h (1 mm part)</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="workspace">
     <div class="wrap">
       <h2>The workspace</h2>
@@ -244,14 +278,14 @@
       <p class="sub">The engine is checked against problems whose answers are known, and every run reports its own checks —
         RVE size, resolution, particle count, convergence and rigorous bounds — as passed, warning or failed, with the reason.</p>
       <div class="stats">
-        <div class="stat"><b>63</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>64</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
-        <div class="stat"><b>29</b><span>ready-to-run presets for semiconductor materials, seven checked against published data</span></div>
+        <div class="stat"><b>30</b><span>ready-to-run presets for semiconductor materials, seven checked against published data</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
       </div>
       <h3 style="margin:30px 0 8px">Presets</h3>
       <ul class="presets">
-        <li>EMC · epoxy + fused silica</li><li>Underfill · epoxy + silica</li><li>MUF flowability · bimodal silica</li>
+        <li>EMC · epoxy + fused silica</li><li>Underfill · epoxy + silica</li><li>MUF flowability · bimodal silica</li><li>MUF from flow to the cured part</li>
         <li>EMC reliability · moisture, swelling, above Tg</li><li>TIM · silicone + Al₂O₃ with interfacial resistance</li>
         <li>TIM · epoxy + AlN</li><li>Hybrid TIM · Al₂O₃ + AlN blend with contact resistance</li>
         <li>Thermal sheet · h-BN platelets</li><li>Thin film · polyimide + h-BN</li><li>Conductive adhesive · Ag flakes</li>
@@ -306,7 +340,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.2.3},
+  version   = {5.2.4},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
