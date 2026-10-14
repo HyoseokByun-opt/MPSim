@@ -283,7 +283,7 @@
       <div class="stats">
         <div class="stat"><b>64</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
-        <div class="stat"><b>30</b><span>ready-to-run presets for semiconductor materials, seven checked against published data</span></div>
+        <div class="stat"><b>30</b><span>ready-to-run presets for semiconductor materials, four compared with published measurements</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
       </div>
       <h3 style="margin:30px 0 8px">Presets</h3>
@@ -300,24 +300,19 @@
         <li>PCB thermal vias</li><li>Glass core substrate · Cu TGVs</li><li>Die-attach solder voids</li>
         <li>Package-level power inductor · carbonyl iron</li>
       </ul>
-      <h3 style="margin:30px 0 8px">Against published data</h3>
+      <h3 style="margin:30px 0 8px">Compared with published measurements</h3>
       <table class="bench">
         <tr><th>Preset and source</th><th>Reported</th><th>Computed</th></tr>
         <tr><td>Cu + diamond 50 vol%, 400 µm<span class="src">Wang et al., <i>Materials</i> 2025 <a href="#ref1">[1]</a></span></td><td>640 W/m·K</td><td>644 W/m·K (interface 12.5 MW/m²K)</td></tr>
         <tr><td>AlSiC 63 vol%<span class="src">Guo et al., <i>J. USTB</i> 2014 <a href="#ref2">[2]</a></span></td><td>178 W/m·K, 8.21 ppm/K</td><td>189 W/m·K, 8.84 ppm/K</td></tr>
         <tr><td>PTFE + silica 60 wt%<span class="src">Murali et al., <i>Compos. A</i> 2009 <a href="#ref3">[3]</a></span></td><td>Dk 2.9</td><td>Dk 3.01</td></tr>
-        <tr><td>FR-4 + Cu-plated thermal vias<span class="src">exact solution <a href="#ref4">[4]</a></span></td><td>k<sub>z</sub> 9.285 W/m·K</td><td>9.285 W/m·K</td></tr>
-        <tr><td>Glass core + Cu TGVs<span class="src">exact solution <a href="#ref4">[4]</a></span></td><td>k<sub>z</sub> 36.0 W/m·K</td><td>36.03 W/m·K</td></tr>
-        <tr><td>SAC305 + 15 % voids<span class="src">Maxwell 1873 (upper bound) <a href="#ref5">[5]</a></span></td><td>79.1 % of dense</td><td>77.1 %</td></tr>
-        <tr><td>Carbonyl iron + epoxy 54 vol%<span class="src">Sugawa et al., <i>IEEE Trans. Magn.</i> 2013 <a href="#ref6">[6]</a></span></td><td>μr 7.5 (printed core)</td><td>μr 5.1 (separate spheres; a printed core forms chains)</td></tr>
+        <tr><td>Carbonyl iron + epoxy 54 vol%<span class="src">Sugawa et al., <i>IEEE Trans. Magn.</i> 2013 <a href="#ref4">[4]</a></span></td><td>μr 7.5 (printed core)</td><td>μr 5.1 (separate spheres; a printed core forms chains)</td></tr>
       </table>
       <ol class="refs">
         <li id="ref1">Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, <i>Materials</i> <b>18</b> (16), 3882 (2025). <a href="https://doi.org/10.3390/ma18163882">doi:10.3390/ma18163882</a> — 400 µm diamond, 50 vol%: 640 W/m·K.</li>
         <li id="ref2">M. Guo, J. Liu, C. Jia, S. Guo, Y. Li, H. Zhou, “Microstructure and properties of SiCp/Al electronic packaging materials fabricated by pseudo-semi-solid thixoforming”, <i>Journal of University of Science and Technology Beijing</i> <b>36</b> (4), 489–495 (2014). <a href="https://doi.org/10.13374/j.issn1001-053x.2014.04.011">doi:10.13374/j.issn1001-053x.2014.04.011</a> — as tabulated in L. Lai et al., <i>Micromachines</i> <b>14</b> (8), 1491 (2023), Table 2, <a href="https://doi.org/10.3390/mi14081491">doi:10.3390/mi14081491</a>.</li>
         <li id="ref3">K. P. Murali, S. Rajesh, O. Prakash, A. R. Kulkarni, R. Ratheesh, “Preparation and properties of silica filled PTFE flexible laminates for microwave circuit applications”, <i>Composites Part A</i> <b>40</b> (8), 1179–1185 (2009). <a href="https://doi.org/10.1016/j.compositesa.2009.05.007">doi:10.1016/j.compositesa.2009.05.007</a> — 60 wt% micron silica, X band.</li>
-        <li id="ref4">Exact solution: parallel conduction through straight vias that span the board, k_z = f·k_Cu + (1 − f)·k_laminate for an area fraction f of copper</li>
-        <li id="ref5">J. C. Maxwell, <i>A Treatise on Electricity and Magnetism, vol. 1</i>, Clarendon Press, Oxford (1873), Art. 314 — insulating spheres: k/k_m = 2(1 − φ)/(2 + φ), an upper bound at this content.</li>
-        <li id="ref6">Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, <i>IEEE Transactions on Magnetics</i> <b>49</b> (7), 4172–4175 (2013). <a href="https://doi.org/10.1109/TMAG.2013.2250925">doi:10.1109/TMAG.2013.2250925</a> — screen-printed 54 vol% core.</li>
+        <li id="ref4">Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, <i>IEEE Transactions on Magnetics</i> <b>49</b> (7), 4172–4175 (2013). <a href="https://doi.org/10.1109/TMAG.2013.2250925">doi:10.1109/TMAG.2013.2250925</a> — screen-printed 54 vol% core.</li>
       </ol>
     </div>
   </section>
@@ -337,7 +332,7 @@ cd C:\MPSim
 1_INSTALL.bat
 2_RUN_LOCAL.bat</code></pre></div>
       </div>
-      <p class="note" style="margin-top:14px">User guides, 162 pages in English and 151 in Korean:
+      <p class="note" style="margin-top:14px">User guides, 180 pages in English and 168 in Korean:
         <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">English (PDF)</a> ·
         <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf">Korean (PDF)</a>.
         Every simulation chapter explains how the property is measured, how MPSim computes it and how to read the results.</p>
