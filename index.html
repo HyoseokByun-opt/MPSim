@@ -97,6 +97,17 @@
   .flow .anim img { width: 100%; height: auto; display: block; border-radius: 12px; }
   .flow .anim figcaption { color: var(--ink2); font-size: 13.5px; margin-top: 8px; }
   @media (max-width: 860px) { .flow { grid-template-columns: 1fr; } }
+  .ex { margin-top: 38px; }
+  .ex h3 { font-size: 20px; margin: 0 0 6px; }
+  .ex > p { color: var(--ink2); max-width: 900px; margin: 0 0 14px; }
+  .ex .shot { margin: 14px 0 0; }
+  .ex .flow + .shot, .ex .flow + table { margin-top: 14px; }
+  table.kv { border-collapse: collapse; font-size: 14px; margin-top: 12px; min-width: 50%; }
+  table.kv th, table.kv td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); }
+  table.kv th { color: var(--ink2); font-weight: 600; }
+  .ex .note { color: var(--ink2); font-size: 13px; }
+  .sheet.wide { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 8px; }
+  @media (max-width: 1000px) { .sheet.wide { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .sheet .tile { background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--c); border-radius: 10px;
                  padding: 10px 14px 12px; }
@@ -105,7 +116,7 @@
   .sheet b { display: block; font-size: 25px; line-height: 1.25; margin: 4px 0 6px; }
   .sheet .l { display: block; color: var(--ink2); font-size: 13.5px; line-height: 1.5; }
   @media (prefers-color-scheme: dark) { .sheet .lab { color: color-mix(in srgb, var(--c) 62%, #fff); } }
-  @media (max-width: 520px) { .sheet { grid-template-columns: 1fr; } }
+  @media (max-width: 520px) { .sheet, .sheet.wide { grid-template-columns: 1fr; } table.kv { min-width: 0; font-size: 13px; } }
   table.bench { width: 100%; border-collapse: collapse; font-size: 14px; }
   table.bench th, table.bench td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   table.bench th { color: var(--ink2); font-weight: 600; }
@@ -149,7 +160,7 @@
     <nav aria-label="Sections">
       <a href="#how">How it works</a>
       <a href="#analyses">Analyses</a>
-      <a href="#flow">Flow</a>
+      <a href="#example">Example</a>
       <a href="#verification">Verification</a>
       <a href="#download">Download</a>
       <a href="#cite">Cite</a>
@@ -161,8 +172,9 @@
 <main id="top">
   <div class="wrap hero">
     <h1>MPSim <span>· Material Property Simulation</span></h1>
-    <p class="lead">Effective properties of semiconductor materials computed from their microstructure — the 3D structure is
-      generated, the physics is solved inside it, and you see where heat, current, stress and resin flow actually go.</p>
+    <p class="lead">MPSim computes the effective properties of semiconductor materials from their microstructure. The
+      microstructure is generated on a voxel RVE, the governing equations are solved on it, and the local fields of heat,
+      current, stress and flow are visualised.</p>
     <div class="btns">
       <a class="btn primary" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest">Download</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
@@ -179,18 +191,18 @@
   <section id="how">
     <div class="wrap">
       <h2>How it works</h2>
-      <p class="sub">MPSim puts the whole workflow of a digital-material study in one browser workspace. It runs on one PC, or on a
-        server that the rest of the network opens in a browser; no data leaves the machine.</p>
+      <p class="sub">MPSim carries out the workflow of a digital-material study in one browser workspace. It runs on a single PC
+        or on a server accessed from the network; data do not leave the machine.</p>
       <div class="steps">
         <div class="step"><span class="n">1</span><h3>Build the microstructure</h3>
           <p>Fillers of any shape, size distribution and orientation, pores, coatings, hollow particles, multi-filler blends and
           thin films, on a voxel representative volume element (RVE) whose size is checked against measured criteria.</p></div>
         <div class="step"><span class="n">2</span><h3>Solve the physics</h3>
-          <p>Validated open-source solvers — periodic finite volume, FFT-accelerated voxel finite elements, NASA PuMA, PoreSpy and
-          openEMS — compute the effective tensors, with rigorous bounds alongside.</p></div>
-        <div class="step"><span class="n">3</span><h3>See inside</h3>
-          <p>Interactive 3D and 2D views of every field, animated field lines, publication figures, a single-file HTML report and
-          every number traceable to the method that produced it.</p></div>
+          <p>Validated open-source solvers (periodic finite volumes, FFT-accelerated voxel finite elements, NASA PuMA, PoreSpy and
+          openEMS) compute the effective tensors, which are compared with rigorous bounds.</p></div>
+        <div class="step"><span class="n">3</span><h3>Evaluate the fields</h3>
+          <p>Interactive 3D and 2D views of every field, animated field lines, publication figures and a single-file HTML report;
+          every number states the method that produced it.</p></div>
       </div>
     </div>
   </section>
@@ -198,7 +210,7 @@
   <section id="analyses">
     <div class="wrap">
       <h2>Analyses</h2>
-      <p class="sub">Written for the materials of semiconductor packaging, devices and process equipment — moulding compounds,
+      <p class="sub">MPSim targets the materials of semiconductor packaging, devices and process equipment: moulding compounds,
         underfills, thermal interface materials, conductive adhesives, dielectrics, EMI absorbers, porous ceramics and filters.</p>
       <div class="grid">
         <div class="card"><span class="tag">Conduction</span><h3>Thermal and electrical</h3>
@@ -208,7 +220,7 @@
         <div class="card"><span class="tag">Mechanics</span><h3>Elasticity and CTE</h3>
           <ul><li>Stiffness, engineering constants, CTE tensor</li><li>Thermal stress; α1 / α2 above Tg</li></ul></div>
         <div class="card"><span class="tag">Rheology</span><h3>Viscosity and flowability</h3>
-          <ul><li>Viscosity of uncured compounds, flow curves</li><li>Particle dynamics of the fillers: the particle-size effect and shear thinning, on CPU or GPU</li><li>Maximum packing, underfill filling time, settling</li></ul></div>
+          <ul><li>Viscosity of uncured compounds, flow curves</li><li>Particle dynamics of the fillers: particle-size effect and shear thinning, on CPU or GPU</li><li>Maximum packing, underfill filling time, settling</li></ul></div>
         <div class="card"><span class="tag">Reliability</span><h3>Moisture</h3>
           <ul><li>Moisture diffusivity and saturated uptake</li><li>Uptake curve of a part, hygroscopic swelling (CME)</li></ul></div>
         <div class="card"><span class="tag">Porous media</span><h3>Flow, filtration, acoustics</h3>
@@ -216,51 +228,138 @@
         <div class="card"><span class="tag">Structure</span><h3>Morphology</h3>
           <ul><li>Porosity, size distributions, porosimetry</li><li>Pore networks, grain statistics, percolation paths</li></ul></div>
         <div class="card"><span class="tag">Inverse problems</span><h3>Calibration</h3>
-          <ul><li>Unknown material values from measurements, a filler's surface from a measured viscosity</li><li>Credible intervals, identifiability, next measurement</li></ul></div>
+          <ul><li>Unknown material values from measured properties, including viscosity</li><li>Credible intervals, identifiability, next measurement</li></ul></div>
         <div class="card"><span class="tag">Studies</span><h3>DOE and optimisation</h3>
-          <ul><li>Factorial and Latin-hypercube studies, filler shares, one fixed grid for every case</li><li>Linked inputs: one factor sets several entries (x, 0.8·x, sqrt(x1·x2))</li><li>What each case really holds beside its inputs</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
+          <ul><li>Factorial and Latin-hypercube studies, filler shares, one fixed grid for every case</li><li>Linked inputs: one factor sets several entries (x, 0.8·x, sqrt(x1·x2))</li><li>Realised filler content and shares reported for every case</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
       </div>
     </div>
   </section>
 
-  <section id="flow">
+  <section id="example">
     <div class="wrap">
-      <h2>Flow of filled compounds</h2>
-      <p class="sub">Underfills and mould compounds are filled to 50–65 vol% and must still flow into gaps of tens of micrometres.
-        MPSim shears the compound's own particles in the resin — lubrication between neighbours, contacts with friction, van der
-        Waals attraction, every particle free to move and turn — and reads the viscosity from the stress they carry.</p>
-      <div class="flow">
-        <figure class="anim"><img src="assets/viscosity_shear.gif" width="560" height="560" loading="lazy"
-             alt="Particles of a mould underfill (fused silica 15 + 3 µm, 55 vol%) sheared in epoxy, coloured by their speed relative to the shear flow">
-          <figcaption>Fused silica 15 + 3 µm, 55 vol% in epoxy: 2,222 particles sheared top against bottom, coloured by how much
-            faster than the flow around it each one moves (red: pushing past its neighbours).</figcaption></figure>
-        <figure class="shot plots"><img src="assets/viscosity_plots.webp" width="1325" height="895" loading="lazy"
-             alt="The relative viscosity settling to steady state over the sheared strain, and the flow curve of the compound against the resin"></figure>
-      </div>
-    </div>
-  </section>
-
-  <section id="cured">
-    <div class="wrap">
-      <h2>From flow to the cured part</h2>
-      <p class="sub">A compound cures where its flow leaves it. MPSim shears the packing in the resin with the same particle
-        dynamics, cures it as it lies, and solves heat, expansion, stiffness, Dk/Df and moisture on that one structure - every
-        property a package engineer asks of an underfill, from one model.</p>
-      <div class="flow">
-        <figure class="anim"><img src="assets/heat_flux.gif" width="560" height="560" loading="lazy"
-             alt="Heat flux inside the cured mould underfill, a cut travelling through the RVE">
-          <figcaption>The MUF above, sheared to a strain of 10 and cured: 2,568 particles, 240³ voxels. Heat driven from the
-            die side to the substrate side runs through the silica and crosses where the flow pressed particles close (red).</figcaption></figure>
-        <div class="sheet" aria-label="Every property of the cured compound from one structure">
-          <div class="tile" style="--c:#1c7ed6"><span class="lab">Flow<i> · before cure</i></span><b>33 Pa·s</b><span class="l">at 10 1/s; relative viscosity 24 ± 3</span><span class="l">fills a 50 µm × 10 mm gap in 108 min</span><span class="l">maximum packing φm 0.77</span></div>
-          <div class="tile" style="--c:#4263eb"><span class="lab">Settling<i> · before gel</i></span><b>2.9 µm</b><span class="l">the 15 µm silica sinks in 30 min</span><span class="l">hindered by its neighbours</span><span class="l">41× slower than alone</span></div>
-          <div class="tile" style="--c:#0b62c4"><span class="lab">Structure<i> · after the flow</i></span><b>4.5 close pairs</b><span class="l">per sphere, 2.5 in a random packing</span><span class="l">tilted along the compression axis (-0.024)</span><span class="l">sheared to a strain of 10, cured as it lies</span></div>
-          <div class="tile" style="--c:#e8590c"><span class="lab">Heat<i> · die to substrate</i></span><b>0.573 W/m·K</b><span class="l">through the gap (z); x 0.573, y 0.579</span><span class="l">2.9× the resin (0.2)</span><span class="l">random packing 0.569 (+0.7 % after the flow)</span></div>
-          <div class="tile" style="--c:#2b8a3e"><span class="lab">Expansion<i> · warpage</i></span><b>18.4 ppm/K</b><span class="l">below Tg; resin 60, silica 0.5</span><span class="l">Kerner (separate spheres) 22.6</span><span class="l">touching particles hold it lower</span></div>
+      <h2>Application example: a mould underfill from flow to cure</h2>
+      <p class="sub">One compound is followed through the analyses relevant for a moulded underfill (MUF): epoxy filled with
+        fused silica of 15 µm and 3 µm at 55 vol%. The viscosity of the uncured compound is computed by particle dynamics. The
+        same particle dynamics shears a random packing in the resin, and the resulting arrangement is taken as the cured
+        microstructure, on which heat conduction, thermal expansion, stiffness, permittivity and moisture uptake are solved
+        (60 µm RVE, 240³ voxels). The presets <i>MUF · epoxy + silica 15 + 3 µm 55 vol%</i> and <i>MUF · from flow to the cured
+        part</i> reproduce all results.</p>
+      <div class="sheet wide" aria-label="Summary of the properties of the cured compound">
+          <div class="tile" style="--c:#1c7ed6"><span class="lab">Flow<i> · before cure</i></span><b>33 Pa·s</b><span class="l">at 10 1/s; relative viscosity 24 ± 3</span><span class="l">filling of a 50 µm × 10 mm gap: 108 min</span><span class="l">maximum packing φm 0.77</span></div>
+          <div class="tile" style="--c:#4263eb"><span class="lab">Settling<i> · before gel</i></span><b>2.9 µm</b><span class="l">15 µm silica, 30 min before gelation</span><span class="l">hindered settling at 55 vol%</span><span class="l">41 times slower than an isolated particle</span></div>
+          <div class="tile" style="--c:#0b62c4"><span class="lab">Structure<i> · after the flow</i></span><b>4.5 close pairs</b><span class="l">per sphere (random packing: 2.5)</span><span class="l">oriented along the compression axis (-0.024)</span><span class="l">after shear flow to a strain of 10</span></div>
+          <div class="tile" style="--c:#e8590c"><span class="lab">Heat<i> · die to substrate</i></span><b>0.573 W/m·K</b><span class="l">through the gap (z); x 0.573, y 0.579</span><span class="l">2.9 times the resin (0.2 W/m·K)</span><span class="l">random packing: 0.569 (+0.7 %)</span></div>
+          <div class="tile" style="--c:#2b8a3e"><span class="lab">Expansion<i> · warpage</i></span><b>18.4 ppm/K</b><span class="l">below Tg; resin 60, silica 0.5</span><span class="l">Kerner (separate spheres) 22.6</span><span class="l">near contacts restrain the resin</span></div>
           <div class="tile" style="--c:#0ca678"><span class="lab">Stiffness<i> · stress</i></span><b>13.3 GPa</b><span class="l">Young&#x27;s modulus; resin 3, silica 72</span><span class="l">Poisson&#x27;s ratio 0.26</span><span class="l">within the Hashin–Shtrikman bounds</span></div>
-          <div class="tile" style="--c:#7048e8"><span class="lab">Signal<i> · Dk and Df</i></span><b>Dk 3.84</b><span class="l">Df 0.0068</span><span class="l">resin Dk 3.9, Df 0.015</span><span class="l">silica keeps Dk, cuts the loss</span></div>
-          <div class="tile" style="--c:#1098ad"><span class="lab">Moisture<i> · reliability</i></span><b>0.77 wt%</b><span class="l">saturated uptake (resin 2.5 wt%)</span><span class="l">diffusivity 1.99e-12 m²/s</span><span class="l">half-saturated in 7 h (1 mm part)</span></div>
+          <div class="tile" style="--c:#7048e8"><span class="lab">Signal<i> · Dk and Df</i></span><b>Dk 3.84</b><span class="l">Df 0.0068</span><span class="l">resin Dk 3.9, Df 0.015</span><span class="l">Df: volume-weighted mean of the phases</span></div>
+          <div class="tile" style="--c:#1098ad"><span class="lab">Moisture<i> · reliability</i></span><b>0.77 wt%</b><span class="l">saturated uptake (resin 2.5 wt%)</span><span class="l">diffusivity 1.99e-12 m²/s</span><span class="l">1 mm part: 50 % saturation in 7 h</span></div>
+      </div>
+
+      <div class="ex">
+        <h3>Viscosity of the uncured compound</h3>
+        <p>The particle dynamics resolves lubrication between neighbouring particles, frictional contacts and van der Waals
+          attraction; every particle translates and rotates in a periodic box sheared by Lees–Edwards boundaries, and the
+          relative viscosity follows from the stress carried by the particles. The viscosity overshoots while the shear
+          microstructure forms and reaches a steady value from a strain of about 6; it is averaged over the second half of the
+          run: μr = 24 ± 3, the uncertainty being the expected scatter between independent packings. With the shear-thinning
+          resin the compound reaches 33 Pa·s at 10 s⁻¹.</p>
+        <div class="flow">
+          <figure class="anim"><img src="assets/viscosity_shear.gif" width="560" height="560" loading="lazy"
+               alt="Particles of the mould underfill sheared in the resin, coloured by their velocity relative to the shear flow">
+            <figcaption>2,222 particles coloured by their velocity relative to the imposed shear flow.</figcaption></figure>
+          <figure class="shot plots"><img src="assets/viscosity_plots.webp" width="1325" height="895" loading="lazy"
+               alt="Relative viscosity over the sheared strain and the flow curve of the compound"></figure>
         </div>
+        <table class="kv">
+          <tr><th>Derived quantity</th><th>Value</th></tr>
+          <tr><td>Maximum packing fraction φm (Farr–Groot)</td><td>0.77</td></tr>
+          <tr><td>Capillary filling of a 50 µm × 10 mm gap (Washburn, 30°)</td><td>108 min (resin alone 6.3 min)</td></tr>
+          <tr><td>Settling of the 15 µm silica in 30 min before gelation</td><td>2.9 µm (41 times slower than an isolated particle)</td></tr>
+        </table>
+      </div>
+
+      <div class="ex">
+        <h3>Microstructure after shear flow</h3>
+        <p>The random packing is sheared with the flow along x and the velocity gradient along z to a whole-number strain (10),
+          at which the sheared periodic images coincide with the ordinary ones. The number of close pairs (surfaces within 5 % of
+          the sum of the radii) increases from 2.5 to 4.5 per sphere, and the pairs orient along the compression axis of the shear
+          (135° from the flow direction) while the extension axis (45°) is depleted, as known for sheared non-Brownian
+          suspensions (Morris, <i>Rheol. Acta</i> 48, 909 (2009)). The contents of the drawn structure equal the input (38.50 and
+          16.50 vol%).</p>
+        <figure class="shot plots"><img src="assets/muf_structure.webp" width="2400" height="990" loading="lazy"
+             alt="The cured microstructure and the orientation of close particle pairs"></figure>
+      </div>
+
+      <div class="ex">
+        <h3>Thermal conductivity</h3>
+        <p>Steady heat conduction is solved with periodic finite volumes along x, y and z. The conductivity through the gap,
+          0.573 W/m·K, is 2.9 times that of the resin, 5 % above the Maxwell–Garnett estimate (the lower Hashin–Shtrikman bound,
+          0.544) and well below the Bruggeman estimate (0.685): the particles are separated by resin films, and the heat flux is
+          highest in the silica and in the thin gaps between near-contacting particles. The changes caused by the shear (up to
+          1.6 %) are smaller than the statistical scatter of one realisation. Refining the grid from 240³ to 360³ changes k_z by
+          +0.12 %.</p>
+        <div class="flow">
+          <figure class="anim"><img src="assets/heat_flux.gif" width="560" height="560" loading="lazy"
+               alt="Heat flux inside the cured compound, a cut plane travelling through the RVE">
+            <figcaption>Heat flux magnitude for heat driven along z; a cut plane travels through the RVE.</figcaption></figure>
+          <div>
+        <table class="kv">
+          <tr><th>Direction</th><th>Random packing</th><th>After shear flow</th><th>Change</th></tr>
+          <tr><td>x (flow)</td><td>0.573</td><td>0.573</td><td>0.0 %</td></tr>
+          <tr><td>y (vorticity)</td><td>0.570</td><td>0.579</td><td>+1.6 %</td></tr>
+          <tr><td>z (gradient, through the gap)</td><td>0.569</td><td>0.573</td><td>+0.7 %</td></tr>
+        </table>
+            <p class="note">W/m·K. A 1 mm layer has an area-specific resistance of 1745 mm²K/W; the thermal diffusivity is
+              0.386 mm²/s.</p>
+          </div>
+        </div>
+        <figure class="shot plots"><img src="assets/muf_heat.webp" width="2400" height="990" loading="lazy"
+             alt="Thermal conductivity per direction against models and bounds"></figure>
+      </div>
+
+      <div class="ex">
+        <h3>Thermal expansion and stiffness</h3>
+        <p>FANS solves six unit strains and a uniform temperature change. The volumetric mean CTE, 18.4 ppm/K, lies below the
+          Kerner estimate for separated spheres (22.6 ppm/K), since near-contacting particles restrain the resin; the Hill
+          modulus, 13.3 GPa (ν 0.26), lies within the Hashin–Shtrikman bounds (9.4–30.2 GPa). Fewer close pairs lie along the
+          flow direction x, where E is lowest and α highest; the difference (up to 5 %) is comparable with the scatter of one
+          realisation. For a temperature rise of 100 K with the RVE held at its size, the von Mises stress concentrates in the
+          fine filler and at near contacts (mean 15 MPa, 99th percentile 68 MPa in the 3 µm silica).</p>
+        <figure class="shot plots"><img src="assets/muf_mechanics.webp" width="2400" height="990" loading="lazy"
+             alt="Thermal stress, thermal expansion and Young's modulus per direction"></figure>
+        <table class="kv">
+          <tr><th>Direction</th><th>α (ppm/K)</th><th>E (GPa)</th></tr>
+          <tr><td>x (flow)</td><td>18.7</td><td>13.4</td></tr>
+          <tr><td>y (vorticity)</td><td>17.8</td><td>13.7</td></tr>
+          <tr><td>z (gradient)</td><td>18.5</td><td>13.8</td></tr>
+        </table>
+      </div>
+
+      <div class="ex">
+        <h3>Permittivity and dielectric loss</h3>
+        <p>A quasi-static complex conduction solution gives Dk 3.845 in all three directions. The permittivities of silica (3.8)
+          and epoxy (3.9) differ by 2.6 %, so that the Hashin–Shtrikman bounds coincide and the local field departs from the
+          applied field by at most 2.9 %. The dissipation factor, 0.0068, equals the volume-weighted mean of the phases: fused
+          silica leaves Dk unchanged and lowers Df in proportion to the resin it replaces.</p>
+        <figure class="shot plots"><img src="assets/muf_dielectric.webp" width="2400" height="990" loading="lazy"
+             alt="Local electric field, dielectric constant and dissipation factor"></figure>
+      </div>
+
+      <div class="ex">
+        <h3>Moisture uptake and swelling</h3>
+        <p>Diffusion is solved on the water activity, which is continuous across the phase boundaries; the silica does not
+          absorb water. The effective diffusivity is 0.67 times that of the resin, 15 % below the Maxwell estimate for
+          impermeable spheres (0.78), because the diffusion paths wind between closely spaced particles. The silica restrains
+          the hygroscopic swelling to 0.23 % at saturation.</p>
+        <figure class="shot plots"><img src="assets/muf_moisture.webp" width="2400" height="990" loading="lazy"
+             alt="Water activity, uptake curve of a 1 mm part and diffusivity per direction"></figure>
+        <table class="kv">
+          <tr><th>Quantity</th><th>Cured compound</th><th>Epoxy</th></tr>
+          <tr><td>Saturated uptake</td><td>0.77 wt%</td><td>2.5 wt%</td></tr>
+          <tr><td>Diffusivity D_x / D_y / D_z (10⁻¹² m²/s)</td><td>2.00 / 2.04 / 1.99</td><td>3.0</td></tr>
+          <tr><td>1 mm part: 50 % / 95 % of saturation</td><td>6.9 h / 39 h</td><td>4.6 h / 26 h</td></tr>
+          <tr><td>Swelling strain at saturation</td><td>0.23 %</td><td>0.75 %</td></tr>
+        </table>
       </div>
     </div>
   </section>
@@ -268,8 +367,8 @@
   <section id="workspace">
     <div class="wrap">
       <h2>The workspace</h2>
-      <p class="sub">A ribbon that follows the order of a study, the inputs on the left, the 3D view, Result Viewer or report in the
-        centre, and what is drawn on the right.</p>
+      <p class="sub">The ribbon follows the order of a study. The command panel on the left holds the inputs, the centre shows the 3D
+        view, the Result Viewer or the report, and the inspector on the right controls the display.</p>
       <figure class="shot"><img src="assets/screenshot.webp" width="2000" height="1167" loading="lazy"
            alt="The MPSim workspace showing the heat flux on the particle surfaces of an AlN thermal interface material"></figure>
     </div>
@@ -278,8 +377,8 @@
   <section id="verification">
     <div class="wrap">
       <h2>Verification</h2>
-      <p class="sub">The engine is checked against problems whose answers are known, and every run reports its own checks —
-        RVE size, resolution, particle count, convergence and rigorous bounds — as passed, warning or failed, with the reason.</p>
+      <p class="sub">The engine is verified against problems with known solutions. Every run also reports its own checks (RVE size,
+        resolution, particle count, convergence and rigorous bounds) as passed, warning or failed, together with the reason.</p>
       <div class="stats">
         <div class="stat"><b>64</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
@@ -323,7 +422,7 @@
       <div class="two">
         <div class="card"><h3>PC without internet</h3>
           <p>Download <code>MPSim-…-offline-win64.zip</code> from the
-          <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest">latest release</a>. It carries the official Python
+          <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest">latest release</a>. It contains the official Python
           runtime, every wheel including NASA PuMA, and openEMS. Unzip to a short path such as <code>C:\MPSim</code>, run
           <code>1_INSTALL_OFFLINE.bat</code>, then <code>2_RUN_LOCAL.bat</code>.</p></div>
         <div class="card"><h3>PC with internet and conda</h3>
@@ -335,14 +434,14 @@ cd C:\MPSim
       <p class="note" style="margin-top:14px">User guides, 180 pages in English and 168 in Korean:
         <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">English (PDF)</a> ·
         <a href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf">Korean (PDF)</a>.
-        Every simulation chapter explains how the property is measured, how MPSim computes it and how to read the results.</p>
+        Each simulation chapter describes how the property is measured, how MPSim computes it and how the results are read.</p>
     </div>
   </section>
 
   <section id="cite">
     <div class="wrap">
       <h2>Cite</h2>
-      <p class="sub">If you use MPSim in published work, please cite it together with the solvers that produced the results
+      <p class="sub">Published work that uses MPSim should cite the software together with the solvers that produced the results
         (listed in the README).</p>
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
