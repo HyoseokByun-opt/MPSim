@@ -159,8 +159,9 @@
   };
 
   /* probability map (a joint posterior): {x:[nx], y:[ny], p:[ny][nx] in 0..1,
-     xlog, ylog, xlabel, ylabel, marks:[{x, y, label, color}]}. One hue from
-     the surface colour to dark blue: more probable is darker. */
+     xlog, ylog, xlabel, ylabel, marks:[{x, y, label, color}]}. Coloured on the
+     jet scale from improbable (blue) to most probable (dark red); cells below
+     0.3 % of the peak stay blank. */
   C.heat = function (canvas, o) {
     const { g, w, h } = setup(canvas);
     const box = { L: 66, R: 16, T: 26, B: 40 };
@@ -169,12 +170,11 @@
     const tx = (v) => (o.xlog ? Math.log10(v) : v), ty = (v) => (o.ylog ? Math.log10(v) : v);
     const x0 = tx(o.x[0]), x1 = tx(o.x[nx - 1]), y0 = ty(o.y[0]), y1 = ty(o.y[ny - 1]);
     const pw = w - box.L - box.R, ph = h - box.T - box.B;
-    const lo = [246, 248, 250], hi = [8, 48, 120];
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       const v = o.p[j][i];
       if (!(v > 0.003)) continue;
       const t = Math.pow(Math.min(1, v), 0.6);
-      g.fillStyle = `rgb(${lo.map((a, k) => Math.round(a + (hi[k] - a) * t)).join(",")})`;
+      g.fillStyle = C.ramp(t);
       // cell edges halfway between grid points
       const xa = i === 0 ? x0 : (tx(o.x[i - 1]) + tx(o.x[i])) / 2, xb = i === nx - 1 ? x1 : (tx(o.x[i]) + tx(o.x[i + 1])) / 2;
       const ya = j === 0 ? y0 : (ty(o.y[j - 1]) + ty(o.y[j])) / 2, yb = j === ny - 1 ? y1 : (ty(o.y[j]) + ty(o.y[j + 1])) / 2;
@@ -304,16 +304,16 @@
   };
 
   /* bubble scatter: any quantity on x, y, colour and size, the way a design
-     exploration tool lets a study be interrogated. Low values run light blue,
-     the median grey, high values dark red, which reads the same way in print.
+     exploration tool lets a study be interrogated. The colour runs on the jet
+     scale of the field views - dark blue (low) through cyan, yellow and red to
+     dark red (high).
      {points:[{x,y,c,s,label}], xlabel, ylabel, clabel, slabel} */
-  C.ramp = function (t) {
+  C.jet = function (t) {
     t = Math.max(0, Math.min(1, t));
-    const stops = [[0.04, 0.42, 0.72], [0.62, 0.66, 0.70], [0.70, 0.11, 0.11]];
-    const k = t < 0.5 ? 0 : 1, f = t < 0.5 ? t / 0.5 : (t - 0.5) / 0.5;
-    const a = stops[k], b = stops[k + 1];
-    return `rgb(${a.map((v, i) => Math.round(255 * (v + (b[i] - v) * f))).join(",")})`;
+    const ch = (c) => Math.round(255 * Math.max(0, Math.min(1, 1.5 - Math.abs(4 * t - c))));
+    return [ch(3), ch(2), ch(1)];
   };
+  C.ramp = function (t) { return `rgb(${C.jet(t).join(",")})`; };
   C.bubble = function (canvas, o) {
     const { g, w, h } = setup(canvas);
     const hasC = (o.points || []).some((p) => isFinite(p.c));

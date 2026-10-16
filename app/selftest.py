@@ -1880,6 +1880,101 @@ def t_pipeline_porous():
                 f"{P['pore_network']['n_pores']} pores, {s['elapsed_s']:.0f} s")
 
 
+@check("Size distributions: a measured table gives back its number distribution, bounds cut log-normal and normal")
+def t_psd():
+    from mpsim import geometry as G
+    rng = np.random.default_rng(3)
+    # a number distribution given by channel: the drawn sizes must fall in the
+    # channels in the proportions given
+    d = np.array([2.0, 4.0, 8.0, 16.0, 32.0])
+    v = np.array([10.0, 30.0, 40.0, 20.0, 0.0])
+    edges, pn, _ = G.psd_bins(d, v, "differential", "number")
+    mean = G.table_moments(edges, pn)
+    dist = {"type": "table", "edges": list(edges / mean), "p": list(pn)}
+    sz = G.sample_scales(200000, dist, rng) * mean
+    got = np.histogram(sz, bins=edges)[0] / len(sz)
+    expect(np.max(np.abs(got - pn / pn.sum())) < 0.01, f"channel shares {np.round(got, 3)} against {np.round(pn / pn.sum(), 3)}")
+    out = []
+    for kind in ("lognormal", "normal"):
+        dd = {"type": kind, "cv": 0.4, "lo": 0.7, "hi": 1.5}
+        s_ = G.sample_scales(100000, dd, rng)
+        expect(s_.min() >= 0.7 - 1e-12 and s_.max() <= 1.5 + 1e-12, f"{kind}: {s_.min():.4f}..{s_.max():.4f} outside the bounds")
+        lo, hi = G.scale_bounds(dd)
+        expect(abs(lo - 0.7) < 1e-9 and abs(hi - 1.5) < 1e-9, f"{kind}: bounds {lo}, {hi}")
+        out.append(f"{kind} {s_.min():.3f}..{s_.max():.3f}")
+    # a normal distribution without bounds: mean 1, cut at +-2 sigma (std x 0.88)
+    s_ = G.sample_scales(200000, {"type": "normal", "cv": 0.2}, rng)
+    expect(abs(s_.mean() - 1) < 0.003 and abs(s_.std() / 0.2 - 0.8796) < 0.01, f"normal mean {s_.mean():.4f} std {s_.std():.4f}")
+    return f"channel shares within 1 %; bounded draws {', '.join(out)}; normal ±2σ std ratio {s_.std() / 0.2:.4f} (0.8796)"
+
+
+@check("Uneven dispersion: a region holds every particle, a gradient and clusters reach the loading asked", quick=False)
+def t_dispersion():
+    from mpsim import generate as GEN
+    ph = [dict(name="s", shape="sphere", size_um={"d": 8.0}, dist={"type": "mono"}, vf=0.25,
+               orientation={"mode": "iso"}, overlap=False, gap_frac=0.0)]
+    lab, info = GEN.generate(60, 1.0, ph, seed=2, log=lambda *a: None,
+                             dispersion={"mode": "region", "axis": "y", "from": 0.2, "to": 0.7})
+    d = info["dispersion"]
+    c = info["particles"]["centers"][:, 1]
+    expect(d["share_in_region"] > 0.999, f"{d['share_in_region']} of the particles in the region")
+    expect(c.min() >= 12.0 + 4.0 - 1e-6 and c.max() <= 42.0 - 4.0 + 1e-6, f"centres along y {c.min()}..{c.max()}")
+    lab, info = GEN.generate(60, 1.0, ph, seed=2, log=lambda *a: None,
+                             dispersion={"mode": "gradient", "axis": "z", "ratio": 3.0})
+    r = info["dispersion"]["ratio"]
+    expect(2.0 < r < 4.0, f"gradient ratio {r:.3f} (asked 3)")
+    lab, info = GEN.generate(60, 1.0, ph, seed=2, log=lambda *a: None,
+                             dispersion={"mode": "clusters", "n_clusters": 2, "cluster_vol": 0.3, "share": 0.5})
+    sh = info["dispersion"]["share_realised"]
+    expect(0.4 < sh < 0.6, f"cluster share {sh:.3f} (asked 0.5)")
+    return f"region exact, gradient {r:.2f} (asked 3), clusters {100 * sh:.1f} % (asked 50)"
+
+
+@check("Mechanical test: modulus, Poisson's ratio and forces against closed forms; the fields of a laminate")
+def t_mechtest():
+    from mpsim import mechtest as MT
+    from mpsim.solvers import fans as FA
+    from mpsim.solvers.elastic import lame
+    E, nu = 3.0, 0.35
+    lam, mu = lame(np.array([E]), np.array([nu]))
+    C = FA.iso_C(float(lam[0]), float(mu[0]))
+    st = MT.macro_state(C, {"axis": "x", "mode": "tension", "lateral": "free", "control": "force", "value": 50.0,
+                            "area_mm2": 5.0, "length_mm": 20.0})
+    expect(abs(st["modulus_GPa"] - E) < 1e-9 and abs(st["poisson"]["xy"] - nu) < 1e-9, f"E {st['modulus_GPa']}, ν {st['poisson']}")
+    expect(abs(st["stress_MPa"] - 10.0) < 1e-9 and abs(st["displacement_um"] - 10.0 / 3000.0 * 20e3) < 1e-6,
+           f"{st['stress_MPa']} MPa, {st['displacement_um']} µm")
+    cf = MT.macro_state(C, {"axis": "z", "mode": "compression", "lateral": "confined", "control": "strain", "value": 1.0,
+                            "area_mm2": 1.0, "length_mm": 1.0})
+    m_c = E * (1 - nu) / ((1 + nu) * (1 - 2 * nu))
+    expect(abs(cf["modulus_GPa"] - m_c) < 1e-9 and abs(cf["lateral_stress_MPa"]["x"] - (-0.01 * lam[0] * 1e3)) < 1e-6,
+           f"constrained modulus {cf['modulus_GPa']} vs {m_c}, lateral {cf['lateral_stress_MPa']}")
+    # a laminate loaded across its layers under uniaxial stress: the stress is
+    # the applied one in both layers (series)
+    lab = np.zeros((8, 8, 16), np.int32)
+    lab[:, :, 8:] = 1
+    Es, nus = [3.0, 70.0], [0.35, 0.22]
+    C2 = FA.homogenize(lab, Es, nus, [0.0, 0.0], tol=1e-8, loads=["xx", "yy", "zz", "yz", "xz", "xy"])["C"]
+    st2 = MT.macro_state(C2, {"axis": "z", "mode": "compression", "lateral": "free", "control": "pressure",
+                              "value": 10.0, "area_mm2": 1.0, "length_mm": 1.0})
+    sol = FA.FANS(lab, Es, nus)
+    _, info, s = sol.solve(np.asarray(st2["E_voigt"]), 0.0, 1e-9, 2000, keep_stress=True)
+    szz = s[2] * 1e3
+    expect(np.max(np.abs(szz + 10.0)) < 1e-3, f"σzz {szz.min():.5f}..{szz.max():.5f} MPa, not −10 everywhere")
+    return (f"E, ν exact; constrained modulus {cf['modulus_GPa']:.4f} GPa; laminate σzz −10 MPa in both layers "
+            f"({info['iterations']} iterations)")
+
+
+@check("Irregular grains: variants 0 gives every grain a shape of its own", quick=False)
+def t_unique_grains():
+    from mpsim import generate as GEN
+    ph = [dict(name="g", shape="polyhedron", size_um={"d": 10.0, "poly": "irregular", "n_vertices": 12, "variants": 0},
+               dist={"type": "mono"}, vf=0.15, orientation={"mode": "iso", "spread_deg": 0}, overlap=False, gap_frac=0.0)]
+    lab, info = GEN.generate(48, 1.0, ph, seed=3, log=lambda *a: None)
+    ids = np.asarray(info["particles"]["P"])[:, 1].astype(int)
+    expect(len(set(ids.tolist())) == len(ids), f"{len(ids)} grains share {len(set(ids.tolist()))} shapes")
+    return f"{len(ids)} grains, {len(set(ids.tolist()))} distinct shapes"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")

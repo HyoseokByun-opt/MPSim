@@ -512,6 +512,8 @@ def post_checks(plan_, gen_info, quality="standard"):
                        "status": "pass" if err <= q["vf_tol"] else ("warn" if err <= 3 * q["vf_tol"] else "fail"),
                        "note": f"target {100*tgt:.2f} % → voxels {100*p['vf_voxel']:.2f} %"
                                + (" · packing limit reached (jammed)" if p.get("jammed") else "")})
+        if gen_info.get("dispersion"):
+            continue                     # uneven on purpose: the dispersion check below instead
         cov = p.get("octant_cov", 0.0)
         n = max(p.get("n_particles", 1), 1)
         expected = 1.0 / math.sqrt(max(n / 8.0, 1.0))
@@ -519,6 +521,38 @@ def post_checks(plan_, gen_info, quality="standard"):
                        "value": cov, "target": max(0.15, 2.0 * expected * math.sqrt(max(1 - tgt, 0.05))),
                        "unit": "", "status": "pass" if cov <= max(0.15, 2.0 * expected) else "warn",
                        "note": "Coefficient of variation of the volume fraction over the eight octants of the RVE"})
+    dsp = gen_info.get("dispersion")
+    if dsp:
+        if dsp["mode"] == "clusters":
+            got, want = dsp["share_realised"], dsp["share"]
+            err = abs(got - want)
+            checks.append({"id": "dispersion", "group": "Generated structure",
+                           "label": "Share of the particle volume inside the clusters",
+                           "value": got, "target": want, "unit": "", "status": "pass" if err <= 0.05 else "warn",
+                           "note": f"asked {100 * want:.0f} %, realised {100 * got:.1f} % (particles whose centres "
+                                   f"lie in the clusters, by volume). By voxels, {100 * dsp['vf_in']:.1f} vol% inside "
+                                   f"the clusters (asked {100 * dsp['vf_in_target']:.1f}) and {100 * dsp['vf_out']:.1f} "
+                                   f"vol% outside (asked {100 * dsp['vf_out_target']:.1f}); particles at the edge of a "
+                                   "cluster reach out of it."
+                                   + (" Below the share asked, the clusters filled up: the loading asked inside them "
+                                      "is close to what particles can pack" if got < want - 0.05 else "")})
+        elif dsp["mode"] == "gradient":
+            got, want = dsp.get("ratio") or 0.0, dsp.get("ratio_target") or 1.0
+            # the log of the ratio within 25 %: a profile of a few particles
+            # per slice is noisy, and the densest end saturates near packing
+            ok = abs(math.log(max(got, 1e-6) / want)) <= 0.25 * max(abs(math.log(want)), 0.2)
+            checks.append({"id": "dispersion", "group": "Generated structure",
+                           "label": f"Loading ratio along {dsp['axis']} (end / start, straight-line fit)",
+                           "value": got, "target": want, "unit": "", "status": "pass" if ok else "warn",
+                           "note": f"asked {want:.3g}, realised {got:.3g}; the loading profile over the box is shown "
+                                   "with the structure in the results"})
+        else:
+            checks.append({"id": "dispersion", "group": "Generated structure",
+                           "label": "Particle volume inside the region",
+                           "value": dsp.get("share_in_region", 1.0), "target": 1.0, "unit": "",
+                           "status": "pass" if dsp.get("share_in_region", 1.0) >= 0.999 else "warn",
+                           "note": f"{100 * dsp.get('vf_in_region', 0.0):.1f} vol% inside the region, matrix "
+                                   "elsewhere"})
     if gen_info.get("contacts_mode") == "separate":
         checks.append({"id": "contacts", "group": "Generated structure", "label": "Particle contacts separated by a matrix voxel",
                        "value": gen_info.get("contacts_removed", 0), "target": 0, "unit": "", "status": "pass",

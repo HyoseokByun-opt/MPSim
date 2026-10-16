@@ -421,7 +421,7 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
         gen_phases = PL._generator_phases(spec)
         want_cf = PL.wants_contact_faces(spec)
         key = PL.structure_key(gen_phases, plan, spec["options"]["contacts"], spec["rve"]["seed"], want_cf,
-                               sheared=PL.shear_key(spec))
+                               sheared=PL.shear_key(spec), dispersion=spec["rve"].get("dispersion"))
         got = PL.load_structure(reuse_dirs, key)
         if got is not None:
             gen_labels, ginfo, _ = got
@@ -430,7 +430,7 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
             gen_labels, ginfo = GEN.generate(plan["N"], plan["h_um"], gen_phases, seed=spec["rve"]["seed"],
                                              log=log, should_stop=should_stop, contacts=spec["options"]["contacts"],
                                              want_contact_faces=want_cf, nz=int(plan["Nz"]) if film else None,
-                                             skin=plan.get("skin"),
+                                             skin=plan.get("skin"), dispersion=spec["rve"].get("dispersion"),
                                              shear=PL.shear_packing(spec, log, lambda *a, **k: None,
                                                                     PL.Progress(lambda *a, **k: None, 1.0),
                                                                     should_stop))

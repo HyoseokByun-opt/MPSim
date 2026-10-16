@@ -21,6 +21,7 @@ import io
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import time
@@ -163,8 +164,13 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
     os.makedirs(app.config["WORKSPACE"], exist_ok=True)
     app.config["SECRET_KEY"] = os.environ.get("MPSIM_SECRET") or _persistent_secret(app.config["WORKSPACE"])
     app.config["TOKEN"] = token
+    # the largest grid edge: the Machine setting kept in settings.json (500 by
+    # default), unless the command line gave one for this session
     lim = dict(R.DEFAULT_LIMITS)
-    lim.update(limits or {})
+    saved = load_settings().get("max_voxels")
+    if isinstance(saved, (int, float)) and saved >= 0:
+        lim.update(N_max=int(saved), N_max_elastic=int(saved), N_max_flow=int(saved))
+    lim.update({k: v for k, v in (limits or {}).items() if v is not None})
     app.config["LIMITS"] = lim
     app.queue = JobQueue(concurrency=concurrency)
     app.doe = DOEStore(app.config["WORKSPACE"])
@@ -544,12 +550,29 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
         return jsonify({"ok": True, "plan": plan, "composition": spec.get("composition"),
                         "labels": [{"name": t["name"], "kind": t["kind"]} for t in spec["labels"]],
-                        "phases": [{"name": p["name"], "vf": p["vf"]} for p in spec["phases"]]})
+                        "phases": [{"name": p["name"], "vf": p["vf"], "d_um": p["size_um"].get("d"),
+                                    "dist": _dist_summary(p)} for p in spec["phases"]]})
+
+    def _dist_summary(p):
+        """What a phase's size distribution draws, for the preview in the
+        Structure tab (number mean, volume D10/D50/D90, densities)."""
+        if p["shape"] == "network" or (p.get("dist") or {}).get("type") not in ("lognormal", "normal", "table"):
+            return None
+        from mpsim import geometry as G
+        try:
+            return G.dist_summary(p["size_um"]["d"], p["dist"])
+        except Exception:                                    # noqa: BLE001
+            return None
 
     # --------------------------------------------------------------- jobs
+    def _settings():
+        lim = app.config["LIMITS"]
+        return dict(app.queue.settings(), max_voxels=lim.get("N_max"), max_voxels_elastic=lim.get("N_max_elastic"),
+                    max_voxels_flow=lim.get("N_max_flow"))
+
     @app.get("/api/settings")
     def api_settings_get():
-        return jsonify(app.queue.settings())
+        return jsonify(_settings())
 
     @app.post("/api/settings")
     def api_settings_set():
@@ -561,9 +584,17 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         than fixed at start-up.
         """
         b = request.get_json(force=True, silent=True) or {}
-        return jsonify(app.queue.configure(concurrency=b.get("concurrency"),
-                                           threads=b.get("threads"),
-                                           mem_budget_gb=b.get("mem_budget_gb")))
+        app.queue.configure(concurrency=b.get("concurrency"), threads=b.get("threads"),
+                            mem_budget_gb=b.get("mem_budget_gb"))
+        if "max_voxels" in b:
+            # the largest grid edge for every solver; empty returns to 500, 0 = no limit
+            v = b.get("max_voxels")
+            n = R.DEFAULT_LIMITS["N_max"] if v is None or (isinstance(v, (int, float)) and v < 0) else int(v)
+            app.config["LIMITS"].update(N_max=n, N_max_elastic=n, N_max_flow=n)
+            st = load_settings()
+            st["max_voxels"] = n
+            save_settings(st)
+        return jsonify(_settings())
 
     def find_reuse(spec, prefer=None):
         """The finished run of this case whose structure a new submission can
@@ -584,7 +615,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                           app.config["LIMITS"])
             plan["skin"] = P.film_skin(spec, plan) if plan.get("film") else None
             key = P.structure_key(P._generator_phases(spec), plan, spec["options"]["contacts"],
-                                  spec["rve"]["seed"], P.wants_contact_faces(spec), sheared=P.shear_key(spec))
+                                  spec["rve"]["seed"], P.wants_contact_faces(spec), sheared=P.shear_key(spec),
+                                  dispersion=spec["rve"].get("dispersion"))
         except Exception:                                            # noqa: BLE001
             return None, False
         case = app.config.get("CASE") or ""
@@ -1054,10 +1086,16 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         s = app.doe.get(sid)
         if s is None:
             abort(404, "DOE study not found")
+        # the table as it stands, also while the study runs: the cases done so
+        # far with their values, the others with their state. The file name
+        # carries the time, so that snapshots taken during a study do not
+        # overwrite each other; send_file encodes a name outside Latin-1 (a
+        # study named after Al2O3 with subscripts closed the connection before)
         data = app.doe.csv(s, app.queue).encode("utf-8-sig")
-        name = (s["name"] or sid).replace("/", "_")[:60]
-        return Response(data, mimetype="text/csv",
-                        headers={"Content-Disposition": f'attachment; filename="{name}.csv"'})
+        name = re.sub(r'[\\/:*?"<>|]+', "_", (s["name"] or sid))[:60].strip() or sid
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        return send_file(io.BytesIO(data), mimetype="text/csv", as_attachment=True,
+                         download_name=f"{name}_{stamp}.csv", max_age=0)
 
     @app.post("/api/doe/<sid>/optimize")
     def api_doe_optimize(sid):

@@ -147,7 +147,10 @@ def _place(owner, phase_of, overlap_of, net_of, h, code, cx, cy, cz, R, P, plane
 @njit(cache=True)
 def _rsa(owner, phase_of, overlap_of, net_of, sep1_of, h, L, codes, Rs, Ps, planes, nfaces,
          gap_arr, phase_arr, target, count, n_placed, jammed, centers, placed_id,
-         pid, max_attempts, jam_limit, seed, buf, zwall=False):
+         pid, max_attempts, jam_limit, seed, buf, zwall=False, rho=None, rho_max=0.0):
+    """rho, rho_max: a relative particle density on a grid over the box (an
+    uneven dispersion); a trial position is kept with probability
+    rho / rho_max. rho_max = 0: uniform."""
     np.random.seed(seed)
     fails = np.zeros(target.shape[0], np.int64)
     conflict = np.zeros(1, np.int64)
@@ -160,6 +163,11 @@ def _rsa(owner, phase_of, overlap_of, net_of, sep1_of, h, L, codes, Rs, Ps, plan
             cx = np.random.random() * L
             cy = np.random.random() * L
             cz = np.random.random() * (owner.shape[2] * h)
+            if rho_max > 0.0:
+                while np.random.random() * rho_max > _rho_at(rho, cx, cy, cz, L, owner.shape[2] * h):
+                    cx = np.random.random() * L
+                    cy = np.random.random() * L
+                    cz = np.random.random() * (owner.shape[2] * h)
             phase_of[pid] = ph
             w = _place(owner, phase_of, overlap_of, net_of, h, codes[m], cx, cy, cz, Rs[m], Ps[m],
                        planes, nfaces, gap_arr[m], 0.0, ph, pid, sep1_of[ph] == 1, True, conflict, buf,
@@ -182,6 +190,241 @@ def _rsa(owner, phase_of, overlap_of, net_of, sep1_of, h, L, codes, Rs, Ps, plan
             if fails[ph] >= jam_limit:
                 jammed[ph] = True
     return pid
+
+
+@njit(cache=True)
+def _rho_at(rho, x, y, z, L, Lz):
+    """The relative density of the grid cell holding (x, y, z)."""
+    nx, ny, nz = rho.shape
+    i = int(x / L * nx) % nx
+    j = int(y / L * ny) % ny
+    k = int(z / Lz * nz) % nz
+    return rho[i, j, k]
+
+
+_RHO1 = np.ones((1, 1, 1))
+
+
+def _rho_args(rho):
+    """The density grid and its maximum for the kernels (a dummy and 0 when even)."""
+    if rho is None:
+        return _RHO1, 0.0
+    return np.ascontiguousarray(rho, np.float64), float(rho.max())
+
+
+def density_weight(rho, phi, r=0.0, box=None, film=False):
+    """The Monte-Carlo weight exp(-U) that holds hard spheres at the relative
+    density rho (mean 1) when their excluded volume fills the fraction phi of
+    the box on average. Weighting moves by rho alone loses to crowding: the
+    hard-sphere chemical potential at 47 vol% exceeds that at 13 vol% by about
+    13 kT, a weight of 4 only by ln 4, and a 4x gradient at 30 vol% came out
+    1.15x. U balances it in the local-density approximation, with the
+    Carnahan-Starling excess chemical potential
+    mu = (8 f - 9 f^2 + 3 f^3) / (1 - f)^3 of the local loading f = phi rho:
+    the target profile is then what the moves hold. The crowding a sphere
+    feels is that of its surroundings: the loading is averaged over the
+    sphere radius r (box: the box edges; a film's z is not periodic). Taken
+    point by point, the sharp edge of a cluster drew 62 % of the particles into
+    clusters asked to hold 50 %, and a 3x gradient spanning seven diameters
+    came out 5.9x."""
+    rho = np.asarray(rho, float)
+    lo = rho
+    if r > 0.0 and box is not None:
+        from scipy.ndimage import gaussian_filter
+        sig = [r / (float(b) / n) for b, n in zip(box, rho.shape)]
+        lo = gaussian_filter(rho, sig, mode=("wrap", "wrap", "nearest" if film else "wrap"))
+    f = np.clip(phi * lo, 0.0, 0.6)
+    mu = (8.0 * f - 9.0 * f * f + 3.0 * f ** 3) / (1.0 - f) ** 3
+    return rho * np.exp(mu - mu.max())
+
+
+def dispersion_field(disp, L, Lz=None, film=False, ng=48, seed=0):
+    """The relative particle density (mean 1) of an uneven dispersion on an
+    ng-cell grid over the box (L x L x Lz; a film's z is not periodic):
+      gradient - linear along `axis`, `ratio` times as dense at the end of the
+                 axis as at its start (a periodic box repeats the profile);
+      clusters - `n_clusters` spheres together taking `cluster_vol` of the box
+                 hold the share `share` of the particles, the rest is spread
+                 evenly (share 0: particle-free pockets).
+    Returns (rho, info) or (None, None) for an even dispersion or a region
+    (built as a film, see _generate_region)."""
+    mode = (disp or {}).get("mode", "uniform")
+    if mode not in ("gradient", "clusters"):
+        return None, None
+    Lz = float(Lz or L)
+    c = (np.arange(ng) + 0.5) / ng
+    if mode == "gradient":
+        r = float(disp.get("ratio", 3.0))
+        ax = "xyz".index(disp.get("axis", "z"))
+        prof = 1.0 + (r - 1.0) * c
+        prof /= prof.mean()
+        shp = [1, 1, 1]
+        shp[ax] = ng
+        rho = np.broadcast_to(prof.reshape(shp), (ng, ng, ng)).copy()
+        return rho, {"mode": mode, "axis": disp.get("axis", "z"), "ratio": r, "peak": float(prof.max())}
+    n_c = int(disp.get("n_clusters", 4))
+    f_req = float(disp.get("cluster_vol", 0.3))
+    share = float(disp.get("share", 0.45))
+    ext = np.array([L, L, Lz])
+    rc = (3.0 * f_req * L * L * Lz / (4.0 * math.pi * n_c)) ** (1.0 / 3.0)
+    rng = np.random.default_rng(seed + 7919)
+
+    def dist(a, b):
+        d = np.abs(a - b)
+        d[..., :2] = np.minimum(d[..., :2], ext[:2] - d[..., :2])
+        if not film:
+            d[..., 2] = np.minimum(d[..., 2], Lz - d[..., 2])
+        return np.sqrt((d * d).sum(-1))
+
+    centres = []
+    for _ in range(n_c):
+        # the candidate farthest from the clusters placed so far (of 64),
+        # so that the clusters stay apart where the box allows
+        cand = rng.random((64, 3)) * ext
+        if film:
+            cand[:, 2] = np.clip(cand[:, 2], min(rc, 0.5 * Lz), max(Lz - rc, 0.5 * Lz))
+        if centres:
+            far = np.min([dist(cand, o) for o in centres], axis=0)
+            centres.append(cand[int(np.argmax(far))])
+        else:
+            centres.append(cand[0])
+    X, Y, Z = np.meshgrid(c * L, c * L, c * Lz, indexing="ij")
+    P = np.stack([X, Y, Z], -1)
+    inside = np.zeros((ng, ng, ng), bool)
+    for cc in centres:
+        inside |= dist(P, cc) <= rc
+    f_in = float(inside.mean())
+    if f_in <= 0.0 or f_in >= 1.0:
+        raise ValueError("the clusters must cover part of the box, not none or all of it")
+    rho = np.where(inside, share / f_in, (1.0 - share) / (1.0 - f_in))
+    return rho, {"mode": mode, "n_clusters": n_c, "cluster_d_um": 2.0 * rc, "share": share,
+                 "cluster_vol": f_in, "peak": float(rho.max()),
+                 "centres_um": [[float(v) for v in x] for x in centres], "inside": inside}
+
+
+def dispersion_report(labels, phases, disp, field=None, nb=20, centres=None, vols=None):
+    """What the generator made of an uneven dispersion, from the voxels:
+    the loading profile along the axis (region, gradient) against the one
+    asked for, or the share of the particles inside the clusters (by the
+    volume of the particles whose centres lie in them - the clusters are
+    defined for centres; a particle at the edge of a cluster reaches out of
+    it) and the loading by voxels inside and outside them."""
+    ids = [i + 1 for i, ph in enumerate(phases) if ph["shape"] != G.NETWORK]
+    want = float(sum(float(ph["vf"]) for ph in phases if ph["shape"] != G.NETWORK))
+    pm = np.isin(labels, np.array(ids, labels.dtype)) if ids else np.zeros(labels.shape, bool)
+    out = {"mode": disp["mode"], "vf": float(pm.mean()), "vf_target": want}
+    if disp["mode"] in ("region", "gradient"):
+        ax = "xyz".index(disp.get("axis", "z"))
+        prof = pm.mean(axis=tuple(a for a in range(3) if a != ax))
+        n = len(prof)
+        t = (np.arange(n) + 0.5) / n
+        if disp["mode"] == "region":
+            a, b = float(disp["from"]), float(disp["to"])
+            tgt = np.where((t >= a) & (t < b), want / max(b - a, 1e-9), 0.0)
+        else:
+            r = float(disp["ratio"])
+            tgt = want * (1.0 + (r - 1.0) * t) / (1.0 + 0.5 * (r - 1.0))
+        e = np.linspace(0, n, min(nb, n) + 1).round().astype(int)
+        out.update(axis=disp.get("axis", "z"),
+                   x=[float(t[i:j].mean()) for i, j in zip(e[:-1], e[1:])],
+                   realised=[float(prof[i:j].mean()) for i, j in zip(e[:-1], e[1:])],
+                   target=[float(tgt[i:j].mean()) for i, j in zip(e[:-1], e[1:])])
+        if disp["mode"] == "gradient":
+            # the ratio realised: a straight line through the profile of the
+            # inner 80 % of the box, taken to its ends (at the faces, the
+            # particles of the dense end reach through into the sparse one)
+            inner = (t >= 0.1) & (t <= 0.9)
+            k, c0 = np.polyfit(t[inner], prof[inner], 1) if inner.sum() >= 4 else (0.0, 0.0)
+            out["ratio"] = float((c0 + k) / c0) if c0 > 0 else None
+            out["ratio_target"] = float(disp["ratio"])
+        else:
+            inr = (t >= float(disp["from"])) & (t < float(disp["to"]))
+            out["share_in_region"] = float(prof[inr].sum() / max(prof.sum(), 1e-30))
+            out["vf_in_region"] = float(prof[inr].mean()) if inr.any() else 0.0
+    elif disp["mode"] == "clusters" and field is not None:
+        ins = field["inside"]
+        ng = ins.shape[0]
+        idx = [np.minimum(((np.arange(m) + 0.5) / m * ng).astype(int), ng - 1) for m in labels.shape]
+        full = ins[np.ix_(*idx)]
+        f_in = float(full.mean())
+        tot = float(pm.sum())
+        n_in = float(pm[full].sum())
+        sh = float(field["share"])
+        share = n_in / tot if tot else 0.0
+        if centres is not None and len(centres):
+            box = np.array(labels.shape, float) * float(field["h"])
+            ci = np.minimum((np.mod(centres, box) / box * ng).astype(int), ng - 1)
+            sel = ins[ci[:, 0], ci[:, 1], ci[:, 2]]
+            share = float(np.sum(vols[sel]) / max(np.sum(vols), 1e-30))
+        out.update(n_clusters=field["n_clusters"], cluster_d_um=field["cluster_d_um"],
+                   cluster_vol=f_in, share=sh, share_realised=share, share_voxels=n_in / tot if tot else 0.0,
+                   vf_in=n_in / max(full.sum(), 1), vf_out=(tot - n_in) / max((~full).sum(), 1),
+                   vf_in_target=want * sh / f_in if f_in > 0 else 0.0,
+                   vf_out_target=want * (1.0 - sh) / (1.0 - f_in) if f_in < 1 else 0.0,
+                   centres_um=field["centres_um"])
+    return out
+
+
+def _generate_region(N, h, phases, disp, **kw):
+    """Particles only in a slab of the cube (rve.dispersion mode 'region'):
+    built as a film of the slab's thickness - every particle wholly inside it
+    - with the loading raised so that the cube keeps its volume fractions,
+    padded with matrix and turned so that the slab lies across `axis`."""
+    ax = "xyz".index(disp.get("axis", "z"))
+    k0 = int(round(float(disp["from"]) * N))
+    k1 = min(N, max(int(round(float(disp["to"]) * N)), k0 + 2))
+    k0 = min(k0, k1 - 2)
+    nzs = k1 - k0
+    grow = float(N) / nzs
+    log = kw.get("log") or (lambda *a: None)
+    log(f"  particles only for {disp.get('axis', 'z')} from {k0 * h:.4g} to {k1 * h:.4g} µm ({nzs} of {N} voxel "
+        f"layers, loaded {grow:.3g} x higher there); matrix elsewhere")
+    lab, info = generate(N, h, [dict(ph, vf=float(ph["vf"]) * grow) for ph in phases], nz=nzs, skin=0, **kw)
+    pad = ((0, 0), (0, 0), (k0, N - k1))
+    lab = np.pad(lab, pad)
+    cm = info.get("contact_mask")
+    if cm is not None:
+        cm = np.pad(cm, pad + ((0, 0),) * (cm.ndim - 3))
+    parts = info.get("particles")
+    if parts is not None and len(parts["centers"]):
+        parts["centers"] = parts["centers"] + np.array([0.0, 0.0, k0 * h])
+    if ax != 2:
+        # new axis a = old axis perm[a]: a cyclic turn (a proper rotation)
+        perm = (2, 0, 1) if ax == 0 else (1, 2, 0)
+        lab = np.ascontiguousarray(np.transpose(lab, perm))
+        if cm is not None:
+            cmt = np.transpose(cm, perm + tuple(range(3, cm.ndim)))
+            c2 = np.zeros(cmt.shape, cm.dtype)
+            for a in range(3):
+                c2 |= (((cmt >> perm[a]) & 1) << a).astype(cm.dtype)
+            cm = np.ascontiguousarray(c2)
+        if parts is not None and len(parts["centers"]):
+            Pm = np.eye(3)[list(perm)]
+            parts["centers"] = np.ascontiguousarray(parts["centers"][:, list(perm)])
+            # R's rows are the particle axes in the box frame
+            parts["R"] = np.ascontiguousarray(parts["R"] @ Pm.T)
+            parts["axes"] = parts["R"][:, 2, :] if len(parts["R"]) else np.zeros((0, 3))
+    info["contact_mask"] = cm
+    for pi in info["phases"]:
+        for k in ("vf_target", "vf_voxel"):
+            if k in pi:
+                pi[k] = float(pi[k]) / grow
+    info["nz"], info["film"], info["T_um"] = N, False, N * h
+    info["dispersion"] = dispersion_report(lab, phases, disp)
+    return lab, info
+
+
+def sample_positions(n, rho, L, Lz, rng):
+    """n positions in the box drawn from the relative density rho (rejection)."""
+    out = np.empty((0, 3))
+    rmax = float(rho.max())
+    while len(out) < n:
+        cand = rng.random((2 * (n - len(out)) + 16, 3)) * np.array([L, L, Lz])
+        nx, ny, nz = rho.shape
+        r = rho[(cand[:, 0] / L * nx).astype(int) % nx, (cand[:, 1] / L * ny).astype(int) % ny,
+                (cand[:, 2] / Lz * nz).astype(int) % nz]
+        out = np.concatenate([out, cand[rng.random(len(cand)) * rmax <= r]])
+    return out[:n]
 
 
 @njit(cache=True)
@@ -798,12 +1041,20 @@ def _cell3(x, y, z, cs, nc, csz, ncz):
 
 
 @njit(cache=True, fastmath=True)
-def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0):
+def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0, rho=None, rho_max=0.0, p_jump=0.0):
     """Athermal hard-sphere Metropolis in a periodic box L x L x Lz (Lz = L
-    when 0). Wt > 0: a film, whose spheres must stay within 0 <= z <= Wt."""
+    when 0). Wt > 0: a film, whose spheres must stay within 0 <= z <= Wt.
+    rho, rho_max > 0: an uneven dispersion - a move is accepted with
+    probability min(1, rho(new) / rho(old)), so that the spheres settle into
+    the density profile as far as they fit. p_jump: the share of moves that
+    try a position anywhere in the box (a symmetric proposal, so the same
+    acceptance keeps detailed balance): local moves alone spread a particle
+    only about ten diameters in a few thousand sweeps, too little to build a
+    profile across the box. The returned acceptance is that of local moves."""
     np.random.seed(seed)
     if Lz <= 0.0:
         Lz = L
+    zr = Wt if Wt > 0.0 else Lz
     n = pos.shape[0]
     cs0 = 2.0 * rad.max()
     nc = max(int(L / cs0), 3)
@@ -818,17 +1069,29 @@ def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0):
         head[c] = i
     disp = disp0
     acc_total = 0
+    loc_total = 0
     half = 0.5 * L
     halfz = 0.5 * Lz
     reach = int(math.ceil(cs0 / cs))
     reachz = int(math.ceil(cs0 / csz))
     for s in range(n_sweeps):
         acc = 0
+        n_loc = 0
         for _ in range(n):
             i = np.random.randint(0, n)
-            x = (pos[i, 0] + (np.random.random() - 0.5) * 2.0 * disp) % L
-            y = (pos[i, 1] + (np.random.random() - 0.5) * 2.0 * disp) % L
-            z = pos[i, 2] + (np.random.random() - 0.5) * 2.0 * disp
+            jump = p_jump > 0.0 and np.random.random() < p_jump
+            if jump:
+                x = np.random.random() * L
+                y = np.random.random() * L
+                if Wt > 0.0:
+                    z = rad[i] + np.random.random() * max(Wt - 2.0 * rad[i], 0.0)
+                else:
+                    z = np.random.random() * Lz
+            else:
+                n_loc += 1
+                x = (pos[i, 0] + (np.random.random() - 0.5) * 2.0 * disp) % L
+                y = (pos[i, 1] + (np.random.random() - 0.5) * 2.0 * disp) % L
+                z = pos[i, 2] + (np.random.random() - 0.5) * 2.0 * disp
             if Wt > 0.0:
                 if z - rad[i] < 0.0 or z + rad[i] > Wt:
                     continue
@@ -875,6 +1138,11 @@ def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0):
                             break
             if hit:
                 continue
+            if rho_max > 0.0:
+                r_old = _rho_at(rho, pos[i, 0], pos[i, 1], pos[i, 2], L, zr)
+                r_new = _rho_at(rho, x, y, z, L, zr)
+                if r_new < r_old and np.random.random() * r_old > r_new:
+                    continue
             c_old = _cell3(pos[i, 0], pos[i, 1], pos[i, 2], cs, nc, csz, ncz)
             c_new = _cell3(x, y, z, cs, nc, csz, ncz)
             pos[i, 0] = x
@@ -892,17 +1160,19 @@ def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0):
                         j = nxt[j]
                 nxt[i] = head[c_new]
                 head[c_new] = i
-            acc += 1
+            if not jump:
+                acc += 1
         acc_total += acc
+        loc_total += n_loc
         if s < n_sweeps // 2 and s % 20 == 19:
-            rate = acc / n
+            rate = acc / max(n_loc, 1)
             if rate > 0.40:
                 disp *= 1.08
             elif rate < 0.30:
                 disp *= 0.93
             disp = min(disp, 0.25 * L)
             disp = max(disp, 1e-6 * L)
-    return acc_total / max(1, n_sweeps * n)
+    return acc_total / max(1, loc_total)
 
 
 def _wrap(pos, L):
@@ -1085,7 +1355,7 @@ def force_biased_spheres(L, d_excl, rng, growth=1.03, max_outer=20000,
 
 
 def mc_compress(pos, d_excl, L, scale, rng, max_iter=MAX_COMPRESS_ITER, log=None, should_stop=None, Lz=None,
-                Wt=0.0):
+                Wt=0.0, rho=None, rho_blur=True):
     """Monte-Carlo compression from an overlap-free packing.
 
     Alternate hard-sphere Metropolis sweeps (which spread the free volume
@@ -1097,6 +1367,9 @@ def mc_compress(pos, d_excl, L, scale, rng, max_iter=MAX_COMPRESS_ITER, log=None
     Ends at full size, after 40 rounds without progress or after max_iter
     rounds (of 20 sweeps each) - not on a clock, see clump_pack."""
     Lz = float(L if Lz is None else Lz)
+    # an uneven dispersion: the weight for the loading of each round
+    phi = float(np.sum(math.pi / 6.0 * np.asarray(d_excl, float) ** 3)) / (L * L * (Wt if Wt > 0 else Lz))
+    rho_arr, rho_max = _rho_args(rho)
     if _BUDGET is not None:
         max_iter = min(max_iter, _BUDGET[1])
     t_log = time.time()
@@ -1107,7 +1380,11 @@ def mc_compress(pos, d_excl, L, scale, rng, max_iter=MAX_COMPRESS_ITER, log=None
         if should_stop is not None and should_stop():
             raise InterruptedError
         r = 0.5 * scale * d_excl
-        _mc_sweeps(pos, r, float(L), 20, 0.02 * float(r.min()), int(rng.integers(1 << 30)), Lz, float(Wt))
+        if rho is not None:
+            rho_arr, rho_max = _rho_args(density_weight(rho, phi * scale ** 3, float(np.mean(r)) if rho_blur else 0.0,
+                                                        (L, L, Wt if Wt > 0 else Lz), Wt > 0))
+        _mc_sweeps(pos, r, float(L), 20, 0.02 * float(r.min()), int(rng.integers(1 << 30)), Lz, float(Wt),
+                   rho_arr, rho_max, 0.1 if rho is not None else 0.0)
         box = np.array([L, L, Lz])
         tree = cKDTree(np.mod(pos, box), boxsize=box)
         # every pair that would touch before full size limits the inflation:
@@ -1587,8 +1864,17 @@ def _rotmode(mode, spread):
     return 2 if mode == "xy" else 1
 
 
-def phase_templates(phases, rng):
-    """Nominal (code, P) per phase, plus the shared polyhedron plane table."""
+UNIQUE_GRAINS_MAX = 20000
+
+
+def phase_templates(phases, rng, V=None):
+    """Nominal (code, P) per phase, plus the shared polyhedron plane table.
+
+    Irregular grains come from `variants` random convex shapes that the
+    particles share; variants 0 gives every grain its own shape - as many
+    shapes as the box volume V (µm³) can hold particles of the phase, from
+    the mean volume of the first 16 (at most UNIQUE_GRAINS_MAX; beyond, or
+    without V, shapes are reused)."""
     table = SH.PolyTable()
     nominal = []
     for ph in phases:
@@ -1597,12 +1883,25 @@ def phase_templates(phases, rng):
             continue
         size = ph["size_um"]
         ids = None
+        unique = False
         if ph["shape"] == "polyhedron":
             kind = size.get("poly", "icosahedron")
+            nv = int(size.get("variants", 8))
+            unique = kind == "irregular" and nv == 0
             ids = table.add(kind, n_vertices=int(size.get("n_vertices", 14)), rng=rng,
-                            n_variants=int(size.get("variants", 8)))
+                            n_variants=16 if unique else nv)
+            if unique and V:
+                # how many grains the phase can hold: its volume over the
+                # mean grain volume (circumradius d/2, the size distribution's
+                # mean of s^3), 20 % to spare
+                v_unit = float(np.mean([table.meta[t]["volume"] for t in ids]))
+                s3 = float(np.mean(G.sample_scales(4000, ph.get("dist"), np.random.default_rng(3)) ** 3))
+                n_est = float(ph["vf"]) * V / (v_unit * (0.5 * float(size["d"])) ** 3 * s3)
+                more = min(UNIQUE_GRAINS_MAX, int(1.2 * n_est) + 16) - len(ids)
+                if more > 0:
+                    ids += table.add(kind, n_vertices=int(size.get("n_vertices", 14)), rng=rng, n_variants=more)
         code, P = SH.params(ph["shape"], size, ids)
-        nominal.append({"code": code, "P": P, "poly_ids": ids})
+        nominal.append({"code": code, "P": P, "poly_ids": ids, "unique": unique, "next": 0})
     planes, nfaces = table.arrays()
     return nominal, planes, nfaces, table.meta
 
@@ -1616,8 +1915,31 @@ def _draw(ph, nom, n, rng, poly_meta):
     lin = _linear_slots(nom["code"])
     Ps[:, lin] *= s[:, None]
     if nom["code"] == 6 and nom["poly_ids"] and len(nom["poly_ids"]) > 1:
-        Ps[:, 1] = rng.choice(nom["poly_ids"], n)
+        if nom.get("unique"):
+            # one shape per grain: the shapes in turn (reused only when the
+            # particles drawn outnumber them)
+            ids = np.asarray(nom["poly_ids"])
+            Ps[:, 1] = ids[(nom["next"] + np.arange(n)) % len(ids)]
+            nom["next"] += n
+        else:
+            Ps[:, 1] = rng.choice(nom["poly_ids"], n)
     return Ps, Rs, s
+
+
+def _count_to_volume(vols, target):
+    """How many of the particles drawn (volumes in drawing order) make up the
+    target volume best: the first k, with k the count whose total lies nearest
+    to it. The sizes stay as drawn; the caller corrects the small remainder
+    with a common factor (below half a particle's volume). Rescaling a fixed
+    count instead let a few large particles of a broad distribution shrink
+    every particle - a volume D50 came out 6 % low."""
+    cum = np.cumsum(vols)
+    k = int(np.searchsorted(cum, target))
+    if k >= len(cum):
+        return len(cum)
+    if k > 0 and abs(cum[k - 1] - target) <= abs(cum[k] - target):
+        return k
+    return k + 1
 
 
 def _linear_slots(code):
@@ -1669,7 +1991,7 @@ def rasterize_owner(N, h, info, phases, nz=None, offset_um=0.0):
 
 
 def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart",
-             want_contact_faces=False, nz=None, skin=0, shear=None):
+             want_contact_faces=False, nz=None, skin=0, shear=None, dispersion=None):
     """Build one realisation.
 
     `phases` items: shape, size_um, dist, vf, orientation {mode, spread_deg},
@@ -1687,6 +2009,12 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     resin (pipeline.shear_packing); the spheres are drawn where the flow
     leaves them, kept apart as the packing keeps them.
 
+    dispersion: how evenly the particles fill the box (spec rve.dispersion):
+    None or mode 'uniform' as always; 'region' - particles only in a slab
+    (_generate_region); 'gradient', 'clusters' - a relative density
+    (dispersion_field) that biases the initial positions, the RSA and the
+    Monte-Carlo moves; info['dispersion'] reports what was realised.
+
     skin: voxels of matrix kept at each face of a film. A particle that
     touches a face touches the electrode plate there, through a contact whose
     area is set by the voxel size: on one 40 vol% film, 0.6 % of the face
@@ -1694,13 +2022,18 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     contact vanished (with the excess) on a 1.5x finer grid. The film is
     built inside the skin and padded with matrix, for every packing route.
     """
+    if (dispersion or {}).get("mode", "uniform") == "uniform":
+        dispersion = None
+    if dispersion is not None and dispersion["mode"] == "region" and nz is None:
+        return _generate_region(N, h, phases, dispersion, seed=seed, log=log, should_stop=should_stop,
+                                contacts=contacts, want_contact_faces=want_contact_faces)
     if nz is not None and skin and int(nz) - 2 * int(skin) >= 2:
         ks = int(skin)
         inner = int(nz) - 2 * ks
         grow = float(nz) / inner                       # the fractions refer to the whole film
         lab, info = generate(N, h, [dict(ph, vf=float(ph["vf"]) * grow) for ph in phases], seed=seed,
                              log=log, should_stop=should_stop, contacts=contacts,
-                             want_contact_faces=want_contact_faces, nz=inner, skin=0)
+                             want_contact_faces=want_contact_faces, nz=inner, skin=0, dispersion=dispersion)
         pad = ((0, 0), (0, 0), (ks, ks))
         lab = np.pad(lab, pad)
         if info.get("contact_mask") is not None:
@@ -1725,6 +2058,17 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     rng = np.random.default_rng(seed)
     shape = (N, N, nz)
     nvox = N * N * nz
+    rho, rho_info = (None, None)
+    if dispersion is not None and dispersion["mode"] in ("gradient", "clusters"):
+        rho, rho_info = dispersion_field(dispersion, L, T, film=film, seed=seed)
+        if rho_info["mode"] == "gradient":
+            log(f"  graded dispersion along {rho_info['axis']}: {rho_info['ratio']:.3g} x as many particles at the "
+                f"end of the axis as at its start")
+        else:
+            log(f"  clustered dispersion: {rho_info['n_clusters']} clusters of {rho_info['cluster_d_um']:.4g} µm "
+                f"({100 * rho_info['cluster_vol']:.1f} % of the box) hold {100 * rho_info['share']:.0f} % of the "
+                f"particles")
+    rho_arr, rho_max = _rho_args(rho)
     box = np.array([L, L, T])
     owner = np.zeros(shape, np.int32)
     nph = len(phases)
@@ -1734,7 +2078,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     n_placed = np.zeros(nph + 1, np.int64)
     jammed = np.zeros(nph + 1, np.bool_)
     info = {"route": None, "phases": [dict() for _ in phases], "contacts_mode": contacts}
-    nominal, planes, nfaces, poly_meta = phase_templates(phases, rng)
+    nominal, planes, nfaces, poly_meta = phase_templates(phases, rng, V=V)
     info["poly_meta"] = poly_meta
 
     part_idx = [i for i, ph in enumerate(phases) if ph["shape"] != G.NETWORK and target[i] > 0]
@@ -1776,14 +2120,18 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             ph = phases[i]
             d0 = float(ph["size_um"]["d"])
             n = max(1, int(round(ph["vf"] * V / mean_vol[i])))
-            s = G.sample_scales(n, ph.get("dist"), rng)
-            s *= (ph["vf"] * V / np.sum(math.pi * (d0 * s) ** 3 / 6.0)) ** (1.0 / 3.0)
+            target_v = ph["vf"] * V
+            s = G.sample_scales(2 * n + 64, ph.get("dist"), rng)
+            while np.sum(math.pi * (d0 * s) ** 3 / 6.0) < target_v:
+                s = np.concatenate([s, G.sample_scales(n + 64, ph.get("dist"), rng)])
+            s = s[:max(1, _count_to_volume(math.pi * (d0 * s) ** 3 / 6.0, target_v))]
+            s *= (target_v / np.sum(math.pi * (d0 * s) ** 3 / 6.0)) ** (1.0 / 3.0)
             d = d0 * s
             gap = float(ph.get("gap_frac", 0.0) or 0.0) * d
             if contacts == "separate":
                 gap = np.maximum(gap, 0.5 * h)
             diam.append(d)
-            ph_of.append(np.full(n, i))
+            ph_of.append(np.full(len(d), i))
             d_ex.append(d + gap)
         diam = np.concatenate(diam)
         ph_arr = np.concatenate(ph_of).astype(np.int64)
@@ -1820,7 +2168,10 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 d_base = d_base - diam + d_new
                 diam = d_new
         if contacts == "apart":
-            g_sep = apart_gap(math.pi / 6.0 * diam ** 3, d_base - diam, h, V, "sphere")
+            # an uneven dispersion: the gap that fits where the particles are
+            # densest (the box volume over the peak of the density)
+            g_sep = apart_gap(math.pi / 6.0 * diam ** 3, d_base - diam, h, V / (float(rho.max()) if rho is not None
+                                                                              else 1.0), "sphere")
             d_excl = diam + g_sep
             g_med = float(np.median(g_sep)) / h
             if g_med < SEP_APART - 1e-6:
@@ -1842,13 +2193,50 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             # as the film keeps what gap the film leaves it
             d_excl = np.minimum(d_excl, T)
             Lz_pack = T + 1.5 * float(d_excl.max())
-        C0 = rng.random((n, 3)) * box
-        if film:
-            C0[:, 2] = 0.5 * d_excl + rng.random(n) * (T - d_excl)
-        pos, _, scale = clump_pack(float(L), C0, np.tile(np.eye(3), (n, 1, 1)), d_excl.copy(),
-                                   np.zeros(n, np.int64), [(np.zeros((1, 3)), np.array([0.5]))], np.zeros(n),
-                                   ph_arr, overlap_of.astype(np.int64), np.full(n, -1, np.int64), np.full(n, 0.5),
-                                   log=log, should_stop=should_stop, tol=1e-3, Lz=Lz_pack, Wt=Wt)
+        if rho is not None:
+            C0 = sample_positions(n, rho, L, T, rng)
+            if film:
+                C0[:, 2] = np.clip(C0[:, 2], 0.5 * d_excl, T - 0.5 * d_excl)
+        else:
+            C0 = rng.random((n, 3)) * box
+            if film:
+                C0[:, 2] = 0.5 * d_excl + rng.random(n) * (T - d_excl)
+        if rho is not None:
+            # An uneven dispersion. The growth's overlap relaxation has no
+            # reason to keep particles where they were put and evens them out
+            # (a 4x gradient came out flat). Start at half size from centres
+            # drawn from the density, push the few overlaps apart (a local
+            # motion) and compress by Monte-Carlo moves biased by the density.
+            g0 = 0.5
+            pos, _, worst = separate_spheres(np.ascontiguousarray(C0, float), 0.5 * g0 * d_excl, float(L),
+                                             float(Lz_pack), float(Wt))
+            # the crowding a sphere feels averaged over its radius (density_weight)
+            blur = True
+            # at most 300 rounds: near the dense end the biased compression only
+            # creeps (a 3x gradient at 35 vol% crept from 0.85 to 0.97 of the
+            # size); the growth below finishes it
+            pos, scale = mc_compress(pos, d_excl, L, 0.999 * g0 / (1.0 + max(worst, 0.0)), rng, max_iter=300,
+                                     log=log, should_stop=should_stop, Lz=Lz_pack, Wt=Wt, rho=rho, rho_blur=blur)
+            log(f"  Monte-Carlo compression biased by the dispersion: size scale {scale:.4f}")
+            if scale < 1.0:
+                # the rest of the size by the growth with overlap relaxation,
+                # the particles still kept apart: from here its moves are small
+                # against the box and keep the profile (it is the growth from
+                # half size that evens it out); the gap is given up below only
+                # where it does not fit, as for an even packing
+                s0 = scale
+                pos, _, scale = clump_pack(float(L), np.ascontiguousarray(pos), np.tile(np.eye(3), (n, 1, 1)),
+                                           d_excl.copy(), np.zeros(n, np.int64),
+                                           [(np.zeros((1, 3)), np.array([0.5]))], np.zeros(n), ph_arr,
+                                           overlap_of.astype(np.int64), np.full(n, -1, np.int64), np.full(n, 0.5),
+                                           log=log, should_stop=should_stop, tol=1e-3, Lz=Lz_pack, Wt=Wt,
+                                           g0=0.999 * s0)
+                log(f"  growth with overlap relaxation from size scale {s0:.4f}: {scale:.4f}")
+        else:
+            pos, _, scale = clump_pack(float(L), C0, np.tile(np.eye(3), (n, 1, 1)), d_excl.copy(),
+                                       np.zeros(n, np.int64), [(np.zeros((1, 3)), np.array([0.5]))], np.zeros(n),
+                                       ph_arr, overlap_of.astype(np.int64), np.full(n, -1, np.int64),
+                                       np.full(n, 0.5), log=log, should_stop=should_stop, tol=1e-3, Lz=Lz_pack, Wt=Wt)
         pos = np.ascontiguousarray(pos)
         if scale < 1.0 and contacts == "apart" and np.any(d_excl > d_base):
             # The separation gap does not fit at this loading. Keep the gap the
@@ -1869,13 +2257,13 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                            log=log, should_stop=should_stop, tol=1e-3,
                                            Lz=Lz_pack, Wt=Wt, g0=0.999 * float(np.min(d_prev / d_excl)))
                 pos = np.ascontiguousarray(pos)
-        if scale < 1.0:
+        if scale < 1.0 and rho is None:
             s0 = scale
             # the relaxation leaves a tolerance's worth of overlap; start the
             # compression from a strictly overlap-free size
             scale *= 0.999
             pos, scale = mc_compress(pos, d_excl, L, scale, rng, log=log, should_stop=should_stop,
-                                     Lz=Lz_pack, Wt=Wt)
+                                     Lz=Lz_pack, Wt=Wt, rho=rho)
             log(f"  growth stopped at size scale {s0:.4f}; Monte-Carlo compression reached {scale:.4f}")
         if scale < 1.0:
             log(f"  !! the target packing fraction was not reached; packing stopped at a size scale of {scale:.3f}")
@@ -1886,8 +2274,16 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             log(f"  !! {left} sphere pairs still overlap after the separation (up to {100 * worst:.2f} % of the "
                 f"contact distance); the spheres are drawn smaller by that much so that none overlaps")
         sweeps = int(min(3000, max(200, 3.0e6 / n)))
+        if rho is not None:
+            # an uneven dispersion settles into its profile by the biased moves
+            # (with jumps across the box): more sweeps where they are cheap
+            sweeps = int(min(20000, max(sweeps, 1.0e7 / n)))
+        if rho is not None:
+            phi_x = float(np.sum(math.pi / 6.0 * d_excl ** 3)) / V
+            rho_arr, rho_max = _rho_args(density_weight(rho, phi_x, 0.5 * float(np.mean(d_excl)), box, film))
         rate = _mc_sweeps(pos, 0.5 * d_excl, float(L), sweeps, 0.05 * float(d_excl.min()),
-                          int(rng.integers(1 << 30)), float(Lz_pack), float(Wt))
+                          int(rng.integers(1 << 30)), float(Lz_pack), float(Wt), rho_arr, rho_max,
+                          0.1 if rho is not None else 0.0)
         log(f"  Monte-Carlo equilibration: {sweeps} sweeps (acceptance {100*rate:.0f} %)")
         if shear is not None and not film:
             # the arrangement the flow leaves: the packing sheared in the resin
@@ -2002,7 +2398,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             placed_id = np.zeros(len(codes), np.int64)
             pid = _rsa(owner, phase_of, overlap_of, net_of, sep1_of, float(h), float(L), codes, Rs, Ps,
                        planes, nfaces, gap, ph_arr, target, count, n_placed, jammed, centers, placed_id,
-                       pid, 400, 25, int(rng.integers(1 << 30)), buf, film)
+                       pid, 400, 25, int(rng.integers(1 << 30)), buf, film, rho_arr, rho_max)
             ok = placed_id > 0
             for key, arr in (("codes", codes), ("P", Ps), ("R", Rs), ("centers", centers), ("phase", ph_arr)):
                 rsa_parts[key].append(arr[ok])
@@ -2032,10 +2428,19 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 ph = phases[i]
                 nom = nominal[i]
                 n = max(1, int(round(ph["vf"] * V / mean_vol[i])))
-                Ps, Rs, s = _draw(ph, nom, n, rng, poly_meta)
-                # hit the target volume exactly with the drawn sizes
+                target_v = ph["vf"] * V
+                # as many of the drawn particles as make up the target volume,
+                # then the small remainder by a common factor
+                mono = (ph.get("dist") or {}).get("type") not in ("lognormal", "normal", "table")
+                Ps, Rs, s = _draw(ph, nom, n if mono else 2 * n + 16, rng, poly_meta)
                 v = np.array([SH.volume(nom["code"], P, poly_meta) for P in Ps])
-                corr = (ph["vf"] * V / v.sum()) ** (1.0 / 3.0)
+                while not mono and v.sum() < target_v:
+                    P2, R2, s2 = _draw(ph, nom, n + 16, rng, poly_meta)
+                    Ps, Rs, s = np.concatenate([Ps, P2]), np.concatenate([Rs, R2]), np.concatenate([s, s2])
+                    v = np.concatenate([v, [SH.volume(nom["code"], P, poly_meta) for P in P2]])
+                k = len(v) if mono else max(1, _count_to_volume(v, target_v))   # equal sizes: as before
+                Ps, Rs, s, v = Ps[:k], Rs[:k], s[:k], v[:k]
+                corr = (target_v / v.sum()) ** (1.0 / 3.0)
                 lin = _linear_slots(nom["code"])
                 Ps[:, lin] *= corr
                 s = s * corr
@@ -2054,15 +2459,16 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 gap_i = float(ph.get("gap_frac", 0.0) or 0.0) * 2.0 * SH.circumradius(nom["code"], nom["P"]) * s
                 ori = ph.get("orientation") or {}
                 rm = -1 if nom["code"] == 0 else _rotmode(ori.get("mode", "iso"), ori.get("spread_deg", 0))
-                cl.append(np.full(n, nom["code"]))
+                k = len(Ps)                          # drawn to the target volume, not n
+                cl.append(np.full(k, nom["code"]))
                 Pl.append(Ps)
                 Rl.append(Rs)
                 sl.append(s)
                 tpl_l.append(np.array(tids))
-                phl.append(np.full(n, i))
+                phl.append(np.full(k, i))
                 gl.append(gap_i)
-                rot_l.append(np.full(n, rm))
-                circ_l.append(np.full(n, SH.circumradius(nom["code"], nom["P"])))
+                rot_l.append(np.full(k, rm))
+                circ_l.append(np.full(k, SH.circumradius(nom["code"], nom["P"])))
             codes = np.concatenate(cl).astype(np.int64)
             Ps = np.concatenate(Pl)
             Rs = np.ascontiguousarray(np.concatenate(Rl))
@@ -2072,7 +2478,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             gap = np.concatenate(gl)
             rotm = np.concatenate(rot_l).astype(np.int64)
             circ = np.concatenate(circ_l)
-            C = rng.random((len(codes), 3)) * box
+            C = sample_positions(len(codes), rho, L, T, rng) if rho is not None else rng.random((len(codes), 3)) * box
             # the film: pack in a z period one particle longer than the film,
             # with walls at the faces; start every centre inside the film
             ext_max = float(max(2.0 * c_ * s_ for c_, s_ in zip(circ, s))) if len(s) else 0.0
@@ -2083,13 +2489,17 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 if float(2.0 * half_ext.max()) > T:
                     log(f"  !! the largest particle ({float(2 * half_ext.max()):.4g} µm across) is thicker than the "
                         f"film ({T:.4g} µm); it can only fit if oriented flat")
-                C[:, 2] = np.minimum(half_ext, 0.5 * T) + rng.random(len(codes)) * np.maximum(T - 2.0 * half_ext, 0.0)
+                if rho is not None:
+                    C[:, 2] = np.clip(C[:, 2], np.minimum(half_ext, 0.5 * T), np.maximum(T - half_ext, 0.5 * T))
+                else:
+                    C[:, 2] = (np.minimum(half_ext, 0.5 * T)
+                               + rng.random(len(codes)) * np.maximum(T - 2.0 * half_ext, 0.0))
             log(f"  clump packing of {len(codes):,} particles ({len(templates)} clump templates, "
                 f"{sum(len(templates[t][1]) for t in tpl):,} spheres)")
             gap_user = gap.copy()
             if contacts == "apart":
                 vols = np.array([SH.volume(int(c), P, poly_meta) for c, P in zip(codes, Ps)])
-                gap = apart_gap(vols, gap_user, h, V, "other")
+                gap = apart_gap(vols, gap_user, h, V / (float(rho.max()) if rho is not None else 1.0), "other")
                 g_med = float(np.median(gap)) / h
                 if g_med < SEP_APART - 1e-6:
                     log(f"  a {SEP_APART:g}-voxel gap between all particles does not fit at this loading; "
@@ -2236,6 +2646,17 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     info["seconds"] = time.time() - t0
     info["N"], info["h_um"], info["L_um"] = N, h, L
     info["nz"], info["film"], info["T_um"] = nz, film, T
+    if rho_info is not None:
+        vols = np.array([SH.volume(int(c), P, poly_meta) for c, P in zip(p_codes, p_P)]) if len(p_codes) else None
+        info["dispersion"] = dispersion_report(labels, phases, dispersion, dict(rho_info, h=h),
+                                               centres=p_centers if len(p_codes) else None, vols=vols)
+        d_ = info["dispersion"]
+        if d_["mode"] == "gradient":
+            log(f"  realised gradient: {d_.get('ratio') or 0:.3g} x along {d_['axis']} (asked {dispersion['ratio']:.3g} x)")
+        else:
+            log(f"  realised clusters: {100 * d_['share_realised']:.1f} % of the particle volume inside them (asked "
+                f"{100 * d_['share']:.0f} %), {100 * d_['vf_in']:.1f} vol% inside and {100 * d_['vf_out']:.1f} vol% "
+                f"outside")
     return labels, info
 
 

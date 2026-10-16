@@ -400,6 +400,7 @@ canvas.chart{display:block;width:100%}
 .param .prow2 label{font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px}
 .param select,.param input{height:26px;font-size:12px}
 .doerow{cursor:pointer}
+.doerow td.nowrap{white-space:nowrap}
 .doerow.done td{background:#fbfdfb}
 .doerow:hover td{background:var(--accent-lt)}
 .bar{height:6px;border-radius:3px;background:var(--sub2);overflow:hidden;min-width:60px}

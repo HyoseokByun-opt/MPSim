@@ -43,6 +43,7 @@ from . import rve as R
 from . import spec as S
 from . import live as LV
 from . import materials as M
+from . import mechtest as MT
 from . import visual as V
 from .solvers import complex_cond as CC
 from .solvers import conduction as CD
@@ -214,18 +215,25 @@ def _generator_phases(spec):
 STRUCTURE_VERSION = 5
 
 
-def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None):
+def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispersion=None):
     """What identifies one generated realisation: the generator's own inputs
     (phase names aside), the grid, the contact handling and the seed - and,
-    for the arrangement after shear flow, what it depends on (shear_key)."""
+    for the arrangement after shear flow, what it depends on (shear_key), and
+    an uneven dispersion (rve.dispersion)."""
     geo = [{k: v for k, v in ph.items() if k != "name"} for ph in gen_phases]
     key = {"v": STRUCTURE_VERSION, "phases": geo, "N": int(plan["N"]),
            "h": float(f"{plan['h_um']:.12g}"), "nz": int(plan["Nz"]) if plan.get("film") else None,
            "contacts": contacts, "seed": int(seed), "cf": bool(want_cf)}
     if plan.get("skin"):
         key["skin"] = int(plan["skin"])          # only a film with a skin: other keys stay as they were
+    if any((ph.get("dist") or {}).get("type") in ("lognormal", "normal", "table") for ph in gen_phases):
+        # v5.3: particles of a size distribution are drawn until the target
+        # volume (no common rescaling); monodisperse structures are unchanged
+        key["psd"] = 2
     if sheared:
         key["sheared"] = sheared                 # only a sheared one: random packings keep their keys
+    if dispersion and dispersion.get("mode", "uniform") != "uniform":
+        key["dispersion"] = {k: v for k, v in dispersion.items() if k != "peak_vf"}
     blob = json.dumps(key, sort_keys=True, default=float)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -721,12 +729,18 @@ def _dem_radii(spec, solid, n_target, seed=11):
     dists, mean_v, d_eq, ext = [], [], [], []
     for p in phases:
         dd = dict(p.get("dist") or {})
-        cv = float(dd.get("cv", 0.0) or 0.0) if dd.get("type") == "lognormal" else 0.0
-        dd = {"type": "lognormal", "cv": max(cv, 0.1)}
+        if dd.get("type") != "table":
+            # a measured distribution is used as it is; otherwise at least CV 0.1
+            # (equal spheres order into sliding layers under shear)
+            cv = float(dd.get("cv", 0.0) or 0.0) if dd.get("type") in ("lognormal", "normal") else 0.0
+            dd = (dict(dd, cv=max(cv, 0.1)) if dd.get("type") in ("lognormal", "normal")
+                  else {"type": "lognormal", "cv": 0.1})
         dists.append(dd)
         if p["shape"] == "sphere":
             d_eq.append(float(p["size_um"]["d"]))
-            ext.append(0.0)                         # the 40 largest set the box
+            # the 40 largest set the box; a broad (measured) distribution's
+            # largest sphere must still fit twice
+            ext.append(float(p["size_um"]["d"]) * G.scale_bounds(dd)[1])
         else:
             st = G.phase_size_stats(p["shape"], p["size_um"], dd)
             d_eq.append(float(st["eqd_median"]))
@@ -1550,7 +1564,7 @@ def rebuild_view(run_dir, log=print):
     gen_phases = _generator_phases(spec)
     plan.setdefault("skin", film_skin(spec, plan) if plan.get("film") else None)
     key = structure_key(gen_phases, plan, spec["options"]["contacts"], spec["rve"]["seed"],
-                        wants_contact_faces(spec), sheared=shear_key(spec))
+                        wants_contact_faces(spec), sheared=shear_key(spec), dispersion=spec["rve"].get("dispersion"))
     got = load_structure([run_dir], key)
     if got is None:
         raise FileNotFoundError("this run kept no structure (it was made before structures were kept)")
@@ -2529,6 +2543,75 @@ def _elastic_solve(labels, table, spec, h_um, backend, prog, log, event, should_
     return r
 
 
+def _mech_test(labels, table, spec, st, h_um, prog, log, event, should_stop, viewer):
+    """The stress fields of the mechanical test (mechtest.py): one FANS solve
+    at the test's macroscopic strain; their statistics per region, and the
+    fields for the viewer (von Mises, axial stress and strain, axial
+    displacement of the RVE)."""
+    mt = spec["options"]["mechtest"]
+    E = S.label_values(table, "E")
+    nu = S.label_values(table, "nu")
+    tol = 1e-5 if spec["rve"]["quality"] == "fast" else 1e-6
+    word = {"tension": "Tension", "compression": "Compression"}[mt["mode"]]
+    prog.stage("Mechanical test", f"{word} along {mt['axis']} · one FANS solve at the test strain", units=1.0)
+    try:
+        import numba
+        workers = int(numba.get_num_threads())
+    except Exception:                                                    # noqa: BLE001
+        workers = -1
+
+    def cb(it, res):
+        event("solver", name=f"Mechanical test ({mt['mode']} along {mt['axis']})", it=it, res=res, target=tol,
+              progress=prog.sub(0.5))
+    sol = FA.FANS(labels, E, nu, None, 1e-4, workers)
+    Ev = np.asarray(st["E_voigt"], float)
+    sbar, info, s = sol.solve(Ev, 0.0, tol, 5000, cb, should_stop, keep_stress=True, keep_disp=True)
+    u = sol.last_disp
+    E_used, nu_used = np.asarray(sol.E_used, float), np.asarray(sol.nu_used, float)
+    sol.last_disp = None
+    del sol
+    s *= 1e3                                                             # GPa -> MPa
+    a = MT.AXES[mt["axis"]]
+    b, c = [k for k in range(3) if k != a]
+    vm = MT.von_mises(s).astype(np.float32)
+    saa = s[a].astype(np.float32)
+    # the local axial strain from each region's stress (isotropic regions)
+    eaa = np.empty(labels.shape, np.float32)
+    for li in np.unique(labels):
+        m = labels == li
+        eaa[m] = (s[a][m] - nu_used[li] * (s[b][m] + s[c][m])) / (E_used[li] * 1e3)
+    del s
+    # the displacement along the load: the mean strain over the RVE plus the
+    # solved fluctuation (nodes at the lower voxel corners, voxel units)
+    idx = np.arange(labels.shape[a], dtype=np.float32).reshape([-1 if k == a else 1 for k in range(3)])
+    ua = ((Ev[a] * idx + u[a]) * h_um).astype(np.float32)
+    del u
+    mask_m = labels == 0
+    q999 = float(np.percentile(vm[mask_m], 99.9)) if mask_m.any() else None
+    stats = {"von_mises": _label_stats(vm, labels, table), "axial_stress": _label_stats(saa, labels, table),
+             "axial_strain": _label_stats(eaa, labels, table)}
+    if viewer is not None:
+        grp = "Mechanical test"
+        what = f"{mt['mode']} along {mt['axis']}, {abs(st['stress_MPa']):.3g} MPa"
+        ax = mt["axis"]
+        viewer.add_field("mt_vm", vm, f"von Mises stress ({what})", "MPa", grp)
+        viewer.add_field("mt_saa", saa, f"Axial stress σ{ax}{ax} ({what})", "MPa", grp, diverging=True)
+        # one sign through the RVE (the load's): a full colour scale, not a
+        # symmetric one; the axial stress can change sign around particles
+        viewer.add_field("mt_eaa", 100.0 * eaa, f"Axial strain ε{ax}{ax} ({what})", "%", grp)
+        viewer.add_field("mt_ua", ua, f"Displacement along {ax} in the RVE ({what})", "µm", grp)
+    del vm, saa, eaa, ua
+    sb = (np.asarray(sbar) * 1e3).tolist()
+    ref = np.asarray(st["sigma_voigt_MPa"], float)
+    dev = float(np.max(np.abs(np.asarray(sb) - ref)) / max(np.max(np.abs(ref)), 1e-30))
+    prog.end()
+    log(f"    mechanical test: {mt['mode']} along {mt['axis']}, apparent modulus {st['modulus_GPa']:.4g} GPa, "
+        f"{st['stress_MPa']:.4g} MPa at strain {100 * st['strain']:.4g} %; matrix von Mises 99.9 % "
+        f"{q999 if q999 is None else round(q999, 4)} MPa ({info['iterations']} iterations)")
+    return {"state": st, "stats": stats, "solve": info, "sbar_MPa": sb, "mean_stress_dev": dev,
+            "matrix_vm_q999": q999}
+
+
 NU_RUBBERY = 0.45   # Poisson's ratio of a cured resin above Tg (0.45-0.49); B-bar elements keep it lock-free
 
 
@@ -2596,6 +2679,10 @@ def _emi_se(sig, eps, mu, opts):
 # references and checks
 # =========================================================================
 def _isotropic_structure(spec):
+    """Statistically isotropic: shapes turned at random, and an even dispersion
+    (a region, a gradient or a few clusters make it directional on purpose)."""
+    if ((spec.get("rve") or {}).get("dispersion") or {}).get("mode", "uniform") != "uniform":
+        return False
     return all(ph["shape"] in ("sphere", G.NETWORK) or ph["orientation"]["mode"] == "iso"
                for ph in spec["phases"])
 
@@ -2785,7 +2872,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         + (0.5 * len(dirs) + 1.0 if "moisture" in need else 0.0) \
         + (3.0 if ("cte" in need and opts.get("above_tg")) else 0.0)         + (4.0 if "viscosity" in need else 0.0)         + (4.0 if spec["rve"].get("arrangement") == "sheared" else 0.0)
     vdem = opts["viscosity"]["dem"]
-    once_units = (2.0 + (3.0 + vdem["rates"] if vdem["on"] else 0.0) if "viscosity" in need else 0.0) + sum(u for k, u in (("morphology", 1.0), ("porosimetry", 1.0), ("pore_network", 1.0),
+    once_units = (1.0 if "mechtest" in need else 0.0) + \
+        (2.0 + (3.0 + vdem["rates"] if vdem["on"] else 0.0) if "viscosity" in need else 0.0) + sum(u for k, u in (("morphology", 1.0), ("porosimetry", 1.0), ("pore_network", 1.0),
                                     ("grains", 1.0), ("radiation", 0.5), ("acoustics", 0.3),
                                     ("percolation", 1.0), ("filtration", 0.7)) if k in need)
     prog = Progress(event, seeds * per_seed_units + once_units + 3.0)
@@ -3034,6 +3122,40 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                "status": "pass" if all(conv) else "fail", "note": ""})
             props["cte"] = entry
 
+        if "mechtest" in need and "mechtest" in results_first:
+            m0 = results_first["mechtest"]
+            st = m0["state"]
+            mt = opts["mechtest"]
+            m_mean, m_std, m_ci = _mean_ci([[v] for v in samples["mt_modulus"]])
+            entry = {"title": "Mechanical test", **m0, "options": mt,
+                     "modulus_mean_GPa": float(np.atleast_1d(m_mean)[0]),
+                     "modulus_ci95": (float(np.atleast_1d(m_ci)[0]) if m_ci is not None else None),
+                     "seeds_modulus": samples["mt_modulus"],
+                     "onset": MT.onset(st, m0.get("matrix_vm_q999"), mt.get("strength_MPa")),
+                     "curve": {"displacement_um": [0.0, st["displacement_um"]], "force_N": [0.0, st["force_N"]],
+                               "strain": [0.0, st["strain"]], "stress_MPa": [0.0, st["stress_MPa"]]}}
+            entry["by_realisation"] = [b_ for b_ in [by_real("Apparent modulus", [[v] for v in samples["mt_modulus"]],
+                                                             [f"E{mt['axis']}"], "GPa")] if b_]
+            checks.append({"id": "mt_conv", "group": "Mechanical test", "label": "Linear solver convergence (test load)",
+                           "value": m0["solve"]["residual"], "target": 1e-5, "unit": "",
+                           "status": "pass" if m0["solve"]["converged"] else "fail", "note": ""})
+            checks.append({"id": "mt_mean", "group": "Mechanical test",
+                           "label": "Mean stress of the fields against the macroscopic stress",
+                           "value": m0["mean_stress_dev"], "target": 1e-3, "unit": "rel",
+                           "status": "pass" if m0["mean_stress_dev"] <= 1e-3 else "warn",
+                           "note": "The stress field averaged over the RVE reproduces the stress the effective "
+                                   "stiffness gives for the test's strain"})
+            on = entry["onset"]
+            if on and on["fraction_of_load"] < 1.0:
+                checks.append({"id": "mt_onset", "group": "Mechanical test",
+                               "label": "Matrix strength reached below the test load",
+                               "value": on["fraction_of_load"], "target": 1.0, "unit": "",
+                               "status": "warn",
+                               "note": f"0.1 % of the matrix reaches {on['strength_MPa']:.4g} MPa (von Mises) at "
+                                       f"{100 * on['fraction_of_load']:.0f} % of the load: above it the matrix would "
+                                       "yield or crack locally, which linear elasticity does not follow"})
+            props["mechtest"] = entry
+
         if "emi" in wanted and "electrical" in props and "dielectric" in props:
             def inplane(key):
                 e = props[key]
@@ -3242,7 +3364,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         # only when this run solves heat: the structure stays the same one for
         # every selection of analyses
         want_cf = wants_contact_faces(spec)
-        skey = structure_key(gen_phases, plan, opts["contacts"], seed, want_cf, sheared=sheared)
+        skey = structure_key(gen_phases, plan, opts["contacts"], seed, want_cf, sheared=sheared,
+                             dispersion=spec["rve"].get("dispersion"))
         got = load_structure([out_dir] + list(reuse.get("from") or []), skey) if opts.get("reuse_runs", True) else None
         if got is not None:
             gen_labels, ginfo, src = got
@@ -3254,7 +3377,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         else:
             gen_labels, ginfo = GEN.generate(N, h, gen_phases, seed=seed, log=log, should_stop=should_stop,
                                              contacts=opts["contacts"], want_contact_faces=want_cf, nz=Nz,
-                                             skin=skin, shear=shear_packing(spec, log, event, prog, should_stop))
+                                             skin=skin, shear=shear_packing(spec, log, event, prog, should_stop),
+                                             dispersion=spec["rve"].get("dispersion"))
             try:
                 save_structure(out_dir, skey, gen_labels, ginfo, ginfo.get("contact_mask"))
             except Exception as e:                                   # noqa: BLE001
@@ -3277,6 +3401,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "shrunk": ginfo.get("shrunk"),
                  "pack_scale": ginfo.get("pack_scale"),
                  "sheared": ginfo.get("sheared"),
+                 "dispersion": ginfo.get("dispersion"),
                  "phases": ginfo["phases"], "vf_labels": vf_labels.tolist(),
                  "interface_area_ratio": {str(k): v for k, v in area_ratio.items()}}
         log(f"   realisation {r+1}: {ginfo['route']} · {ginfo['seconds']:.1f} s · "
@@ -3503,6 +3628,15 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 el["above_tg"] = _above_tg(labels, table, prog, log, event, should_stop)
             event("partial", key="cte", value=_clean(el["alpha"][:3]))
             live("cte")
+
+        # ---- mechanical test (tension or compression) --------------------
+        if "mechtest" in need and "cte" in res_r:
+            st = MT.macro_state(res_r["cte"]["C"], opts["mechtest"])
+            samples.setdefault("mt_modulus", []).append(st["modulus_GPa"])
+            if first:
+                res_r["mechtest"] = _mech_test(labels, table, spec, st, h, prog, log, event, should_stop, viewer)
+                event("partial", key="mechtest", value=_clean(st["modulus_GPa"]))
+                live("mechtest")
 
         # ---- viscosity of the uncured compound ---------------------------
         if "viscosity" in need:
@@ -4179,6 +4313,15 @@ def headline_numbers(props, comp):
                     "diag": list(props["cte"]["alpha"][:3])})
         out.append({"key": "E", "label": "Young's modulus (Hill)", "value": props["cte"]["constants"]["E_hill"], "unit": "GPa",
                     "diag": props["cte"]["constants"]["E"]})
+    if "mechtest" in props:
+        m = props["mechtest"]
+        st = m["state"]
+        out.append({"key": "E_test", "label": f"Apparent modulus ({st['mode']} along {st['axis']}, "
+                                              f"{'confined' if st['lateral'] == 'confined' else 'free sides'})",
+                    "value": m["modulus_mean_GPa"], "unit": "GPa"})
+        if m.get("onset"):
+            out.append({"key": "F_onset", "label": "Load at the matrix strength (0.1 % of the matrix)",
+                        "value": m["onset"]["force_N"], "unit": "N"})
     if "emi" in props:
         e = props["emi"]
         f = np.asarray(e["spectrum"]["freq_hz"])

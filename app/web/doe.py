@@ -145,7 +145,15 @@ class DOEStore:
                 rv["n_seeds"] = int(grid["seeds"])
             grid = {"mode": "fixed", "L_um": L_um, "voxel_um": h_um, "N": int(round(L_um / h_um))}
         else:
+            # adaptive: every case planned for its own particles at an accuracy
+            # level - the one set in Domain, or Fast / Standard / Accurate for the
+            # whole study (the automatic grid then decides voxel and RVE size)
+            q = grid.get("quality")
             grid = {"mode": "adaptive"}
+            if q in ("fast", "standard", "accurate"):
+                rv = base.setdefault("rve", {})
+                rv.update(auto=True, quality=q, N=None)
+                grid["quality"] = q
         parameters = [p for p in (payload.get("parameters") or []) if p.get("path")]
         # links: a parameter that also sets other entries (the same value or a
         # function of the parameters); checked once here, applied per case

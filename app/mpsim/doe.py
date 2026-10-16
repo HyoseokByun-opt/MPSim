@@ -227,6 +227,14 @@ def parameter_catalogue(form):
         {"path": "rve.shear_strain", "label": "Strain of the shear flow (arrangement after shear flow)", "unit": "-",
          "group": "Domain"},
         {"path": "options.delta_T", "label": "ΔT", "unit": "K", "group": "Options"},
+        {"path": "options.mechtest.value", "label": "Load of the mechanical test", "unit": "N, MPa, µm or %",
+         "group": "Options"},
+        {"path": "rve.dispersion.ratio", "label": "Dispersion gradient: loading ratio", "unit": "-", "group": "Domain"},
+        {"path": "rve.dispersion.share", "label": "Dispersion clusters: share of the particles", "unit": "%",
+         "group": "Domain"},
+        {"path": "rve.dispersion.cluster_vol", "label": "Dispersion clusters: box volume", "unit": "%",
+         "group": "Domain"},
+        {"path": "rve.dispersion.to", "label": "Dispersion region: end", "unit": "%", "group": "Domain"},
         {"path": "options.thickness_mm", "label": "Layer thickness", "unit": "mm", "group": "Options"},
         {"path": "options.filtration.face_velocity_m_s", "label": "Filtration face velocity", "unit": "m/s", "group": "Options"},
         {"path": "options.viscosity.gd_ref", "label": "Shear rate (viscosity)", "unit": "1/s", "group": "Options"},
@@ -264,7 +272,7 @@ def parameter_catalogue(form):
             out += [{"path": f"phases.{i}.size.coil_d", "label": f"{name}: coil diameter", "unit": un, "group": g},
                     {"path": f"phases.{i}.size.pitch", "label": f"{name}: pitch", "unit": un, "group": g},
                     {"path": f"phases.{i}.size.turns", "label": f"{name}: turns", "unit": "-", "group": g}]
-        if (ph.get("dist") or {}).get("type") == "lognormal":
+        if (ph.get("dist") or {}).get("type") in ("lognormal", "normal"):
             out.append({"path": f"phases.{i}.dist.cv", "label": f"{name}: size CV", "unit": "-", "group": g})
         if (ph.get("orientation") or {}).get("mode") != "iso":
             out.append({"path": f"phases.{i}.orientation.spread_deg", "label": f"{name}: orientation spread", "unit": "°", "group": g})

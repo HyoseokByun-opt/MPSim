@@ -53,6 +53,35 @@ svg{max-width:100%}
 """
 
 
+def _dispersion_text(rve):
+    """The uneven dispersion of the particles in words ('' when even)."""
+    d = (rve or {}).get("dispersion") or {}
+    m = d.get("mode", "uniform")
+    if m == "region":
+        return (f"Particles only for {d['axis']} from {100 * d['from']:.0f} to {100 * d['to']:.0f} % of the box edge "
+                f"(matrix elsewhere).")
+    if m == "gradient":
+        return f"Particle loading graded along {d['axis']}: {d['ratio']:.3g} x as high at the end of the axis as at its start."
+    if m == "clusters":
+        return (f"{d['n_clusters']} particle clusters taking {100 * d['cluster_vol']:.0f} % of the box hold "
+                f"{100 * d['share']:.0f} % of the particles.")
+    return ""
+
+
+def _dist_text(dist):
+    """The size distribution of a phase in words (d above is its number mean)."""
+    t = (dist or {}).get("type")
+    if t in ("lognormal", "normal"):
+        txt = f", {'log-normal' if t == 'lognormal' else 'normal'} by number (d = mean), CV {_fmt(dist['cv'])}"
+        if dist.get("d_min_um") or dist.get("d_max_um"):
+            txt += f", bounds {_fmt(dist.get('d_min_um'))}–{_fmt(dist.get('d_max_um'))} µm"
+        return txt
+    if t == "table":
+        src = f" {dist['file']}" if dist.get("file") else ""
+        return f", measured distribution{src} by {dist.get('basis', 'volume')} ({len(dist.get('p') or [])} bins; d = number mean)"
+    return ""
+
+
 def _fmt(v, unit=""):
     unit = "" if unit == "-" else unit           # dimensionless: no unit shown
     if v is None:
@@ -171,7 +200,7 @@ def write(out_dir, r):
         sz = ph["size_um"]
         desc = f"{SHAPES[ph['shape']]}, d {_fmt(sz['d'])} µm" + (f", aspect ratio {_fmt(sz.get('aspect'))}" if "aspect" in sz else "") + \
                (f", length {_fmt(sz.get('length'))} µm" if "length" in sz else "") + \
-               (f", log-normal CV {ph['dist']['cv']}" if ph["dist"]["type"] == "lognormal" else "") + \
+               _dist_text(ph["dist"]) + \
                (f", orientation {ph['orientation']['mode']}" if ph["shape"] not in ("sphere", "network") else "") + \
                (f", shell {_fmt(ph['shell']['thickness_um'])} µm" if ph.get("shell") else "") + \
                (f" × {_fmt(sz['ly'])} × {_fmt(sz['lz'])} µm" if "ly" in sz else "") +                (f", n {_fmt(sz['n'])}" if ph["shape"] == "superellipsoid" else "") +                (f", {sz.get('poly')}" if ph["shape"] == "polyhedron" else "") +                (f", coil {_fmt(sz['coil_d'])} µm, pitch {_fmt(sz['pitch'])} µm, {_fmt(sz['turns'])} turns" if ph["shape"] == "helix" else "") +                (f", R<sub>int</sub> {_fmt(ph['r_int'])} m²K/W" if ph.get("r_int") else "") +                (f", R<sub>c</sub> {_fmt(ph['r_contact'])} m²K/W" if ph.get("r_contact") else "")
@@ -212,6 +241,18 @@ def write(out_dir, r):
                      f"{_fmt(pp[2])} after the flow; their tilt ⟨n_x n_z⟩ {fab['random'][0][2]:+.3f} → "
                      f"{fab['sheared'][0][2]:+.3f} (0 at random, below 0 along the flow's compression axis).")
         P.append(f"<p>{stxt}</p>")
+    dtxt = _dispersion_text(r["spec"].get("rve"))
+    dz = rz.get("dispersion") or {}
+    if dtxt:
+        if dz.get("mode") == "clusters":
+            dtxt += (f" Realised: {_fmt(100 * dz['share_realised'])} % of the particle volume centred in the clusters; "
+                     f"by voxels {_fmt(100 * dz['vf_in'])} vol% inside them and {_fmt(100 * dz['vf_out'])} vol% between "
+                     f"them (asked {_fmt(100 * dz['vf_in_target'])} and {_fmt(100 * dz['vf_out_target'])}).")
+        elif dz.get("mode") == "gradient":
+            dtxt += f" Realised ratio {_fmt(dz.get('ratio'))} (straight line through the loading profile of the voxels)."
+        elif dz.get("mode") == "region":
+            dtxt += f" Realised loading in the region {_fmt(100 * dz.get('vf_in_region', 0))} vol%."
+        P.append(f"<p>Particle dispersion: {e(dtxt)}</p>")
     P.append(_table(["Region", "Kind", "Volume fraction", "Mass fraction"],
                     [[e(l["name"]), e(l["kind"]), _fmt(100 * l["vf"], "%"), _fmt(100 * l["wt"], "%")] for l in r["composition"]["labels"]]))
     P.append(f"<p>Density {_fmt(r['composition']['density'])} g/cm³ · specific heat {_fmt(r['composition']['cp'])} J/kg·K"
@@ -315,6 +356,31 @@ def write(out_dir, r):
                      _table(["Region", "Mean von Mises", "99th percentile", "Maximum", "Mean hydrostatic"],
                             [[e(s["label"]), _fmt(s["mean"]), _fmt(s["p99"]), _fmt(s["max"]), _fmt(hyd.get(s["label"], {}).get("mean"))]
                              for s in ss["von_mises"]]))
+    if "mechtest" in props:
+        p = props["mechtest"]
+        st = p["state"]
+        side = "confined sides (uniaxial strain)" if st["lateral"] == "confined" else "free sides (uniaxial stress)"
+        P.append("<h3>Mechanical test</h3>")
+        P.append(f"<p>{e(st['mode'].capitalize())} along {st['axis']}, {side}, controlled by {e(st['control'])} "
+                 f"({_fmt(st['value'])}); specimen length {_fmt(st['length_mm'])} mm, loaded area "
+                 f"{_fmt(st['area_mm2'])} mm². Linear elastic: the force-displacement line is straight.</p>")
+        rows = [["Apparent modulus [GPa]", _fmt(p["modulus_mean_GPa"])], ["Force [N]", _fmt(st["force_N"])],
+                ["Displacement [µm]", _fmt(st["displacement_um"])], ["Engineering stress [MPa]", _fmt(st["stress_MPa"])],
+                ["Engineering strain [%]", _fmt(100 * st["strain"])]]
+        for k, v in (st.get("poisson") or {}).items():
+            rows.append([f"Poisson's ratio ν<sub>{k}</sub>", _fmt(v)])
+        for k, v in (st.get("lateral_stress_MPa") or {}).items():
+            rows.append([f"Lateral stress σ<sub>{k}{k}</sub> held by the platens [MPa]", _fmt(v)])
+        on = p.get("onset")
+        if on:
+            rows.append([f"Load at the matrix strength {_fmt(on['strength_MPa'])} MPa (0.1 % of the matrix) [N]",
+                         _fmt(on["force_N"])])
+        P.append(_table(["Quantity", "Value"], rows))
+        vm = (p.get("stats") or {}).get("von_mises") or []
+        if vm:
+            P.append("<p>von Mises stress by region at the test load [MPa]</p>" +
+                     _table(["Region", "Mean", "99th percentile", "Maximum"],
+                            [[e(s["label"]), _fmt(s["mean"]), _fmt(s["p99"]), _fmt(s["max"])] for s in vm]))
     if "viscosity" in props:
         p = props["viscosity"]
         P.append("<h3>Viscosity and flowability of the uncured compound</h3>")

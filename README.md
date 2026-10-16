@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.2.5-0b62c4" alt="version 5.2.5">
+  <img src="https://img.shields.io/badge/version-5.3.0-0b62c4" alt="version 5.3.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -54,11 +54,16 @@ PC or on a server that is accessed from other computers on the network; data do 
 The main capabilities are listed below.
 
 - **Microstructure generation.** Spheres, spheroids (needles and platelets), cylinders, capsules, cubes, cuboids,
-  superellipsoids, polyhedra, helices and connected networks with full 3D rotation; log-normal size distributions,
-  coated and hollow particles, several filler phases in one RVE, pores as a material phase and gas matrices. Dense
-  packings are obtained by rigid-clump relaxation and Monte-Carlo compression, and every blend is checked so that no
-  voxel belongs to two particles. Sphere packings can be sheared in the resin by particle dynamics before they are
-  drawn, which yields the arrangement of a compound after flow.
+  superellipsoids, polyhedra (irregular grains, each with a shape of its own if wanted), helices and connected networks with full 3D
+  rotation; normal and log-normal size distributions with bounds, or a measured particle-size distribution loaded from
+  the analyser's file (by volume or by number); coated and hollow particles, several filler phases in one RVE, pores as
+  a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression,
+  and every blend is checked so that no voxel belongs to two particles. Sphere packings can be sheared in the resin by
+  particle dynamics before they are drawn, which yields the arrangement of a compound after flow.
+- **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
+  in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
+  packing follows the requested density by Monte-Carlo moves weighted against the crowding of hard spheres, and the
+  arrangement realised is measured and reported.
 - **RVE sizing.** The RVE edge is 7 times (Standard) or 10 times (Accurate) the largest particle, a criterion determined
   with the statistical method of Kanit et al. (2003). The volume-fraction error, octant homogeneity, directional scatter
   and convergence are checked on every run; several realisations provide a 95 % confidence interval.
@@ -70,7 +75,10 @@ The main capabilities are listed below.
 - **Mechanics.** Stiffness, engineering constants and the thermal-expansion tensor from FANS, the periodic voxel finite
   elements of NASA PuMA solved with an FFT preconditioner whose iteration count does not grow with the grid (seven load
   cases on 96³ voxels in 49 s, 11 times faster than MINRES on the same discretisation), optionally above the glass
-  transition.
+  transition. A mechanical test in tension or compression, controlled by displacement, strain, force or pressure on a
+  specimen of given length and area, with free or confined sides, gives the force-displacement line, the apparent
+  modulus and Poisson's ratio, the stress and strain fields in the RVE and the load at which the matrix reaches its
+  strength.
 - **Rheology.** Effective viscosity of underfills, moulding compounds and pastes from a creeping-flow solution on the RVE
   and, for dense fillers of any shape, from particle dynamics in which every filler translates, rotates and collides in
   the sheared resin (lubrication, friction, van der Waals attraction; cubes, platelets and rods as rigid clumps of
@@ -126,6 +134,7 @@ workspace in detail.
 | | Magnetic permeability | same | μr tensor |
 | | EMI shielding | Complex homogenisation → scikit-rf; openEMS FDTD check | SE(f) with reflection, absorption and multiple-reflection terms, validity limits |
 | Mechanics | Elasticity and thermal expansion | FANS voxel FE (default), NASA PuMA FE | C\*, S\*, E, G, ν, Hill moduli, anisotropy index, α tensor, thermal stress per region; optionally α2 and E above Tg |
+| | Mechanical test (tension or compression) | Effective stiffness + one FANS solve at the test load | Force-displacement line, apparent modulus, Poisson's ratio or lateral stress, von Mises and axial stress and strain fields, load at the matrix strength |
 | Rheology | Viscosity and flowability | FANS creeping flow; particle dynamics (lubrication DEM); Krieger–Dougherty with Farr–Groot φm | Relative viscosity, flow curve, φm, underfill filling time, settling, local shear-rate field |
 | Reliability | Moisture uptake and swelling | Periodic FV on the water activity; FANS eigenstrain | D_eff tensor, saturated uptake, uptake curve, swelling strain and CME |
 | Porous media | Permeability | NASA PuMA Stokes FE | K tensor, Kozeny–Carman constant, hydraulic tortuosity |
@@ -327,6 +336,9 @@ reference values. A selection:
 | Linked inputs: one R_int for two grades of a filler (calibration) | known value 3e-8 m²K/W | 3.0e-8 linked (4.5e-8 when only one grade is calibrated) |
 | Stop of a run during parallel solutions | all processes of the run end | within seconds |
 | Arrangement after shear flow: silica 4 + 1.6 µm, 45 vol%, strain 2 | contents kept, periodic, pairs oriented by the flow | close pairs 3.7 → 5.5 per sphere, n_x·n_z +0.014 → -0.024 |
+| Measured size distribution by channel; bounded normal and log-normal | channel shares; bounds | within 1 %; exact |
+| Uneven dispersions: region, 3x gradient, clusters holding 45–50 % | all particles in the region; ratio; share | exact; 2.3–2.7; 42–47 % |
+| Mechanical test: isotropic material, laminate under uniaxial stress | E, ν, constrained modulus; σ equal in both layers | exact; σzz −10 MPa in both layers |
 
 Two presets also verify the solver against an exact solution. Copper vias that pass straight through a laminate conduct
 heat as parallel paths, k_z = f·k_Cu + (1 − f)·k_laminate for a copper area fraction f. The presets *PCB thermal vias*
@@ -531,7 +543,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.2.5, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.3.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

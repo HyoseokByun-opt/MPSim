@@ -34,12 +34,15 @@ def main(argv=None):
     ap.add_argument("--workspace", default=None, help="where runs are kept (default: ../workspace)")
     ap.add_argument("--concurrency", type=int, default=1,
                     help="simulations at once; more than one splits the cores between them")
-    ap.add_argument("--max-voxels", type=int, default=R.DEFAULT_LIMITS["N_max"],
-                    help="largest RVE edge in voxels (conduction); 0 = no limit")
-    ap.add_argument("--max-voxels-elastic", type=int, default=R.DEFAULT_LIMITS["N_max_elastic"],
-                    help="largest edge for CTE/elasticity; 0 = no limit")
-    ap.add_argument("--max-voxels-flow", type=int, default=R.DEFAULT_LIMITS["N_max_flow"],
-                    help="largest edge for permeability; 0 = no limit")
+    # the grid limit is a setting of the program (Home -> Machine, kept in
+    # settings.json); these options override it for one session only
+    ap.add_argument("--max-voxels", type=int, default=None,
+                    help="largest RVE edge in voxels for every solver this session (default: Home -> Machine, "
+                         f"{R.DEFAULT_LIMITS['N_max']}); 0 = no limit")
+    ap.add_argument("--max-voxels-elastic", type=int, default=None,
+                    help="largest edge for CTE/elasticity this session; 0 = no limit")
+    ap.add_argument("--max-voxels-flow", type=int, default=None,
+                    help="largest edge for permeability this session; 0 = no limit")
     ap.add_argument("--check", action="store_true", help="report why other machines may not connect, then exit")
     ap.add_argument("--debug", action="store_true")
     a = ap.parse_args(argv)
@@ -51,8 +54,13 @@ def main(argv=None):
 
     token = secrets.token_urlsafe(9) if a.token == "auto" else a.token
     from web.server import create_app
-    limits = {"N_max": a.max_voxels, "N_max_elastic": a.max_voxels_elastic, "N_max_flow": a.max_voxels_flow}
+    limits = {k: v for k, v in (("N_max", a.max_voxels),
+                                ("N_max_elastic", a.max_voxels_elastic if a.max_voxels_elastic is not None
+                                 else a.max_voxels),
+                                ("N_max_flow", a.max_voxels_flow if a.max_voxels_flow is not None else a.max_voxels))
+              if v is not None}
     app = create_app(workspace=a.workspace, token=token, concurrency=a.concurrency, limits=limits)
+    lim = app.config["LIMITS"]
 
     addrs = netcheck.local_addresses()
     print("=" * 66)
@@ -71,8 +79,8 @@ def main(argv=None):
     if token:
         print(f"  token     {token}   (first visit: ?token={token})")
     _cap = lambda n: "no limit" if not n or n <= 0 else f"{n}³"      # noqa: E731
-    print(f"  jobs      {a.concurrency} at a time · RVE {_cap(a.max_voxels)} "
-          f"(elasticity {_cap(a.max_voxels_elastic)}, flow {_cap(a.max_voxels_flow)})")
+    print(f"  jobs      {a.concurrency} at a time · RVE {_cap(lim['N_max'])} "
+          f"(elasticity {_cap(lim['N_max_elastic'])}, flow {_cap(lim['N_max_flow'])}; Home -> Machine sets it)")
     print("  Ctrl+C to stop")
     print("=" * 66, flush=True)
     app.run(host=a.host, port=a.port, threaded=True, debug=a.debug, use_reloader=False)

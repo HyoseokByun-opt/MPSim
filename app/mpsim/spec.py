@@ -31,6 +31,7 @@ ANALYSES = {
     "magnetic":     ("Magnetic permeability", "Electromagnetics"),
     "emi":          ("EMI shielding effectiveness", "Electromagnetics"),
     "cte":          ("Elasticity and thermal expansion", "Mechanics"),
+    "mechtest":     ("Mechanical test (tension or compression)", "Mechanics"),
     "permeability": ("Permeability (Stokes flow)", "Flow"),
     "filtration":   ("Filtration efficiency", "Flow"),
     "tortuosity":   ("Diffusion and tortuosity", "Diffusion"),
@@ -65,6 +66,9 @@ def required_analyses(chosen):
     if "filtration" in need:
         # particles are carried by the flow, so the Stokes solution is required
         need |= {"permeability"}
+    if "mechtest" in need:
+        # the test's macroscopic state comes from the effective stiffness
+        need |= {"cte"}
     return need
 
 
@@ -82,6 +86,149 @@ def _num(x, what, lo=None, hi=None, allow_none=False):
     if hi is not None and v > hi:
         raise ValueError(f"The {what} of {v:g} must not be larger than {hi:g}")
     return v
+
+
+_LINEAR = ("d", "length", "ly", "lz", "coil_d", "pitch")
+
+
+def _rescale(size_um, d_new):
+    """The size dict with its main size set to d_new and every other length
+    scaled with it (the shape is kept)."""
+    f = float(d_new) / float(size_um["d"])
+    return {k: (v * f if k in _LINEAR else v) for k, v in size_um.items()}
+
+
+def _mechtest(mt, rve, errors):
+    """A tension or compression test (mechtest.py): direction, lateral
+    condition, the load as a displacement (µm), strain (%), force (N) or
+    pressure (MPa), the specimen's length along the load (mm; a film's
+    thickness by default when loaded through it) and loaded area (mm²), and
+    an optional strength of the matrix (MPa)."""
+    axis = mt.get("axis") if mt.get("axis") in ("x", "y", "z") else "z"
+    film_z = bool(rve.get("film")) and axis == "z" and rve.get("T_um")
+    out = {"mode": "tension" if mt.get("mode") == "tension" else "compression", "axis": axis,
+           "lateral": "confined" if mt.get("lateral") == "confined" else "free",
+           "control": mt.get("control") if mt.get("control") in ("displacement", "strain", "force", "pressure")
+           else "force",
+           "value": 100.0, "length_mm": float(rve["T_um"]) * 1e-3 if film_z else 10.0, "area_mm2": 10.0,
+           "strength_MPa": None}
+    try:
+        out["value"] = _num(mt.get("value", 100.0), "load of the mechanical test", lo=0.0)
+        if out["control"] == "strain" and out["value"] > 20.0:
+            raise ValueError("The strain of the mechanical test is limited to 20 % (small strains, linear elasticity)")
+        if mt.get("length_mm") not in (None, ""):
+            out["length_mm"] = _num(mt.get("length_mm"), "specimen length along the load", lo=1e-9)
+        out["area_mm2"] = _num(mt.get("area_mm2", 10.0), "loaded area of the specimen", lo=1e-12)
+        out["strength_MPa"] = _num(mt.get("strength_MPa"), "strength of the matrix", lo=0.0, allow_none=True) or None
+    except ValueError as e:
+        errors.append(str(e))
+    return out
+
+
+def _dispersion(dp, phases, rve, errors):
+    """How evenly the particles fill the box (rve.dispersion; percentages in
+    the form, fractions here):
+      uniform  - an even random dispersion (as always);
+      region   - particles only in a slab across `axis`, from `from` to `to`
+                 % of the box edge; matrix elsewhere;
+      gradient - the loading changes linearly along `axis`, `ratio` times as
+                 high at the end of the axis as at its start;
+      clusters - `n_clusters` spherical clusters taking `cluster_vol` % of the
+                 box hold `share` % of the particles; the rest spread evenly.
+    The loading where the particles are densest must stay below random close
+    packing (64 vol%)."""
+    mode = dp.get("mode") if dp.get("mode") in ("uniform", "region", "gradient", "clusters") else "uniform"
+    out = {"mode": mode}
+    if mode == "uniform":
+        return out
+    axis = dp.get("axis") if dp.get("axis") in ("x", "y", "z") else "z"
+    vf = sum(float(ph.get("vf") or 0.0) for ph in phases if ph.get("shape") != G.NETWORK)
+    try:
+        if mode == "region":
+            a = _num(dp.get("from", 0), "start of the particle region", 0.0, 100.0) / 100.0
+            b = _num(dp.get("to", 50), "end of the particle region", 0.0, 100.0) / 100.0
+            if b - a < 0.05:
+                raise ValueError("The particle region must span at least 5 % of the box edge (end above start)")
+            out.update({"axis": axis, "from": a, "to": b})
+            peak = vf / (b - a)
+            if rve.get("film"):
+                errors.append("A particle region is set in a periodic cube; in a thin film use a gradient or "
+                              "clusters")
+        elif mode == "gradient":
+            r = _num(dp.get("ratio", 3), "loading ratio along the axis", 0.02, 50.0)
+            out.update({"axis": axis, "ratio": r})
+            peak = vf * 2.0 * max(r, 1.0) / (1.0 + r)
+        else:
+            n = int(_num(dp.get("n_clusters", 4), "number of clusters", 1, 64))
+            fv = _num(dp.get("cluster_vol", 30), "box volume taken by the clusters", 2.0, 80.0) / 100.0
+            sh = _num(dp.get("share", 45), "share of the particles in the clusters", 0.0, 100.0) / 100.0
+            out.update({"n_clusters": n, "cluster_vol": fv, "share": sh})
+            peak = vf * max(sh / fv, (1.0 - sh) / (1.0 - fv))
+        out["peak_vf"] = peak
+        if peak > 0.64:
+            errors.append(f"With this dispersion the particles would fill {100 * peak:.0f} vol% where they are "
+                          f"densest; no random packing exceeds about 64 vol%. Lower the contrast or widen the region")
+    except ValueError as e:
+        errors.append(str(e))
+    if rve.get("arrangement") == "sheared":
+        errors.append("The arrangement after shear flow starts from an even dispersion; set the dispersion to even")
+    return out
+
+
+def _size_distribution(dist, size_um, unit, where, particles=True):
+    """(dist, size_um) of a phase. The generator draws size factors of the
+    nominal size with a number mean of 1 (geometry.sample_scales), so the
+    nominal size becomes the number mean of the distribution:
+
+    log-normal, normal: the entered size is the number mean of the diameter
+      and 'cv' its coefficient of variation (standard deviation / mean,
+      number basis); 'd_min', 'd_max' cut the distribution (the phase's
+      length unit), +-2 standard deviations without them.
+    table: a measured distribution - diameters 'd' (in 'unit', default µm)
+      and values 'v' per channel or cumulative ('form'), by 'volume' or by
+      'number' ('basis'); 'd_min', 'd_max' cut it. The nominal size becomes its
+      number mean."""
+    kind = dist.get("type")
+    if not particles or kind not in ("lognormal", "normal", "table"):
+        return {"type": "mono"}, size_um
+    bound = lambda key, u: (G.to_um(_num(dist.get(key), f"{key.replace('_', ' ')} of the sizes of {where}", lo=1e-9), u)  # noqa: E731
+                            if dist.get(key) not in (None, "") else None)
+    if kind in ("lognormal", "normal"):
+        cv = _num(dist.get("cv", 0.2), f"size coefficient of variation of {where}", 0.0, 1.0)
+        out = {"type": kind, "cv": cv}
+        lo, hi = bound("d_min", unit), bound("d_max", unit)
+        if lo is not None and hi is not None and hi <= lo:
+            raise ValueError(f"{where}: the upper bound of the sizes must exceed the lower bound")
+        if (lo is not None or hi is not None) and cv > 0:
+            if lo is not None:
+                out.update(lo=lo / size_um["d"], d_min_um=lo)
+            if hi is not None:
+                out.update(hi=hi / size_um["d"], d_max_um=hi)
+            g_lo, g_hi = G.scale_bounds(out)
+            if g_hi <= g_lo * (1 + 1e-9):
+                raise ValueError(f"{where}: no size lies between the bounds of the distribution")
+        return out, size_um
+    tu = dist.get("unit", "um")
+    if tu not in G.UNIT_TO_UM:
+        raise ValueError(f"{where}: unknown length unit '{tu}' of the size distribution")
+    d = [G.to_um(x, tu) for x in (dist.get("d") or [])]
+    v = list(dist.get("v") or [])
+    if len(d) != len(v):
+        raise ValueError(f"{where}: the size distribution needs as many values as diameters")
+    if len(d) > 2000:
+        raise ValueError(f"{where}: the size distribution has more than 2000 rows")
+    basis = "number" if dist.get("basis") == "number" else "volume"
+    form = dist.get("form") if dist.get("form") in ("differential", "cumulative") else "auto"
+    try:
+        edges, pn, info = G.psd_bins(d, v, form, basis, bound("d_min", tu), bound("d_max", tu))
+    except ValueError as e:
+        raise ValueError(f"{where}: {e}") from None
+    mean = G.table_moments(edges, pn)
+    size_um = _rescale(size_um, mean)
+    out = {"type": "table", "edges": [float(x) for x in edges / mean], "p": [float(x) for x in pn],
+           "basis": basis, "form": info["form"], "d_mean_um": mean,
+           "file": str(dist.get("file") or "")[:120]}
+    return out, size_um
 
 
 def _fill_from_library(entry, lib):
@@ -149,18 +296,16 @@ def normalize(form):
                     raise ValueError(f"{where}: unknown polyhedron '{kind}'")
                 size_um["poly"] = kind
                 size_um["n_vertices"] = int(_num(sz.get("n_vertices", 14), f"vertices of {where}", 5, 60))
-                size_um["variants"] = int(_num(sz.get("variants", 8), f"shape variants of {where}", 1, 32))
+                # 0: every grain its own shape (generate.phase_templates)
+                size_um["variants"] = int(_num(sz.get("variants", 8), f"shape variants of {where}", 0, 20000))
             if shape == "helix":
                 size_um["coil_d"] = G.to_um(_num(sz.get("coil_d"), f"coil diameter of {where}", lo=1e-9), unit)
                 size_um["pitch"] = G.to_um(_num(sz.get("pitch", 0.0), f"pitch of {where}", 0.0), unit)
                 size_um["turns"] = _num(sz.get("turns", 3.0), f"number of turns of {where}", 0.1, 200.0)
             if shape != G.NETWORK:
                 SH.validate(shape, size_um)                  # raises on inconsistent sizes
-            dist = ph.get("dist") or {"type": "mono"}
-            if dist.get("type") == "lognormal":
-                dist = {"type": "lognormal", "cv": _num(dist.get("cv", 0.2), f"size coefficient of variation of {where}", 0.0, 1.0)}
-            else:
-                dist = {"type": "mono"}
+            dist, size_um = _size_distribution(ph.get("dist") or {"type": "mono"}, size_um, unit, where,
+                                               shape != G.NETWORK)
             fr = ph.get("fraction") or {}
             fraction = {"value": _num(fr.get("value"), f"content of {where}", 0.0, 99.0),
                         "basis": "wt" if fr.get("basis") == "wt" else "vol"}
@@ -259,6 +404,7 @@ def normalize(form):
         "arrangement": "sheared" if rv.get("arrangement") == "sheared" else "random",
         "shear_strain": int(round(_num(rv.get("shear_strain", 10) or 10, "strain of the shear flow", 1, 100))),
     }
+    out["rve"]["dispersion"] = _dispersion(rv.get("dispersion") or {}, phases, out["rve"], errors)
 
     # ---- analyses -----------------------------------------------------------
     an = form.get("analyses") or {}
@@ -315,6 +461,7 @@ def normalize(form):
         # elasticity and CTE also with the regions that have a glass transition
         # in their rubbery state (E above Tg, alpha2): the alpha2 of an EMC
         "above_tg": bool(opts.get("above_tg", False)),
+        "mechtest": _mechtest(opts.get("mechtest") or {}, out["rve"], errors),
         # moisture: plate thickness and exposure for the uptake curve
         "moisture": {"thickness_mm": _num((opts.get("moisture") or {}).get("thickness_mm", 1.0), "moisture plate thickness", 1e-4, 1e3),
                      "hours": _num((opts.get("moisture") or {}).get("hours", 168.0), "moisture exposure time", 0.0, 1e6),

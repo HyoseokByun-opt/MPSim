@@ -203,12 +203,12 @@ def hull_planes(vertices):
     v /= np.linalg.norm(v, axis=1).max()
     hull = ConvexHull(v)
     eq = hull.equations                        # n.x + e <= 0 inside, |n| = 1
-    planes = []
-    for n0, n1, n2, e in eq:
-        cand = np.array([n0, n1, n2, -e])
-        if not any(np.allclose(cand, p, atol=1e-7) for p in planes):
-            planes.append(cand)
-    return np.array(planes), float(hull.volume), float(hull.area)
+    # coplanar facets (a platonic face split into triangles) give one plane:
+    # the first of each, in hull order
+    _, first = np.unique(np.round(eq, 7), axis=0, return_index=True)
+    eq = eq[np.sort(first)]
+    planes = np.column_stack([eq[:, :3], -eq[:, 3]])
+    return planes, float(hull.volume), float(hull.area)
 
 
 def irregular_vertices(n_vertices, rng, jitter=0.35):
@@ -556,7 +556,7 @@ def phase_stats(shape, size_um, dist, poly_meta=None):
         tab = PolyTable()
         rng = np.random.default_rng(20260929)
         ids = tab.add(size_um.get("poly", "icosahedron"), n_vertices=int(size_um.get("n_vertices", 14)),
-                      rng=rng, n_variants=min(4, int(size_um.get("variants", 8))))
+                      rng=rng, n_variants=min(4, int(size_um.get("variants", 8)) or 4))
         poly_meta = tab.meta
         code, P = params(shape, size_um, ids)
     else:
