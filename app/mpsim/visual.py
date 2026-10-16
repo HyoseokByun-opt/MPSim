@@ -66,9 +66,74 @@ VOX_QUADS_MAX = 6_000_000     # voxel faces of the "Voxels" style
 FACE_MAX = 1024               # RVE faces at the solver's resolution up to this edge
 SURF_MAGIC = b"MPS2"
 
-PHASE_COLORS = ["#d9dde3", "#2f6fdd", "#f28e2b", "#3aa655", "#d64545", "#8e6bbf",
-                "#1bb3c8", "#c9a227", "#e377c2", "#7f7f7f", "#17becf", "#bcbd22"]
+# Default colours of the regions. The matrix is a light neutral grey; a
+# filler takes the colour of its material where that has one (metals,
+# carbons, SiC, ferrites: materials.json "color"), otherwise - white or clear
+# ceramics, polymers - the next vivid colour of the jet scale. A colour too
+# close to the matrix or to a region coloured before it gives way to the next
+# vivid one, so that no two regions look alike.
+MATRIX_COLOR = "#d9dde3"
+VIVID = ["#1e50ff", "#ff3a1c", "#14c2e6", "#ffa600", "#20c75a", "#a23cff", "#ff3a9c", "#00a99d",
+         "#ffd400", "#6f5cff"]
+PHASE_COLORS = [MATRIX_COLOR] + VIVID          # the fallback order (no material known)
 VOID_COLOR = "#7fd3f7"
+INTERPHASE_COLOR = "#9a9a9a"
+
+
+def _hex_rgb(c):
+    c = c.lstrip("#")
+    return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _alike(a, b, tol=90.0):
+    """Two colours a reader could confuse: weighted RGB distance (0-765)."""
+    ra, ga, ba = _hex_rgb(a)
+    rb, gb, bb = _hex_rgb(b)
+    rm = 0.5 * (ra + rb)
+    d2 = (2 + rm / 256) * (ra - rb) ** 2 + 4 * (ga - gb) ** 2 + (2 + (255 - rm) / 256) * (ba - bb) ** 2
+    return math.sqrt(d2) < tol
+
+
+def region_colors(table):
+    """The default colour of every region of a label table (spec.labels)."""
+    try:
+        from . import materials as M
+        lib = M.library_by_id()
+    except Exception:                                                    # noqa: BLE001
+        lib = {}
+    # two passes: material colours first, so that copper stays copper whatever
+    # its position, each clear of the matrix and of the others (two dark powders,
+    # or silver on the light-grey matrix, would read alike); a vivid colour then
+    # keeps a wider distance from those (copper and the vivid red-orange pass
+    # the plain test but read alike)
+    out, own, vi = [None] * len(table), [], 0
+    for i, t in enumerate(table):
+        void = float((t.get("props") or {}).get("E", 1.0) or 0.0) <= 0
+        if t["kind"] == "matrix":
+            out[i] = VOID_COLOR if void else MATRIX_COLOR
+        elif t["kind"] == "interphase":
+            out[i] = INTERPHASE_COLOR
+        elif void:
+            out[i] = VOID_COLOR
+    for i, t in enumerate(table):
+        c = (lib.get(t.get("material_id")) or {}).get("color")
+        if out[i] is None and c and not any(u and _alike(c, u, 120.0) for u in out):
+            out[i] = c
+            own.append(c)
+
+    def taken(c):
+        return any(u and _alike(c, u) for u in out) or any(_alike(c, u, 180.0) for u in own)
+
+    for i in range(len(table)):
+        if out[i] is not None:
+            continue
+        for _ in range(len(VIVID)):
+            c = VIVID[vi % len(VIVID)]
+            vi += 1
+            if not taken(c):
+                break
+        out[i] = c
+    return out
 
 
 def _stride(n, max_n):
@@ -231,18 +296,7 @@ class ViewWriter:
         self._sides = {}                         # label -> voxels inside/outside each surface point
         self._built = False
         self._old = None                         # sampled files of an adopted view
-        colors = []
-        ci = 1
-        for t in table:
-            if t["kind"] == "matrix":
-                colors.append(PHASE_COLORS[0])
-            elif t["kind"] == "interphase":
-                colors.append("#9a9a9a")
-            elif t["props"].get("E", 1.0) <= 0:
-                colors.append(VOID_COLOR)
-            else:
-                colors.append(PHASE_COLORS[ci % len(PHASE_COLORS)])
-                ci += 1
+        colors = region_colors(table)
         counts = np.bincount(labels.ravel(), minlength=len(table))
         self.meta = {
             "shape": self.shape, "spacing_um": self.spacing, "stride": self.stride,

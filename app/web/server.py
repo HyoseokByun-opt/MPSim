@@ -1181,7 +1181,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         except ValueError as e:
             return jsonify({"ok": False, "errors": str(e).split("\n")}), 400
         meta = {"name": form["name"], "analyses": s.get("analyses") or [], "doe": sid,
-                "mem_gb": est_mem_gb(form)}
+                "mem_gb": est_mem_gb(form), "doe_label": case["label"]}
         job = app.queue.submit(owner_or_none(), form, case_dir(), meta,
                                folder=app.config["RUNS_DIR"], case=app.config.get("CASE") or "")
         return jsonify({"ok": True, "id": job.id, "name": form["name"]})
@@ -1211,7 +1211,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                                   parameters=s.get("parameters"))
             form["_limits"] = app.config["LIMITS"]
             meta = {"name": form["name"], "analyses": s.get("analyses") or [], "doe": sid,
-                    "mem_gb": est_mem_gb(form)}
+                    "mem_gb": est_mem_gb(form), "doe_label": case["label"]}
             if old is not None:
                 where, folder, cname = os.path.dirname(old.out_dir), old.folder, old.case
             else:

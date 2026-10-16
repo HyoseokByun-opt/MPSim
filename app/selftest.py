@@ -1880,7 +1880,7 @@ def t_pipeline_porous():
                 f"{P['pore_network']['n_pores']} pores, {s['elapsed_s']:.0f} s")
 
 
-@check("Size distributions: a measured table gives back its number distribution, bounds cut log-normal and normal")
+@check("Size distributions: mean and standard deviation, a measured table gives back its number distribution, bounds")
 def t_psd():
     from mpsim import geometry as G
     rng = np.random.default_rng(3)
@@ -1902,6 +1902,19 @@ def t_psd():
         lo, hi = G.scale_bounds(dd)
         expect(abs(lo - 0.7) < 1e-9 and abs(hi - 1.5) < 1e-9, f"{kind}: bounds {lo}, {hi}")
         out.append(f"{kind} {s_.min():.3f}..{s_.max():.3f}")
+    # mean and standard deviation entered (in the phase's unit) or, from a form
+    # of v5.3.0, the coefficient of variation: the same distribution
+    from mpsim import spec as S
+    for kind in ("normal", "lognormal"):
+        a1, _ = S._size_distribution({"type": kind, "std": 3.0}, {"d": 12.0}, "um", "test")
+        a2, _ = S._size_distribution({"type": kind, "cv": 0.25}, {"d": 12.0}, "um", "test")
+        a3, _ = S._size_distribution({"type": kind, "std": 3000.0}, {"d": 12.0}, "nm", "test")
+        expect(abs(a1["cv"] - 0.25) < 1e-12 and a1 == a2 and abs(a3["cv"] - 0.25) < 1e-12, f"{kind}: {a1} {a2} {a3}")
+    try:
+        S._size_distribution({"type": "normal", "std": 13.0}, {"d": 12.0}, "um", "test")
+        expect(False, "a normal standard deviation above the mean was accepted")
+    except ValueError:
+        pass
     # a normal distribution without bounds: mean 1, cut at +-2 sigma (std x 0.88)
     s_ = G.sample_scales(200000, {"type": "normal", "cv": 0.2}, rng)
     expect(abs(s_.mean() - 1) < 0.003 and abs(s_.std() / 0.2 - 0.8796) < 0.01, f"normal mean {s_.mean():.4f} std {s_.std():.4f}")

@@ -273,7 +273,8 @@ def parameter_catalogue(form):
                     {"path": f"phases.{i}.size.pitch", "label": f"{name}: pitch", "unit": un, "group": g},
                     {"path": f"phases.{i}.size.turns", "label": f"{name}: turns", "unit": "-", "group": g}]
         if (ph.get("dist") or {}).get("type") in ("lognormal", "normal"):
-            out.append({"path": f"phases.{i}.dist.cv", "label": f"{name}: size CV", "unit": "-", "group": g})
+            out.append({"path": f"phases.{i}.dist.std", "label": f"{name}: standard deviation of the size",
+                        "unit": ph.get("size", {}).get("unit", "um"), "group": g})
         if (ph.get("orientation") or {}).get("mode") != "iso":
             out.append({"path": f"phases.{i}.orientation.spread_deg", "label": f"{name}: orientation spread", "unit": "°", "group": g})
         if (ph.get("shell") or {}).get("enabled"):

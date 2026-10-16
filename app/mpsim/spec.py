@@ -181,9 +181,11 @@ def _size_distribution(dist, size_um, unit, where, particles=True):
     nominal size becomes the number mean of the distribution:
 
     log-normal, normal: the entered size is the number mean of the diameter
-      and 'cv' its coefficient of variation (standard deviation / mean,
-      number basis); 'd_min', 'd_max' cut the distribution (the phase's
-      length unit), +-2 standard deviations without them.
+      and 'std' its standard deviation (number basis, the phase's length
+      unit; a form of v5.3.0 and earlier gives 'cv', std / mean, instead);
+      'd_min', 'd_max' cut the distribution (the phase's length unit), +-2
+      standard deviations without them. The generator takes the coefficient
+      of variation std / mean.
     table: a measured distribution - diameters 'd' (in 'unit', default µm)
       and values 'v' per channel or cumulative ('form'), by 'volume' or by
       'number' ('basis'); 'd_min', 'd_max' cut it. The nominal size becomes its
@@ -194,7 +196,19 @@ def _size_distribution(dist, size_um, unit, where, particles=True):
     bound = lambda key, u: (G.to_um(_num(dist.get(key), f"{key.replace('_', ' ')} of the sizes of {where}", lo=1e-9), u)  # noqa: E731
                             if dist.get(key) not in (None, "") else None)
     if kind in ("lognormal", "normal"):
-        cv = _num(dist.get("cv", 0.2), f"size coefficient of variation of {where}", 0.0, 1.0)
+        d_um = float(size_um["d"])
+        if dist.get("std") not in (None, ""):
+            std_um = G.to_um(_num(dist.get("std"), f"standard deviation of the sizes of {where}", lo=0.0), unit)
+        else:
+            std_um = float(_num(dist.get("cv", 0.2), f"size coefficient of variation of {where}", 0.0)) * d_um
+        cv = std_um / d_um if d_um > 0 else 0.0
+        # a normal diameter beyond std = mean would be half below zero; a
+        # log-normal one stays positive, but beyond twice the mean the few
+        # largest particles set the whole RVE
+        cv_max = 1.0 if kind == "normal" else 2.0
+        if cv > cv_max + 1e-12:
+            raise ValueError(f"{where}: a standard deviation of {std_um:.4g} µm exceeds "
+                             f"{'the mean' if kind == 'normal' else 'twice the mean'} ({cv_max * d_um:.4g} µm)")
         out = {"type": kind, "cv": cv}
         lo, hi = bound("d_min", unit), bound("d_max", unit)
         if lo is not None and hi is not None and hi <= lo:

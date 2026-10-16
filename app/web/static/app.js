@@ -84,7 +84,40 @@
   };
   const BACKEND = { puma: "NASA PuMA FE + periodic FV", puma_fv: "NASA PuMA FV", builtin: "built-in verification solver" };
   const backendTxt = (r) => (BACKEND[r.backend] || "") + (r.plan && r.plan.film ? " · thin film" : "");
-  const PHASE_COLORS = ["#d9dde3", "#2f6fdd", "#f28e2b", "#3aa655", "#d64545", "#8e6bbf", "#1bb3c8", "#c9a227", "#e377c2", "#7f7f7f", "#17becf", "#bcbd22"];
+  // Default region colours, as mpsim/visual.py region_colors: the matrix light
+  // grey; a filler its material's colour where it has one (metals, carbons,
+  // SiC, ferrites), otherwise the next vivid colour of the jet scale; a colour
+  // too close to one already given yields to the next vivid one.
+  const MATRIX_COLOR = "#d9dde3", VOID_COLOR = "#7fd3f7";
+  const VIVID = ["#1e50ff", "#ff3a1c", "#14c2e6", "#ffa600", "#20c75a", "#a23cff", "#ff3a9c", "#00a99d", "#ffd400", "#6f5cff"];
+  const PHASE_COLORS = [MATRIX_COLOR, ...VIVID];
+  function colorsAlike(a, b, tol = 90) {
+    const h = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16));
+    const [ra, ga, ba] = h(a), [rb, gb, bb] = h(b), rm = 0.5 * (ra + rb);
+    return Math.sqrt((2 + rm / 256) * (ra - rb) ** 2 + 4 * (ga - gb) ** 2 + (2 + (255 - rm) / 256) * (ba - bb) ** 2) < tol;
+  }
+  // regions: [{kind: "matrix" | "core" | "shell" | "interphase", material_id, void}]
+  function regionColors(regions) {
+    // two passes: material colours first, so copper stays copper whatever its place;
+    // a vivid colour then keeps a wider distance from those (copper and the vivid
+    // red-orange pass the plain test but read alike) - the same as visual.region_colors
+    const out = regions.map((r) => r.kind === "matrix" ? (r.void ? VOID_COLOR : MATRIX_COLOR)
+      : r.kind === "interphase" ? "#9a9a9a" : r.void ? VOID_COLOR : null);
+    const own = [];
+    regions.forEach((r, i) => {
+      const c = (mat(r.material_id) || {}).color;
+      if (out[i] === null && c && !out.some((u) => u && colorsAlike(c, u, 120))) { out[i] = c; own.push(c); }
+    });
+    const taken = (c) => out.some((u) => u && colorsAlike(c, u)) || own.some((u) => colorsAlike(c, u, 180));
+    let vi = 0;
+    regions.forEach((r, i) => {
+      if (out[i] !== null) return;
+      let c;
+      for (let k = 0; k < VIVID.length; k++) { c = VIVID[vi++ % VIVID.length]; if (!taken(c)) break; }
+      out[i] = c;
+    });
+    return out;
+  }
   const TABS = {
     home: ["home", "Home", "Presets and the analysis workflow"],
     material: ["matrix", "Material", "Matrix material and properties"],
@@ -300,9 +333,17 @@
     if (a.particles && !hasParticles()) return "Requires a particle phase.";
     return "";
   }
+  // the colour of each phase of the form, as its run will draw it (shells
+  // take their own colour in between, as in the label table)
   function phaseColors() {
-    let ci = 1;
-    return state.form.phases.map((p) => (isVoid(p) ? "#7fd3f7" : PHASE_COLORS[ci++ % PHASE_COLORS.length]));
+    const f = state.form, regions = [{ kind: "matrix", void: isVoid(f.matrix) }], at = [];
+    f.phases.forEach((p) => {
+      at.push(regions.length);
+      regions.push({ kind: "core", material_id: p.material_id, void: isVoid(p) });
+      if (p.shell && p.shell.enabled) regions.push({ kind: "shell", material_id: p.shell.material_id, void: false });
+    });
+    const cols = regionColors(regions);
+    return at.map((k) => cols[k]);
   }
 
   /* ================================================================ ribbon */
@@ -869,6 +910,13 @@
   function distBlock(ph, i, un) {
     const d = ph.dist || {}, t = d.type || "mono";
     if (t === "mono") return "";
+    if ((t === "normal" || t === "lognormal") && (d.std === undefined || d.std === null || d.std === "")) {
+      // a form of v5.3.0 or earlier gave the coefficient of variation: the
+      // same distribution as a standard deviation in the phase's unit
+      const dd = +((ph.size || {}).d) || 0;
+      d.std = +(dd * (d.cv === undefined || d.cv === null || d.cv === "" ? 0.25 : +d.cv)).toPrecision(4);
+      delete d.cv;
+    }
     const sum = state.plan && state.plan.phases && state.plan.phases[i] && state.plan.phases[i].dist;
     const stats = sum ? `<div class="hint">Drawn by the generator (by number): mean <b>${fmt(sum.number_mean)} µm</b>, standard deviation <b>${fmt(sum.std)} µm</b> (CV ${fmt(sum.cv)}), median ${fmt(sum.number_median)} µm, from ${fmt(sum.d_min)} to ${fmt(sum.d_max)} µm; the chart shows the same particles by number and by volume.</div>` : "";
     const chart = `<canvas class="chart" data-psd="${i}" style="height:170px"></canvas>`;
@@ -876,19 +924,19 @@
         <div><label class="f">Upper bound <span class="u">${t === "table" ? esc(d.unit || "um").replace("um", "µm") : un}</span></label><input type="number" step="any" min="0" data-k="phases.${i}.dist.d_max" data-num placeholder="${t === "table" ? "none" : "+2σ"}"></div></div>`;
     if (t === "lognormal") {
       return `<div class="subh">Log-normal size distribution</div>
-        <div class="g2"><div><label class="f">Coefficient of variation <span class="u">std / mean of d</span></label><input type="number" step="0.05" min="0" max="1" data-k="phases.${i}.dist.cv" data-num></div>
-          <div><label class="f">Parameters of ln d</label><div class="hint" style="padding:4px 0 2px;line-height:1.5">${(() => { const dd = +((ph.size || {}).d) || 0, cv = +d.cv || 0, s2 = Math.log(1 + cv * cv); return dd > 0 && cv > 0 ? `μ = ln(<b>${fmt(dd * Math.exp(-0.5 * s2))} ${un}</b>)<br>σ = <b>${fmt(Math.sqrt(s2))}</b>` : "—"; })()}</div></div></div>
+        <div class="g2"><div><label class="f">Standard deviation <span class="u">${un}</span></label><input type="number" step="any" min="0" data-k="phases.${i}.dist.std" data-num></div>
+          <div><label class="f">Parameters of ln d</label><div class="hint" style="padding:4px 0 2px;line-height:1.5">${(() => { const dd = +((ph.size || {}).d) || 0, cv = dd > 0 ? (+d.std || 0) / dd : 0, s2 = Math.log(1 + cv * cv); return dd > 0 && cv > 0 ? `μ = ln(<b>${fmt(dd * Math.exp(-0.5 * s2))} ${un}</b>)<br>σ = <b>${fmt(Math.sqrt(s2))}</b> · CV ${fmt(cv)}` : "—"; })()}</div></div></div>
         ${bounds}
-        <div class="hint">The size entered above is the <b>mean</b> diameter (by number) and the coefficient of variation its standard deviation over the mean, so the standard deviation is ${fmt((+((ph.size || {}).d) || 0) * (+d.cv || 0))} ${un}. In terms of ln d: σ = √ln(1 + CV²) and μ = ln(mean) − σ²/2 (the median is e^μ). Without bounds the distribution is cut at μ ± 2σ, which narrows the standard deviation drawn by about 13 %; bounds cut it where they are instead.</div>
+        <div class="hint">The diameter entered above is the <b>mean</b> (by number) and this its <b>standard deviation</b>; ln d is normally distributed with σ = √ln(1 + (std/mean)²) and μ = ln(mean) − σ²/2 (the median is e^μ). Without bounds the distribution is cut at μ ± 2σ, which narrows the standard deviation drawn by about 12 %; bounds cut it where they are instead.</div>
         ${chart}${stats}`;
     }
     if (t === "normal") {
-      const dd = +((ph.size || {}).d) || 0, cv = +d.cv || 0;
+      const dd = +((ph.size || {}).d) || 0, sd = +d.std || 0;
       return `<div class="subh">Normal size distribution</div>
-        <div class="g2"><div><label class="f">Coefficient of variation <span class="u">std / mean of d</span></label><input type="number" step="0.05" min="0" max="1" data-k="phases.${i}.dist.cv" data-num></div>
-          <div><label class="f">Parameters of d</label><div class="hint" style="padding:4px 0 2px;line-height:1.5">${dd > 0 && cv > 0 ? `mean <b>${fmt(dd)} ${un}</b><br>σ = <b>${fmt(dd * cv)} ${un}</b>` : "—"}</div></div></div>
+        <div class="g2"><div><label class="f">Standard deviation <span class="u">${un}</span></label><input type="number" step="any" min="0" data-k="phases.${i}.dist.std" data-num></div>
+          <div><label class="f">Parameters of d</label><div class="hint" style="padding:4px 0 2px;line-height:1.5">${dd > 0 && sd > 0 ? `mean <b>${fmt(dd)} ${un}</b>, σ <b>${fmt(sd)} ${un}</b><br>CV ${fmt(sd / dd)}` : "—"}</div></div></div>
         ${bounds}
-        <div class="hint">The diameter itself follows a normal distribution: the size entered above is its <b>mean</b> (by number) and the coefficient of variation its standard deviation over the mean. Without bounds it is cut at the mean ± 2σ (${dd > 0 && cv > 0 ? `${fmt(Math.max(dd * (1 - 2 * cv), 0.05 * dd))} to ${fmt(dd * (1 + 2 * cv))} ${un}` : "—"}), which narrows the standard deviation drawn by about 12 %; bounds cut it where they are instead. It never draws below 5 % of the mean: above CV 0.5 the lower cut is there, and the mean drawn lies a little above the one entered.</div>
+        <div class="hint">The diameter itself follows a normal distribution: the diameter entered above is its <b>mean</b> (by number) and this its <b>standard deviation</b>. Without bounds it is cut at the mean ± 2σ (${dd > 0 && sd > 0 ? `${fmt(Math.max(dd - 2 * sd, 0.05 * dd))} to ${fmt(dd + 2 * sd)} ${un}` : "—"}), which narrows the standard deviation drawn by about 12 %; bounds cut it where they are instead. It never draws below 5 % of the mean: with a standard deviation above half the mean the lower cut is there, and the mean drawn lies a little above the one entered.</div>
         ${chart}${stats}`;
     }
     const rows = (d.d || []).length;
@@ -1900,7 +1948,7 @@
     const statsTbl = stats ? tbl(["Region", key === "dielectric" || key === "magnetic" ? "Mean enhancement" : "Mean", "99th percentile", "Maximum"], stats.map((s) => [esc(s.label), fmt(s.mean), fmt(s.p99), fmt(s.max)])) : "";
     const labels = r.spec.labels.map((l) => l.name);
     const d0 = Object.keys(p.energy_frac || {})[0];
-    const colors = labels.map((_, i) => PHASE_COLORS[i % PHASE_COLORS.length]);
+    const colors = regionColors(r.spec.labels.map((l) => ({ kind: l.kind, material_id: l.material_id, void: +((l.props || {}).E ?? 1) <= 0 })));
     const pol = polarFromTensor(p.tensor);
     if (d0) draws.push(() => CH.bars($("#" + id + "_e"), { labels, values: p.energy_frac[d0].map((v) => 100 * v), unit: " %", max: 100, colors }));
     if (pol.length) draws.push(() => CH.polar($("#" + id + "_p"), { series: pol, unit: p.unit }));
@@ -2333,7 +2381,8 @@
     const pr = P.profiles;
     if (pr) {
       const labels = state.result.spec.labels;
-      draws.push(() => CH.line($("#profZ"), { xlabel: "z (µm)", ylabel: "Volume fraction", ymin: 0, series: labels.map((l, i) => ({ x: pr.position_um.z, y: pr.profiles.z[i], color: PHASE_COLORS[i % PHASE_COLORS.length] === "#d9dde3" ? "#8c959f" : PHASE_COLORS[i % PHASE_COLORS.length], label: l.name })) }));
+      const rc = regionColors(labels.map((l) => ({ kind: l.kind, material_id: l.material_id, void: +((l.props || {}).E ?? 1) <= 0 })));
+      draws.push(() => CH.line($("#profZ"), { xlabel: "z (µm)", ylabel: "Volume fraction", ymin: 0, series: labels.map((l, i) => ({ x: pr.position_um.z, y: pr.profiles.z[i], color: rc[i] === MATRIX_COLOR ? "#8c959f" : rc[i], label: l.name })) }));
       h += `<div class="box"><div class="bt">Volume fraction profile along z</div>${canvas("profZ", 240)}<p class="hint">Slice averages over the xy plane; a flat profile indicates a homogeneous structure.</p></div>`;
     }
     return h + "</div>";
@@ -3362,7 +3411,7 @@
       </div>`;
     if (eff.length) CH.bars($("#optSens"), { labels: eff.map((e) => e.name),
       values: eff.map((e) => 100 * (hasSobol ? (e.sobol_total || 0) : Math.abs(e.src || 0))),
-      unit: " %", max: 100, colors: eff.map((_, i) => PHASE_COLORS[i % PHASE_COLORS.length]) });
+      unit: " %", max: 100, colors: eff.map((_, i) => VIVID[i % VIVID.length]) });
     if (cv) CH.scatter($("#optParity"), { points: cv.actual.map((a, i) => ({ x: a, y: cv.predicted[i] })),
       xlabel: `Computed ${m.label}${u}`, ylabel: `Predicted${u}`, unity: true, label: "Cross-validated prediction" });
   }

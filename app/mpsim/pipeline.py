@@ -1132,11 +1132,7 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     # the animation is the run's view: the player reads it from there
     vdir = os.path.join(out_dir, "view")
     os.makedirs(vdir, exist_ok=True)
-    labs, ci = [], 1
-    for t in table:
-        labs.append({"name": t["name"], "color": V.PHASE_COLORS[0] if t["kind"] == "matrix"
-                     else V.PHASE_COLORS[ci % len(V.PHASE_COLORS)]})
-        ci += t["kind"] != "matrix"
+    labs = [{"name": t["name"], "color": c} for t, c in zip(table, V.region_colors(table))]
     dv = types.SimpleNamespace(dir=vdir, meta={"labels": labs, "built": time.time()})
     dv.add_particles_anim = lambda *a, **k: V.ViewWriter.add_particles_anim(dv, *a, **k)
     try:

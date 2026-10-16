@@ -68,11 +68,12 @@ def _dispersion_text(rve):
     return ""
 
 
-def _dist_text(dist):
+def _dist_text(dist, d_um=None):
     """The size distribution of a phase in words (d above is its number mean)."""
     t = (dist or {}).get("type")
     if t in ("lognormal", "normal"):
-        txt = f", {'log-normal' if t == 'lognormal' else 'normal'} by number (d = mean), CV {_fmt(dist['cv'])}"
+        std = f"standard deviation {_fmt(dist['cv'] * d_um)} µm" if d_um else f"CV {_fmt(dist['cv'])}"
+        txt = f", {'log-normal' if t == 'lognormal' else 'normal'} by number (d = mean), {std}"
         if dist.get("d_min_um") or dist.get("d_max_um"):
             txt += f", bounds {_fmt(dist.get('d_min_um'))}–{_fmt(dist.get('d_max_um'))} µm"
         return txt
@@ -200,7 +201,7 @@ def write(out_dir, r):
         sz = ph["size_um"]
         desc = f"{SHAPES[ph['shape']]}, d {_fmt(sz['d'])} µm" + (f", aspect ratio {_fmt(sz.get('aspect'))}" if "aspect" in sz else "") + \
                (f", length {_fmt(sz.get('length'))} µm" if "length" in sz else "") + \
-               _dist_text(ph["dist"]) + \
+               _dist_text(ph["dist"], sz.get("d")) + \
                (f", orientation {ph['orientation']['mode']}" if ph["shape"] not in ("sphere", "network") else "") + \
                (f", shell {_fmt(ph['shell']['thickness_um'])} µm" if ph.get("shell") else "") + \
                (f" × {_fmt(sz['ly'])} × {_fmt(sz['lz'])} µm" if "ly" in sz else "") +                (f", n {_fmt(sz['n'])}" if ph["shape"] == "superellipsoid" else "") +                (f", {sz.get('poly')}" if ph["shape"] == "polyhedron" else "") +                (f", coil {_fmt(sz['coil_d'])} µm, pitch {_fmt(sz['pitch'])} µm, {_fmt(sz['turns'])} turns" if ph["shape"] == "helix" else "") +                (f", R<sub>int</sub> {_fmt(ph['r_int'])} m²K/W" if ph.get("r_int") else "") +                (f", R<sub>c</sub> {_fmt(ph['r_contact'])} m²K/W" if ph.get("r_contact") else "")

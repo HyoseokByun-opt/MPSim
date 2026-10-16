@@ -218,7 +218,9 @@ class JobQueue:
         if meta.get("doe"):
             # A DOE case is named for the values it varies ("content 50 - d 5"),
             # which is the only thing that tells two of its runs apart.
-            label = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(meta.get("name") or "")).strip("-.")
+            # (the label alone: the full name starts with the base case's name and
+            # would be cut at 60 characters before the values)
+            label = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(meta.get("doe_label") or meta.get("name") or "")).strip("-.")
             base = "doe-" + (label or base)
         base = re.sub(r"[^A-Za-z0-9_+.-]+", "-", base).strip("-+.")[:60]
         return base or "run"
