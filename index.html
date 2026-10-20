@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.4.0",
+  "softwareVersion": "5.5.0",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -180,7 +180,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.4.0</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.5.0</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -248,12 +248,12 @@
       <div class="sheet wide" aria-label="Summary of the properties of the cured compound">
           <div class="tile" style="--c:#1c7ed6"><span class="lab">Flow<i> · before cure</i></span><b>33 Pa·s</b><span class="l">at 10 1/s; relative viscosity 24 ± 3</span><span class="l">filling of a 50 µm × 10 mm gap: 108 min</span><span class="l">maximum packing φm 0.77</span></div>
           <div class="tile" style="--c:#4263eb"><span class="lab">Settling<i> · before gel</i></span><b>2.9 µm</b><span class="l">15 µm silica, 30 min before gelation</span><span class="l">hindered settling at 55 vol%</span><span class="l">41 times slower than an isolated particle</span></div>
-          <div class="tile" style="--c:#0b62c4"><span class="lab">Structure<i> · after the flow</i></span><b>4.5 close pairs</b><span class="l">per sphere (random packing: 2.5)</span><span class="l">oriented along the compression axis (-0.024)</span><span class="l">after shear flow to a strain of 10</span></div>
-          <div class="tile" style="--c:#e8590c"><span class="lab">Heat<i> · die to substrate</i></span><b>0.573 W/m·K</b><span class="l">through the gap (z); x 0.573, y 0.579</span><span class="l">2.9 times the resin (0.2 W/m·K)</span><span class="l">random packing: 0.569 (+0.7 %)</span></div>
-          <div class="tile" style="--c:#2b8a3e"><span class="lab">Expansion<i> · warpage</i></span><b>18.4 ppm/K</b><span class="l">below Tg; resin 60, silica 0.5</span><span class="l">Kerner (separate spheres) 22.6</span><span class="l">near contacts restrain the resin</span></div>
-          <div class="tile" style="--c:#0ca678"><span class="lab">Stiffness<i> · stress</i></span><b>13.3 GPa</b><span class="l">Young&#x27;s modulus; resin 3, silica 72</span><span class="l">Poisson&#x27;s ratio 0.26</span><span class="l">within the Hashin–Shtrikman bounds</span></div>
+          <div class="tile" style="--c:#0b62c4"><span class="lab">Structure<i> · after the flow</i></span><b>3.8 close pairs</b><span class="l">per sphere (random packing: 1.7)</span><span class="l">oriented along the compression axis (-0.033)</span><span class="l">after shear flow to a strain of 10</span></div>
+          <div class="tile" style="--c:#e8590c"><span class="lab">Heat<i> · die to substrate</i></span><b>0.596 W/m·K</b><span class="l">through the gap (z); x 0.588, y 0.602</span><span class="l">3.0 times the resin (0.2 W/m·K)</span><span class="l">random packing: 0.576 (+3.5 %)</span></div>
+          <div class="tile" style="--c:#2b8a3e"><span class="lab">Expansion<i> · warpage</i></span><b>16.5 ppm/K</b><span class="l">below Tg; resin 60, silica 0.5</span><span class="l">Kerner (separate spheres) 22.6</span><span class="l">touching particles restrain the resin</span></div>
+          <div class="tile" style="--c:#0ca678"><span class="lab">Stiffness<i> · stress</i></span><b>15.0 GPa</b><span class="l">Young&#x27;s modulus; resin 3, silica 72</span><span class="l">Poisson&#x27;s ratio 0.25</span><span class="l">within the Hashin–Shtrikman bounds</span></div>
           <div class="tile" style="--c:#7048e8"><span class="lab">Signal<i> · Dk and Df</i></span><b>Dk 3.84</b><span class="l">Df 0.0068</span><span class="l">resin Dk 3.9, Df 0.015</span><span class="l">Df: volume-weighted mean of the phases</span></div>
-          <div class="tile" style="--c:#1098ad"><span class="lab">Moisture<i> · reliability</i></span><b>0.77 wt%</b><span class="l">saturated uptake (resin 2.5 wt%)</span><span class="l">diffusivity 1.99e-12 m²/s</span><span class="l">1 mm part: 50 % saturation in 7 h</span></div>
+          <div class="tile" style="--c:#1098ad"><span class="lab">Moisture<i> · reliability</i></span><b>0.77 wt%</b><span class="l">saturated uptake (resin 2.5 wt%)</span><span class="l">diffusivity 1.92e-12 m²/s</span><span class="l">1 mm part: 50 % saturation in 7 h</span></div>
       </div>
 
       <div class="ex">
@@ -283,7 +283,7 @@
         <h3>Microstructure after shear flow</h3>
         <p>The random packing is sheared with the flow along x and the velocity gradient along z to a whole-number strain (10),
           at which the sheared periodic images coincide with the ordinary ones. The number of close pairs (surfaces within 5 % of
-          the sum of the radii) increases from 2.5 to 4.5 per sphere, and the pairs orient along the compression axis of the shear
+          the sum of the radii) increases from 1.7 to 3.8 per sphere, and the pairs orient along the compression axis of the shear
           (135° from the flow direction) while the extension axis (45°) is depleted, as known for sheared non-Brownian
           suspensions (Morris, <i>Rheol. Acta</i> 48, 909 (2009)). The contents of the drawn structure equal the input (38.50 and
           16.50 vol%).</p>
@@ -294,11 +294,11 @@
       <div class="ex">
         <h3>Thermal conductivity</h3>
         <p>Steady heat conduction is solved with periodic finite volumes along x, y and z. The conductivity through the gap,
-          0.573 W/m·K, is 2.9 times that of the resin, 5 % above the Maxwell–Garnett estimate (the lower Hashin–Shtrikman bound,
-          0.544) and well below the Bruggeman estimate (0.685): the particles are separated by resin films, and the heat flux is
-          highest in the silica and in the thin gaps between near-contacting particles. The changes caused by the shear (up to
-          1.6 %) are smaller than the statistical scatter of one realisation. Refining the grid from 240³ to 360³ changes k_z by
-          +0.12 %.</p>
+          0.596 W/m·K, is 3.0 times that of the resin, 9.5 % above the Maxwell–Garnett estimate (the lower Hashin–Shtrikman
+          bound, 0.544) and well below the Bruggeman estimate (0.685): at a conductivity ratio of 7 the points where particles
+          touch carry little of the heat. The shear brings particles into contact and raises the conductivity by 3.5 % through
+          the gap and 4.0 % along y (0.7 % along the flow), of the order of the scatter of one realisation. Refining the grid
+          from 240³ to 360³ changes k_z by −0.04 %.</p>
         <div class="flow">
           <figure class="anim"><img src="assets/heat_flux.gif" width="560" height="560" loading="lazy"
                alt="Heat flux inside the cured compound, a cut plane travelling through the RVE">
@@ -306,12 +306,12 @@
           <div>
         <table class="kv">
           <tr><th>Direction</th><th>Random packing</th><th>After shear flow</th><th>Change</th></tr>
-          <tr><td>x (flow)</td><td>0.573</td><td>0.573</td><td>0.0 %</td></tr>
-          <tr><td>y (vorticity)</td><td>0.570</td><td>0.579</td><td>+1.6 %</td></tr>
-          <tr><td>z (gradient, through the gap)</td><td>0.569</td><td>0.573</td><td>+0.7 %</td></tr>
+          <tr><td>x (flow)</td><td>0.584</td><td>0.588</td><td>+0.7 %</td></tr>
+          <tr><td>y (vorticity)</td><td>0.579</td><td>0.602</td><td>+4.0 %</td></tr>
+          <tr><td>z (gradient, through the gap)</td><td>0.576</td><td>0.596</td><td>+3.5 %</td></tr>
         </table>
-            <p class="note">W/m·K. A 1 mm layer has an area-specific resistance of 1745 mm²K/W; the thermal diffusivity is
-              0.386 mm²/s.</p>
+            <p class="note">W/m·K. A 1 mm layer has an area-specific resistance of 1678 mm²K/W; the thermal diffusivity is
+              0.400 mm²/s.</p>
           </div>
         </div>
         <figure class="shot plots"><img src="assets/muf_heat.webp" width="2400" height="990" loading="lazy"
@@ -320,19 +320,19 @@
 
       <div class="ex">
         <h3>Thermal expansion and stiffness</h3>
-        <p>FANS solves six unit strains and a uniform temperature change. The volumetric mean CTE, 18.4 ppm/K, lies below the
-          Kerner estimate for separated spheres (22.6 ppm/K), since near-contacting particles restrain the resin; the Hill
-          modulus, 13.3 GPa (ν 0.26), lies within the Hashin–Shtrikman bounds (9.4–30.2 GPa). Fewer close pairs lie along the
-          flow direction x, where E is lowest and α highest; the difference (up to 5 %) is comparable with the scatter of one
-          realisation. For a temperature rise of 100 K with the RVE held at its size, the von Mises stress concentrates in the
-          fine filler and at near contacts (mean 15 MPa, 99th percentile 68 MPa in the 3 µm silica).</p>
+        <p>FANS solves six unit strains and a uniform temperature change. The volumetric mean CTE, 16.5 ppm/K, lies below the
+          Kerner estimate for separated spheres (22.6 ppm/K), since touching particles restrain the resin; the Hill
+          modulus, 15.0 GPa (ν 0.25), lies within the Hashin–Shtrikman bounds (9.4–30.2 GPa). Fewer close pairs lie along the
+          flow direction x, where E is lowest and α highest; the difference (up to 11 % in α, 5 % in E) is comparable with the
+          scatter of one realisation. For a temperature rise of 100 K with the RVE held at its size, the von Mises stress
+          concentrates in the fine filler and where particles touch (mean 23 MPa, 99th percentile 85 MPa in the 3 µm silica).</p>
         <figure class="shot plots"><img src="assets/muf_mechanics.webp" width="2400" height="990" loading="lazy"
              alt="Thermal stress, thermal expansion and Young's modulus per direction"></figure>
         <table class="kv">
           <tr><th>Direction</th><th>α (ppm/K)</th><th>E (GPa)</th></tr>
-          <tr><td>x (flow)</td><td>18.7</td><td>13.4</td></tr>
-          <tr><td>y (vorticity)</td><td>17.8</td><td>13.7</td></tr>
-          <tr><td>z (gradient)</td><td>18.5</td><td>13.8</td></tr>
+          <tr><td>x (flow)</td><td>17.4</td><td>15.0</td></tr>
+          <tr><td>y (vorticity)</td><td>15.6</td><td>15.8</td></tr>
+          <tr><td>z (gradient)</td><td>16.4</td><td>15.5</td></tr>
         </table>
       </div>
 
@@ -349,17 +349,17 @@
       <div class="ex">
         <h3>Moisture uptake and swelling</h3>
         <p>Diffusion is solved on the water activity, which is continuous across the phase boundaries; the silica does not
-          absorb water. The effective diffusivity is 0.67 times that of the resin, 15 % below the Maxwell estimate for
-          impermeable spheres (0.78), because the diffusion paths wind between closely spaced particles. The silica restrains
-          the hygroscopic swelling to 0.23 % at saturation.</p>
+          absorb water. The effective diffusivity is 0.64 times that of the resin, 18 % below the Maxwell estimate for
+          impermeable spheres (0.78), because the diffusion paths wind between closely spaced and touching particles. The
+          silica restrains the hygroscopic swelling to 0.20 % at saturation.</p>
         <figure class="shot plots"><img src="assets/muf_moisture.webp" width="2400" height="990" loading="lazy"
              alt="Water activity, uptake curve of a 1 mm part and diffusivity per direction"></figure>
         <table class="kv">
           <tr><th>Quantity</th><th>Cured compound</th><th>Epoxy</th></tr>
           <tr><td>Saturated uptake</td><td>0.77 wt%</td><td>2.5 wt%</td></tr>
-          <tr><td>Diffusivity D_x / D_y / D_z (10⁻¹² m²/s)</td><td>2.00 / 2.04 / 1.99</td><td>3.0</td></tr>
-          <tr><td>1 mm part: 50 % / 95 % of saturation</td><td>6.9 h / 39 h</td><td>4.6 h / 26 h</td></tr>
-          <tr><td>Swelling strain at saturation</td><td>0.23 %</td><td>0.75 %</td></tr>
+          <tr><td>Diffusivity D_x / D_y / D_z (10⁻¹² m²/s)</td><td>1.87 / 1.96 / 1.92</td><td>3.0</td></tr>
+          <tr><td>1 mm part: 50 % / 95 % of saturation</td><td>7.1 h / 41 h</td><td>4.6 h / 26 h</td></tr>
+          <tr><td>Swelling strain at saturation</td><td>0.20 %</td><td>0.75 %</td></tr>
         </table>
       </div>
     </div>
@@ -381,7 +381,7 @@
       <p class="sub">The engine is verified against problems with known solutions. Every run also reports its own checks (RVE size,
         resolution, particle count, convergence and rigorous bounds) as passed, warning or failed, together with the reason.</p>
       <div class="stats">
-        <div class="stat"><b>64</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>73</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
         <div class="stat"><b>30</b><span>ready-to-run presets for semiconductor materials, four compared with published measurements</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
@@ -403,10 +403,10 @@
       <h3 style="margin:30px 0 8px">Compared with published measurements</h3>
       <table class="bench">
         <tr><th>Preset and source</th><th>Reported</th><th>Computed</th></tr>
-        <tr><td>Cu + diamond 50 vol%, 400 µm<span class="src">Wang et al., <i>Materials</i> 2025 <a href="#ref1">[1]</a></span></td><td>640 W/m·K</td><td>644 W/m·K (interface 12.5 MW/m²K)</td></tr>
+        <tr><td>Cu + diamond 50 vol%, 400 µm<span class="src">Wang et al., <i>Materials</i> 2025 <a href="#ref1">[1]</a></span></td><td>640 W/m·K</td><td>646 W/m·K (interface 12.5 MW/m²K)</td></tr>
         <tr><td>AlSiC 63 vol%<span class="src">Guo et al., <i>J. USTB</i> 2014 <a href="#ref2">[2]</a></span></td><td>178 W/m·K, 8.21 ppm/K</td><td>189 W/m·K, 8.84 ppm/K</td></tr>
         <tr><td>PTFE + silica 60 wt%<span class="src">Murali et al., <i>Compos. A</i> 2009 <a href="#ref3">[3]</a></span></td><td>Dk 2.9</td><td>Dk 3.01</td></tr>
-        <tr><td>Carbonyl iron + epoxy 54 vol%<span class="src">Sugawa et al., <i>IEEE Trans. Magn.</i> 2013 <a href="#ref4">[4]</a></span></td><td>μr 7.5 (printed core)</td><td>μr 5.1 (separate spheres; a printed core forms chains)</td></tr>
+        <tr><td>Carbonyl iron + epoxy 54 vol%<span class="src">Sugawa et al., <i>IEEE Trans. Magn.</i> 2013 <a href="#ref4">[4]</a></span></td><td>μr 7.5 (printed core)</td><td>μr 5.96 (spheres; a printed core forms chains)</td></tr>
       </table>
       <ol class="refs">
         <li id="ref1">Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, <i>Materials</i> <b>18</b> (16), 3882 (2025). <a href="https://doi.org/10.3390/ma18163882">doi:10.3390/ma18163882</a> — 400 µm diamond, 50 vol%: 640 W/m·K.</li>
@@ -447,7 +447,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.4.0},
+  version   = {5.5.0},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
