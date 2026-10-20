@@ -215,6 +215,16 @@ def _generator_phases(spec):
 STRUCTURE_VERSION = 5
 
 
+def contacts_key(opts):
+    """The contact handling as it identifies a structure: the mode, and for
+    "apart" a gap other than the 2 voxels it always had (older keys stay)."""
+    c = opts.get("contacts", "keep")
+    g = opts.get("particle_gap_vox")
+    if c == "apart" and g not in (None, "") and abs(float(g) - 2.0) > 1e-9:
+        return f"apart:{float(g):g}"
+    return c
+
+
 def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispersion=None):
     """What identifies one generated realisation: the generator's own inputs
     (phase names aside), the grid, the contact handling and the seed - and,
@@ -1559,7 +1569,7 @@ def rebuild_view(run_dir, log=print):
         plan = json.load(fh)["plan"]
     gen_phases = _generator_phases(spec)
     plan.setdefault("skin", film_skin(spec, plan) if plan.get("film") else None)
-    key = structure_key(gen_phases, plan, spec["options"]["contacts"], spec["rve"]["seed"],
+    key = structure_key(gen_phases, plan, contacts_key(spec["options"]), spec["rve"]["seed"],
                         wants_contact_faces(spec), sheared=shear_key(spec), dispersion=spec["rve"].get("dispersion"))
     got = load_structure([run_dir], key)
     if got is None:
@@ -2833,7 +2843,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         log("!! NASA PuMA could not be imported; the built-in verification solvers are used instead: "
             + str(PB.unavailable_reason()))
         backend = "builtin"
-    plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], elastic_method=spec["options"]["elastic_method"]), need, limits)
+    plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), need, limits)
     log(f"== {spec['name']}")
     if prev is not None:
         log(f"   Continuing this run: {', '.join(sorted(kept))} kept, {', '.join(sorted(need)) or 'nothing'} added.")
@@ -3360,7 +3370,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         # only when this run solves heat: the structure stays the same one for
         # every selection of analyses
         want_cf = wants_contact_faces(spec)
-        skey = structure_key(gen_phases, plan, opts["contacts"], seed, want_cf, sheared=sheared,
+        skey = structure_key(gen_phases, plan, contacts_key(opts), seed, want_cf, sheared=sheared,
                              dispersion=spec["rve"].get("dispersion"))
         got = load_structure([out_dir] + list(reuse.get("from") or []), skey) if opts.get("reuse_runs", True) else None
         if got is not None:
@@ -3372,7 +3382,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 save_structure(out_dir, skey, gen_labels, ginfo, ginfo.get("contact_mask"))
         else:
             gen_labels, ginfo = GEN.generate(N, h, gen_phases, seed=seed, log=log, should_stop=should_stop,
-                                             contacts=opts["contacts"], want_contact_faces=want_cf, nz=Nz,
+                                             contacts=opts["contacts"], gap_vox=opts.get("particle_gap_vox") or 2.0,
+                                             want_contact_faces=want_cf, nz=Nz,
                                              skin=skin, shear=shear_packing(spec, log, event, prog, should_stop),
                                              dispersion=spec["rve"].get("dispersion"))
             try:
@@ -3391,7 +3402,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         vf_labels = counts / labels.size
         rinfo = {"seed": seed, "route": ginfo["route"], "seconds": ginfo["seconds"],
                  "contact_pairs": pair_faces,
-                 "contacts_mode": ginfo.get("contacts_mode"), "contacts_removed": ginfo["contacts_removed"],
+                 "contacts_mode": ginfo.get("contacts_mode"), "gap_vox": ginfo.get("gap_vox"),
+                 "contacts_removed": ginfo["contacts_removed"],
                  "contact_faces": ginfo.get("contact_faces", 0), "touching_pairs": ginfo.get("touching_pairs", 0),
                  "voxel_conflicts": ginfo.get("voxel_conflicts", 0),
                  "shrunk": ginfo.get("shrunk"),

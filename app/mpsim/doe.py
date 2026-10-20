@@ -226,6 +226,8 @@ def parameter_catalogue(form):
         {"path": "rve.T_um", "label": "Film thickness (thin-film domain)", "unit": "µm", "group": "Domain"},
         {"path": "rve.shear_strain", "label": "Strain of the shear flow (arrangement after shear flow)", "unit": "-",
          "group": "Domain"},
+        {"path": "options.particle_gap_vox", "label": "Gap between particles (0 = they may touch)", "unit": "voxels",
+         "group": "Structure"},
         {"path": "options.delta_T", "label": "ΔT", "unit": "K", "group": "Options"},
         {"path": "options.mechtest.value", "label": "Load of the mechanical test", "unit": "N, MPa, µm or %",
          "group": "Options"},

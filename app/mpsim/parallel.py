@@ -420,8 +420,10 @@ PAR_FRACTION = 0.85
 # or three), the pore network ~1x, the grain statistics ~3x (on most cores).
 TASK_COST = {"elastic": 5.0, "fe": 1.0, "fv": 0.05, "stokes": 30.0, "tort": 1.0, "emi": 0.4,
              "radiation": 0.5, "morph": 1.0, "perc": 1.2, "poros": 1.4, "network": 1.0, "grains": 3.0}
-# Fraction of each kind that runs in parallel on a worker's threads.
-TASK_PAR = {"elastic": PAR_FRACTION, "fe": PAR_FRACTION, "fv": 0.6, "stokes": 0.1, "tort": 0.5, "emi": 0.6,
+# Fraction of each kind that runs in parallel on a worker's threads. FV
+# (5.4, the CG vector work threaded): one 256^3 direction 34.9 s on 1 thread,
+# 17.5 s on 4, 14.2 s on 8, 13.3 s on 14 - p = 0.67 (memory-bound beyond 8).
+TASK_PAR = {"elastic": PAR_FRACTION, "fe": PAR_FRACTION, "fv": 0.67, "stokes": 0.1, "tort": 0.5, "emi": 0.6,
             "radiation": 0.05, "morph": 0.8, "perc": 0.5, "poros": 0.6, "network": 0.6, "grains": 0.85}
 
 

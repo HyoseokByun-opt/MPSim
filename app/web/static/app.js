@@ -280,7 +280,7 @@
       rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: true, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
-        directions: "xyz", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", contacts: "apart", parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: "auto", reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
+        directions: "xyz", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: "auto", reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
         emi: { thickness_mm: 1, f_min_hz: 1e6, f_max_hz: 1e10, method: "complex", n_freq: 10, fullwave: true },
         acoustics: { thickness_mm: 20, f_min_hz: 100, f_max_hz: 10000 },
         radiation: { temperature_K: 1000, refractive_index: 1, sources: 200, rays: 500 },
@@ -304,10 +304,19 @@
     if (!rv.voxel_um) rv.voxel_um = +pl.h_um.toPrecision(6);
     rv.N = null;
   }
-  function completeForm(f) {
+  function completeForm(f, record = false) {
     const base = defaultForm();
     const out = deepMerge(base, clone(f));
     out.analyses = clone(f.analyses || base.analyses);
+    // the contact handling of 5.3.1 and earlier ("apart", the default then, kept
+    // particles 2 voxels apart). A record of what was run (an input file, the
+    // input of a run) keeps that gap; a form left in the browser carried the old
+    // default in every case, so it takes the new one: particles touch
+    if (out.options) {
+      const c = (f.options || {}).contacts, g = (f.options || {}).particle_gap_vox;
+      if (record && c && (g === undefined || g === null || g === "")) out.options.particle_gap_vox = c === "apart" ? 2 : 0;
+      delete out.options.contacts;
+    }
     if (out.matrix && out.matrix.material_id && !(f.matrix && f.matrix.props) && mat(out.matrix.material_id)) {
       out.matrix.props = clone(mat(out.matrix.material_id).props);
       if (!f.matrix.name) out.matrix.name = mat(out.matrix.material_id).name;
@@ -1013,12 +1022,12 @@
       <div class="plist">${rows.join("")}</div>
       ${state.sel < 0 ? matrixEditor() : f.phases.length ? phaseEditor(state.sel) : '<div class="note">No phases are defined; only the matrix is analysed. Phases are added with the buttons above or in the ribbon.</div>'}
       ${contactTableHTML()}
-      <div class="sec"><div class="sh">${I("grains")}Touching particles</div><div class="sb">
-        <select data-k="options.contacts"><option value="apart">Keep apart where the loading allows</option><option value="keep">Allow contacts</option><option value="separate">Trim contacts to matrix (v3)</option></select>
-        <div class="hint" style="margin-top:4px">${{
-          separate: "Every voxel where two non-overlapping particles touch is cleared to matrix. No contacts remain, but the particles are trimmed.",
-          keep: "Particles are placed as the packing puts them and may touch. Shapes are exact; the touching voxel faces are counted and can carry a contact resistance R<sub>c</sub>.",
-        }[(f.options || {}).contacts] || "Particles are moved (never trimmed) until no voxel of one is next to a voxel of another, with a 2-voxel gap where it fits. A dense loading that cannot keep every particle apart lets them touch only where needed; the remaining contacts are counted and can carry R<sub>c</sub>. Near-contacts one voxel wide are what a voxel solver resolves worst."}</div></div></div>
+      <div class="sec"><div class="sh">${I("grains")}Gap between particles</div><div class="sb">
+        <label class="f">Gap between particles <span class="u">voxels · 0 = they may touch</span></label>
+        <input type="number" min="0" max="50" step="0.5" data-k="options.particle_gap_vox" data-num placeholder="0">
+        <div class="hint" style="margin-top:4px">${+((f.options || {}).particle_gap_vox) > 0
+          ? `Particles are moved (never trimmed) so that their surfaces stay ${fmt(+f.options.particle_gap_vox)} voxel${+f.options.particle_gap_vox === 1 ? "" : "s"} apart (from 2 voxels on, no voxel of one is even a corner neighbour of a voxel of another) wherever the loading allows - as with a dispersant or a coating. A loading too dense for the gap lets particles touch only where needed. The gap is measured in voxels, so it shrinks with the voxel size.`
+          : "Particles never overlap but may touch, as they do in a filled compound. The touching voxel faces are counted and can carry a contact resistance R<sub>c</sub>; heat and current cross a contact face, so a dense, conductive filler forms paths. A value above 0 keeps the particles that many voxels apart instead."}</div></div></div>
       <div class="sec"><div class="sh">${I("morphology")}Composition</div><div class="sb" id="compBody"></div></div>`;
   }
   /* R_c for every pair of fillers. The diagonal is each filler's own R_c
@@ -1303,7 +1312,7 @@
       }
     });
   }
-  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|porosimetry\.fluid|\.props\.E|\.name)$/;
+  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox)$/;
   function onField(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
@@ -3802,7 +3811,7 @@
     $("#rbar").addEventListener("change", async (e) => {
       if (!e.target.matches("[data-rbfile]")) return;
       const f = e.target.files[0]; if (!f) return;
-      try { state.form = completeForm(JSON.parse(await f.text())); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); toast("The input has been opened."); }
+      try { state.form = completeForm(JSON.parse(await f.text()), true); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); toast("The input has been opened."); }
       catch (err) { toast("The JSON file could not be read: " + err.message); }
       e.target.value = "";
     });
@@ -4070,7 +4079,7 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
         const s = $("#sec-" + b.dataset.sec); if (s) s.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       else if (b.dataset.editspec !== undefined) {
-        try { const f = await api("GET", `/api/jobs/${state.resultJob}/download/spec`); delete f._limits; delete f.preview; state.form = completeForm(f); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); setTab("structure"); toast("The input of this run has been loaded."); }
+        try { const f = await api("GET", `/api/jobs/${state.resultJob}/download/spec`); delete f._limits; delete f.preview; state.form = completeForm(f, true); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); setTab("structure"); toast("The input of this run has been loaded."); }
         catch (err) { toast(err.message); }
       }
       else if (b.dataset.libmatrix) { state.form.matrix = matEntry(b.dataset.libmatrix); state.sel = -1; $("#modal").hidden = true; setTab("structure"); schedulePlan(0); saveForm(); toast("The matrix material has been changed."); }

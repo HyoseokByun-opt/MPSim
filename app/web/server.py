@@ -527,7 +527,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         try:
             spec = S.normalize(copy.deepcopy(form))
             from mpsim.pipeline import _plan_phases
-            plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
+            plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
             est_mem_gb.last_plan = plan
             return round(max((plan.get("memory_gb") or {"-": 0.0}).values()), 3)
         except Exception:                                   # noqa: BLE001
@@ -547,7 +547,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         except ValueError as e:
             return jsonify({"ok": False, "errors": str(e).split("\n")})
         from mpsim.pipeline import _plan_phases
-        plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
+        plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
         return jsonify({"ok": True, "plan": plan, "composition": spec.get("composition"),
                         "labels": [{"name": t["name"], "kind": t["kind"]} for t in spec["labels"]],
                         "phases": [{"name": p["name"], "vf": p["vf"], "d_um": p["size_um"].get("d"),
@@ -611,10 +611,10 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         from mpsim import pipeline as P
         try:
             need = S.required_analyses(set(spec["analyses"]))
-            plan = R.plan(P._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], elastic_method=spec["options"]["elastic_method"]), need,
+            plan = R.plan(P._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), need,
                           app.config["LIMITS"])
             plan["skin"] = P.film_skin(spec, plan) if plan.get("film") else None
-            key = P.structure_key(P._generator_phases(spec), plan, spec["options"]["contacts"],
+            key = P.structure_key(P._generator_phases(spec), plan, P.contacts_key(spec["options"]),
                                   spec["rve"]["seed"], P.wants_contact_faces(spec), sheared=P.shear_key(spec),
                                   dispersion=spec["rve"].get("dispersion"))
         except Exception:                                            # noqa: BLE001

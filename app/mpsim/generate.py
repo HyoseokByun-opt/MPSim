@@ -25,18 +25,20 @@ Placement routes, chosen per job:
 
 Particles keep their shape. Two particles whose surfaces come within a voxel
 of each other become voxel neighbours, and a voxel solver then sees a contact
-the continuous geometry does not have. The voxel finite-element solver even
-conducts through a shared edge or corner (measured: +27 % k at 30 vol %
-alumina in epoxy, against a face-based FV solve). The contact modes:
+(the face-based FV solve conducts across a shared face; the voxel finite-element
+solver even across a shared edge or corner: +27 % k at 30 vol % alumina in
+epoxy). The contact modes:
 
-* ``apart`` (default) - particles are *moved*, never trimmed, so that no voxel
-  of one particle touches a voxel of another in any of the 26 directions:
-  RSA rejects such positions, and the packings keep a surface gap of 2 voxels
-  (>= sqrt(3) voxels rules out corner neighbours). Where the target is too
-  dense for that gap, the gap closes as far as the packing needs and the
-  remaining contacts are counted as real ones (they can carry R_c).
-* ``keep`` - no separation: particles may touch wherever the packing puts
-  them (a contact network, e.g. with a contact resistance).
+* ``keep`` (the default of the spec) - particles never overlap but may touch
+  wherever the packing puts them, as they do in a filled compound; the
+  contacts are counted and can carry a contact resistance R_c.
+* ``apart`` - particles are *moved*, never trimmed, so that their surfaces
+  stay ``gap_vox`` voxels apart (the Structure tab's gap; 2 before 5.4): the
+  packings keep the gap, RSA also rejects any voxel neighbour, and from
+  sqrt(3) voxels on no two particles are even corner neighbours (spheres
+  1 voxel apart: 1.01 voxels, 43 edge/corner pairs at 30 vol%; 2 voxels: 0). Where the target is
+  too dense for it, the gap closes as far as the packing needs and the
+  remaining contacts are counted as real ones.
 * ``separate`` - v3: touching voxels are cleared to matrix, which trims the
   particles.
 """
@@ -966,7 +968,7 @@ def touching_pairs(owner, phase_of, net_of, zper=True):
     return int(rows.sum())
 
 
-SEP_APART = 2.0          # surface gap, in voxels, that contacts="apart" asks of the packings
+SEP_APART = 2.0          # default surface gap, in voxels, of contacts="apart" (gap_vox)
 # Packing budgets are counted in steps, never in seconds, so that the same
 # inputs and seed give the same structure for any box size and on any PC.
 # 250 nm spheres at 55 vol% reached full size in 31,000 relaxation steps in a
@@ -992,8 +994,8 @@ JAM_MAX_STEPS = 60_000
 _FAST_PACK = {"sphere": 0.60, "other": 0.50}
 
 
-def apart_gap(vol, gap_user, h, box_vol, kind):
-    """Surface gap for contacts="apart": SEP_APART voxels, reduced (not below
+def apart_gap(vol, gap_user, h, box_vol, kind, sep=SEP_APART):
+    """Surface gap for contacts="apart": `sep` voxels, reduced (not below
     the user's gap) so that the particles grown by half of it fill no more
     than the fast-packing fraction. vol: particle volumes; gap_user: per
     particle; returns an array."""
@@ -1006,7 +1008,7 @@ def apart_gap(vol, gap_user, h, box_vol, kind):
         return float(np.sum(math.pi / 6.0 * (d_eq + g) ** 3))
 
     target_vol = lim * box_vol
-    g_hi = SEP_APART * h
+    g_hi = float(sep) * h
     if frac(g_hi) <= target_vol:
         g = g_hi
     elif frac(0.0) >= target_vol or tot <= 0:
@@ -1991,7 +1993,7 @@ def rasterize_owner(N, h, info, phases, nz=None, offset_um=0.0):
 
 
 def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart",
-             want_contact_faces=False, nz=None, skin=0, shear=None, dispersion=None):
+             want_contact_faces=False, nz=None, skin=0, shear=None, dispersion=None, gap_vox=SEP_APART):
     """Build one realisation.
 
     `phases` items: shape, size_um, dist, vf, orientation {mode, spread_deg},
@@ -2015,6 +2017,9 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     (dispersion_field) that biases the initial positions, the RSA and the
     Monte-Carlo moves; info['dispersion'] reports what was realised.
 
+    gap_vox: the surface gap, in voxels, that contacts="apart" keeps between
+    particles wherever the loading allows.
+
     skin: voxels of matrix kept at each face of a film. A particle that
     touches a face touches the electrode plate there, through a contact whose
     area is set by the voxel size: on one 40 vol% film, 0.6 % of the face
@@ -2026,14 +2031,15 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         dispersion = None
     if dispersion is not None and dispersion["mode"] == "region" and nz is None:
         return _generate_region(N, h, phases, dispersion, seed=seed, log=log, should_stop=should_stop,
-                                contacts=contacts, want_contact_faces=want_contact_faces)
+                                contacts=contacts, want_contact_faces=want_contact_faces, gap_vox=gap_vox)
     if nz is not None and skin and int(nz) - 2 * int(skin) >= 2:
         ks = int(skin)
         inner = int(nz) - 2 * ks
         grow = float(nz) / inner                       # the fractions refer to the whole film
         lab, info = generate(N, h, [dict(ph, vf=float(ph["vf"]) * grow) for ph in phases], seed=seed,
                              log=log, should_stop=should_stop, contacts=contacts,
-                             want_contact_faces=want_contact_faces, nz=inner, skin=0, dispersion=dispersion)
+                             want_contact_faces=want_contact_faces, nz=inner, skin=0, dispersion=dispersion,
+                             gap_vox=gap_vox)
         pad = ((0, 0), (0, 0), (ks, ks))
         lab = np.pad(lab, pad)
         if info.get("contact_mask") is not None:
@@ -2077,7 +2083,8 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     count = np.zeros(nph + 1, np.int64)
     n_placed = np.zeros(nph + 1, np.int64)
     jammed = np.zeros(nph + 1, np.bool_)
-    info = {"route": None, "phases": [dict() for _ in phases], "contacts_mode": contacts}
+    sep = float(gap_vox) if contacts == "apart" else 0.0          # voxels
+    info = {"route": None, "phases": [dict() for _ in phases], "contacts_mode": contacts, "gap_vox": sep}
     nominal, planes, nfaces, poly_meta = phase_templates(phases, rng, V=V)
     info["poly_meta"] = poly_meta
 
@@ -2171,12 +2178,14 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             # an uneven dispersion: the gap that fits where the particles are
             # densest (the box volume over the peak of the density)
             g_sep = apart_gap(math.pi / 6.0 * diam ** 3, d_base - diam, h, V / (float(rho.max()) if rho is not None
-                                                                              else 1.0), "sphere")
+                                                                              else 1.0), "sphere", sep)
             d_excl = diam + g_sep
             g_med = float(np.median(g_sep)) / h
-            if g_med < SEP_APART - 1e-6:
-                log(f"  a {SEP_APART:g}-voxel gap between all particles does not fit at this loading; "
+            if g_med < sep - 1e-6:
+                log(f"  a {sep:g}-voxel gap between all particles does not fit at this loading; "
                     f"particles kept {g_med:.2f} voxels apart where the packing allows")
+            else:
+                log(f"  particles kept {sep:g} voxels apart (gap between particles)")
         else:
             d_excl = d_base.copy()
         # Growth with overlap relaxation, run by the compiled clump engine with
@@ -2245,7 +2254,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             d_prev = scale * d_excl                    # clean at these sizes
             d_excl = np.maximum(d_base, d_prev)
             left = float(np.median((d_excl - diam) / h))
-            log(f"  the {SEP_APART:g}-voxel separation does not fit at this loading (size scale {scale:.4f}); "
+            log(f"  the {sep:g}-voxel separation does not fit at this loading (size scale {scale:.4f}); "
                 f"median gap kept {max(left, 0.0):.2f} voxels, contacts allowed where needed")
             if np.all(d_excl > d_base):
                 scale = 1.0
@@ -2375,6 +2384,10 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 Ps, Rs, s = _draw(ph, nominal[i], n, rng, poly_meta)
                 gap = float(ph.get("gap_frac", 0.0) or 0.0) * np.array(
                     [2.0 * SH.circumradius(nominal[i]["code"], P) for P in Ps])
+                if sep > 0.0 and not ph.get("overlap"):
+                    # the separation of contacts = "apart": a position is taken
+                    # only with the particle grown by the gap free
+                    gap = np.maximum(gap, sep * h)
                 cl.append(np.full(n, nominal[i]["code"]))
                 Pl.append(Ps)
                 Rl.append(Rs)
@@ -2499,10 +2512,10 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             gap_user = gap.copy()
             if contacts == "apart":
                 vols = np.array([SH.volume(int(c), P, poly_meta) for c, P in zip(codes, Ps)])
-                gap = apart_gap(vols, gap_user, h, V / (float(rho.max()) if rho is not None else 1.0), "other")
+                gap = apart_gap(vols, gap_user, h, V / (float(rho.max()) if rho is not None else 1.0), "other", sep)
                 g_med = float(np.median(gap)) / h
-                if g_med < SEP_APART - 1e-6:
-                    log(f"  a {SEP_APART:g}-voxel gap between all particles does not fit at this loading; "
+                if g_med < sep - 1e-6:
+                    log(f"  a {sep:g}-voxel gap between all particles does not fit at this loading; "
                         f"particles kept {g_med:.2f} voxels apart where the packing allows")
             C, Rs, scale = clump_pack(float(L), C, Rs, s, tpl, templates, gap, ph_arr,
                                       overlap_of.astype(np.int64), rotm, circ, log=log, should_stop=should_stop,
@@ -2510,7 +2523,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             if scale < 1.0 and np.any(gap > gap_user):
                 # the separation gap does not fit: continue from this state
                 # without it, so particles touch only where the target needs it
-                log(f"  the {SEP_APART:g}-voxel separation does not fit at this loading (size scale "
+                log(f"  the {sep:g}-voxel separation does not fit at this loading (size scale "
                     f"{scale:.4f}); packing on with contacts allowed where needed")
                 C, Rs, scale = clump_pack(float(L), C, Rs, s, tpl, templates, gap_user, ph_arr,
                                           overlap_of.astype(np.int64), rotm, circ, log=log,

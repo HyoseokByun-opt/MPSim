@@ -1737,8 +1737,10 @@ def t_pipeline_live():
                         "fraction": {"value": 20, "basis": "vol"}}],
             "rve": {"auto": False, "L_um": 32, "voxel_um": 1.0, "auto_enlarge": False, "quality": "fast"},
             "analyses": {"thermal": True, "viscosity": True},
-            "options": {"directions": "x", "live_figures": True, "viscosity": {"phi_m_mode": "manual", "phi_m": 0.64,
-                                                                                 "dem": {"n": 100, "strain": 1.5}}}}
+            # particles kept apart: touching ones would make the particle
+            # dynamics the answer and skip the RVE flow solve checked here
+            "options": {"directions": "x", "live_figures": True, "particle_gap_vox": 2,
+                        "viscosity": {"phi_m_mode": "manual", "phi_m": 0.64, "dem": {"n": 100, "strain": 1.5}}}}
     seen = {"figure": [], "partial_result": 0}
 
     def event(kind, **p):
@@ -1986,6 +1988,39 @@ def t_unique_grains():
     ids = np.asarray(info["particles"]["P"])[:, 1].astype(int)
     expect(len(set(ids.tolist())) == len(ids), f"{len(ids)} grains share {len(set(ids.tolist()))} shapes")
     return f"{len(ids)} grains, {len(set(ids.tolist()))} distinct shapes"
+
+
+@check("Gap between particles: 0 lets them touch (never overlap), N voxels keeps their surfaces N voxels apart")
+def t_particle_gap():
+    from mpsim import spec as S, generate as GEN
+    # the default touches; an input of 5.3.1 with contacts = "apart" keeps its 2 voxels
+    expect(S._contacts({}) == {"contacts": "keep", "particle_gap_vox": 0.0}, f"default {S._contacts({})}")
+    expect(S._contacts({"contacts": "apart"})["particle_gap_vox"] == 2.0, "legacy 'apart' is not 2 voxels")
+    expect(S._contacts({"particle_gap_vox": 3})["contacts"] == "apart", "a gap of 3 is not 'apart'")
+    N, h = 48, 0.25
+    L = N * h
+    ph = [dict(name="s", shape="sphere", size_um={"d": 3.0}, dist=None, vf=0.30,
+               orientation={"mode": "iso", "spread_deg": 0}, overlap=False, gap_frac=0.0)]
+    out = []
+    for contacts, g in (("keep", 0.0), ("apart", 2.0), ("apart", 3.0)):
+        lab, info = GEN.generate(N, h, ph, seed=2, log=lambda *a: None, contacts=contacts, gap_vox=g)
+        C = np.asarray(info["particles"]["centers"])
+        r = np.asarray(info["particles"]["P"])[:, 0]
+        gmin = np.inf
+        for i in range(len(C) - 1):
+            d = C[i + 1:] - C[i]
+            d -= L * np.round(d / L)
+            gmin = min(gmin, float((np.linalg.norm(d, axis=1) - r[i + 1:] - r[i]).min()))
+        gmin /= h
+        expect(abs(float((lab > 0).mean()) - 0.30) < 0.01, f"gap {g}: fraction {float((lab > 0).mean()):.4f}")
+        expect(gmin > -1e-6, f"gap {g}: particles overlap ({gmin:.3f} voxels)")
+        if g > 0:
+            expect(gmin >= g - 0.05, f"gap {g}: surfaces {gmin:.2f} voxels apart")
+            expect(info["touching_pairs"] == 0, f"gap {g}: {info['touching_pairs']} touching voxel pairs")
+        else:
+            expect(info["contact_faces"] > 0, "gap 0: no particle touches another")
+        out.append(f"gap {g:g}: closest surfaces {gmin:.2f} voxels, {info['contact_faces']} contact faces")
+    return "; ".join(out)
 
 
 def main():

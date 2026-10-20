@@ -373,15 +373,16 @@ def plan(phases, rve=None, props=None, limits=None):
                        "value": total, "target": 0.60, "unit": "", "status": "warn",
                        "note": "Close to the random close packing of monodisperse spheres (≈ 0.64). "
                                "A broader (log-normal) size distribution facilitates packing."})
-    # contacts = "apart" keeps particles SEP_APART voxels apart as far as the
-    # loading allows. Where it cannot, particles touch at voxel level, and at a
+    # contacts = "apart" keeps particles particle_gap_vox voxels apart as far as
+    # the loading allows. Where it cannot, particles touch at voxel level, and at a
     # high property contrast the FE and FV solutions then differ widely (guide
     # 5.5: +121 % at 50 vol%, 16 voxels per diameter; +19 % once the gap fits).
     # The generator cuts the gap so that the grown particles fill no more than
     # its fast-packing fraction; the same rule tells the voxel size needed.
-    if rve.get("contacts", "apart") == "apart" and props & {"thermal", "electrical", "dielectric", "magnetic",
-                                                            "emi", "cte", "elastic"}:
+    if rve.get("contacts", "keep") == "apart" and props & {"thermal", "electrical", "dielectric", "magnetic",
+                                                           "emi", "cte", "elastic"}:
         from .generate import SEP_APART, _FAST_PACK
+        sep_v = float(rve.get("particle_gap_vox") or SEP_APART)
         sep_ph = [(f, active[feats.index(f)]) for f in feats
                   if not f["network"] and not active[feats.index(f)].get("overlap") and f["mean_volume"]]
         if sep_ph:
@@ -392,22 +393,23 @@ def plan(phases, rve=None, props=None, limits=None):
                 return sum(f["vf"] * ((d + g) / d) ** 3 for (f, _), d in zip(sep_ph, d_eq))
 
             if grown(0.0) >= lim:
-                checks.append({"id": "apart", "group": "Packing", "label": "Particles kept apart (contacts = apart)",
+                checks.append({"id": "apart", "group": "Packing",
+                               "label": f"Particles kept apart (gap between particles {sep_v:g} voxels)",
                                "value": grown(0.0), "target": lim, "unit": "", "status": "warn",
                                "note": "The loading leaves no room for a gap between the particles: they will touch "
                                        "at voxel level. With a filler much more conductive or stiffer than the matrix "
                                        "the result then depends on how finely the contacts are resolved (a converged "
                                        "simple-cubic case with necks: +5 % at 64 voxels per cell); a contact "
                                        "resistance or a finer voxel narrows it (guide 5.5)."})
-            elif grown(SEP_APART * h) > lim:
-                lo, hi = 0.0, SEP_APART * h
+            elif grown(sep_v * h) > lim:
+                lo, hi = 0.0, sep_v * h
                 for _ in range(50):
                     mid = 0.5 * (lo + hi)
                     lo, hi = (mid, hi) if grown(mid) <= lim else (lo, mid)
-                h_need = lo / SEP_APART
+                h_need = lo / sep_v
                 checks.append({"id": "apart", "group": "Packing", "label": "Voxel size that keeps every particle apart",
                                "value": h, "target": h_need, "unit": "µm", "status": "warn",
-                               "note": f"A {SEP_APART:g}-voxel gap between the particles fits at a voxel size of "
+                               "note": f"A {sep_v:g}-voxel gap between the particles fits at a voxel size of "
                                        f"{h_need:.3g} µm or less ({min(d_eq) / h_need:.0f} voxels across the "
                                        f"smallest particle). At {h:.3g} µm some particles will touch at voxel "
                                        f"level; with a filler much more conductive or stiffer than the matrix a "

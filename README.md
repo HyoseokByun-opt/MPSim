@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.3.1-0b62c4" alt="version 5.3.1">
+  <img src="https://img.shields.io/badge/version-5.4.0-0b62c4" alt="version 5.4.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -58,7 +58,8 @@ The main capabilities are listed below.
   rotation; normal and log-normal size distributions with bounds, or a measured particle-size distribution loaded from
   the analyser's file (by volume or by number); coated and hollow particles, several filler phases in one RVE, pores as
   a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression,
-  and every blend is checked so that no voxel belongs to two particles. Sphere packings can be sheared in the resin by
+  and every blend is checked so that no voxel belongs to two particles. Particles may touch, as in a filled compound
+  (the default), or are kept a set number of voxels apart. Sphere packings can be sheared in the resin by
   particle dynamics before they are drawn, which yields the arrangement of a compound after flow.
 - **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
   in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
@@ -160,7 +161,8 @@ computed by particle dynamics. The same particle dynamics then shears a random p
 and the arrangement it leaves is taken as the cured microstructure. Thermal conductivity, thermal expansion, stiffness,
 permittivity, dielectric loss and moisture uptake are solved on this one structure (60 µm RVE, 240³ voxels). All
 results below were obtained with the presets *MUF · epoxy + silica 15 + 3 µm 55 vol%* and *MUF · from flow to the cured
-part* on a 14-core laptop without a GPU.
+part* on a 14-core laptop without a GPU. Both presets keep the particles 2 voxels apart (*Gap between particles*), the
+setting with which these values were computed; the default of 0 lets the particles touch.
 
 <p align="center">
   <img src="docs/images/muf_datasheet.png" alt="Summary of the properties of the cured compound" width="72%">
@@ -376,8 +378,8 @@ failed, together with the reason. Chapter 31 of the user guide explains these ch
 
 | User guide | PDF |
 |---|---|
-| English, 180 pages | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) |
-| Korean, 168 pages | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) |
+| English, 188 pages | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) |
+| Korean, 176 pages | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) |
 
 Each simulation chapter describes how the property is measured in the laboratory, how MPSim computes it, how the
 numbers and renderings are read, and the underlying assumptions; chapter 32 treats two semiconductor-material problems
@@ -543,7 +545,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.3.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.4.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

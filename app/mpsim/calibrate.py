@@ -414,13 +414,13 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
         need = {PROPERTIES[m["property"]].get("key") or "cte"}
         if PROPERTIES[m["property"]]["solver"] == "elastic":
             need = {"cte"}
-        plan = R.plan(PL._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], elastic_method=spec["options"]["elastic_method"]), need,
+        plan = R.plan(PL._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), need,
                       limits or {})
         film = bool(plan.get("film"))
         plan["skin"] = PL.film_skin(spec, plan) if film else None
         gen_phases = PL._generator_phases(spec)
         want_cf = PL.wants_contact_faces(spec)
-        key = PL.structure_key(gen_phases, plan, spec["options"]["contacts"], spec["rve"]["seed"], want_cf,
+        key = PL.structure_key(gen_phases, plan, PL.contacts_key(spec["options"]), spec["rve"]["seed"], want_cf,
                                sheared=PL.shear_key(spec), dispersion=spec["rve"].get("dispersion"))
         got = PL.load_structure(reuse_dirs, key)
         if got is not None:
@@ -429,6 +429,7 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
         else:
             gen_labels, ginfo = GEN.generate(plan["N"], plan["h_um"], gen_phases, seed=spec["rve"]["seed"],
                                              log=log, should_stop=should_stop, contacts=spec["options"]["contacts"],
+                                             gap_vox=spec["options"].get("particle_gap_vox") or 2.0,
                                              want_contact_faces=want_cf, nz=int(plan["Nz"]) if film else None,
                                              skin=plan.get("skin"), dispersion=spec["rve"].get("dispersion"),
                                              shear=PL.shear_packing(spec, log, lambda *a, **k: None,

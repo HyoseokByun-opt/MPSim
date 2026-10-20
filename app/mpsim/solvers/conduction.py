@@ -433,6 +433,54 @@ class FFTPreconditioner:
         return itr(R, type=2, axis=2, norm="ortho", workers=w)
 
 
+# ---- the vector work of the conjugate gradients, threaded ------------------
+# The stencil (_apply) and the FFT preconditioner run on all of the job's
+# threads; the vector updates between them (means, dot products, axpy) were
+# single-threaded NumPy, about half the time of a large solve. Fused here, one
+# pass over memory each, so that one direction uses every core of the job.
+@njit(parallel=True, cache=True)
+def _sums3(a, b):
+    """(sum a, sum a*b, sum b) over two arrays of one shape."""
+    n0, n1, n2 = a.shape
+    sa = 0.0
+    sab = 0.0
+    sb = 0.0
+    for i0 in prange(n0):
+        for i1 in range(n1):
+            for i2 in range(n2):
+                x = a[i0, i1, i2]
+                y = b[i0, i1, i2]
+                sa += x
+                sab += x * y
+                sb += y
+    return sa, sab, sb
+
+
+@njit(parallel=True, cache=True)
+def _cg_step(u, r, p, Ap, alpha, shift):
+    """u += alpha p;  r -= alpha (Ap - shift);  returns the new |r|^2."""
+    n0, n1, n2 = u.shape
+    rr = 0.0
+    for i0 in prange(n0):
+        for i1 in range(n1):
+            for i2 in range(n2):
+                u[i0, i1, i2] += alpha * p[i0, i1, i2]
+                v = r[i0, i1, i2] - alpha * (Ap[i0, i1, i2] - shift)
+                r[i0, i1, i2] = v
+                rr += v * v
+    return rr
+
+
+@njit(parallel=True, cache=True)
+def _cg_direction(p, z, shift, beta):
+    """p = (z - shift) + beta p, in place."""
+    n0, n1, n2 = p.shape
+    for i0 in prange(n0):
+        for i1 in range(n1):
+            for i2 in range(n2):
+                p[i0, i1, i2] = (z[i0, i1, i2] - shift) + beta * p[i0, i1, i2]
+
+
 def _threads():
     """The thread count the job was given (the queue sets NUMBA_NUM_THREADS, a
     parallel-solve worker MPSIM_THREADS); -1 (all cores) would ignore the
@@ -538,20 +586,22 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
     converged = bnorm == 1.0 and float(np.linalg.norm(b)) == 0.0
     history = []
     snap = getattr(callback, "snapshot", None)          # the live view (mpsim/live.py)
+    ncell = float(u.size)
     if not converged:
         for it in range(1, maxiter + 1):
             _apply(p, kf[0], kf[1], kf[2], Ap)
             if aid is not None:
                 _cross_flux(p, aid, koff, direction, 0.0, Fx)
                 _cross_gather(Fx, Ap, 1.0)
-            Ap -= Ap.mean()
-            pAp = float(np.vdot(p, Ap))
+            # the mean of Ap is taken out (the periodic problem fixes it) in
+            # the same passes: p.(Ap - m) = p.Ap - m sum(p)
+            s_ap, s_pap, s_p = _sums3(Ap, p)
+            m_ap = s_ap / ncell
+            pAp = s_pap - m_ap * s_p
             if pAp <= 0:
                 break
             alpha = rz / pAp
-            u += alpha * p
-            r -= alpha * Ap
-            res = float(np.linalg.norm(r)) / bnorm
+            res = math.sqrt(max(_cg_step(u, r, p, Ap, alpha, m_ap), 0.0)) / bnorm
             if it % 5 == 0 or it == 1:
                 history.append((it, res))
             if res < tol:
@@ -564,9 +614,10 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
             if should_stop is not None and it % 25 == 0 and should_stop():
                 raise InterruptedError
             z = M(r)
-            z -= z.mean()
-            rz_new = float(np.vdot(r, z))
-            p = z + (rz_new / rz) * p
+            s_z, s_rz, s_r = _sums3(z, r)
+            m_z = s_z / ncell
+            rz_new = s_rz - m_z * s_r
+            _cg_direction(p, z, m_z, rz_new / rz)
             rz = rz_new
     u -= u.mean()
     if snap is not None:
@@ -688,13 +739,11 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
     while not converged and it < maxiter:
         it += 1
         _apply_film_z(p, kf[0], kf[1], kf[2], gb, gt, Ap)
-        pAp = float(np.vdot(p, Ap))
+        pAp = _sums3(p, Ap)[1]
         if pAp <= 0:
             break
         alpha = rz / pAp
-        u += alpha * p
-        r -= alpha * Ap
-        res = float(np.linalg.norm(r)) / bnorm
+        res = math.sqrt(max(_cg_step(u, r, p, Ap, alpha, 0.0), 0.0)) / bnorm
         if it % 5 == 0 or it == 1:
             history.append((it, res))
         if res < tol:
@@ -707,8 +756,8 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
         if should_stop is not None and it % 25 == 0 and should_stop():
             raise InterruptedError
         z = M(r)
-        rz_new = float(np.vdot(r, z))
-        p = z + (rz_new / rz) * p
+        rz_new = _sums3(r, z)[1]
+        _cg_direction(p, z, 0.0, rz_new / rz)
         rz = rz_new
 
     # flux through each z plane (all equal at convergence); the bottom plate's is used

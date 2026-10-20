@@ -218,13 +218,14 @@ def write(out_dir, r):
     for n in plan["notes"]:
         P.append(f"<div class='note'>{e(n)}</div>")
     rz = r["realisations"][0]
-    mode = rz.get("contacts_mode") or "apart"
+    mode = rz.get("contacts_mode") or "keep"
     if mode == "separate":
         ctxt = f"{rz['contacts_removed']} particle contacts were separated by clearing voxels to matrix (contacts = separate)."
     else:
         tp = rz.get("touching_pairs", 0) or 0
-        ctxt = (("Particles were kept apart where the loading allows (contacts = apart). " if mode == "apart" else
-                 "Particles may touch (contacts = keep). ")
+        ctxt = ((f"Particles were kept {rz.get('gap_vox') or 2:g} voxels apart where the loading allows "
+                  f"(gap between particles). " if mode == "apart" else
+                 "Particles may touch, never overlapping (gap between particles 0). ")
                 + (f"{tp:,} voxel neighbour pairs of two particles remain, {rz.get('contact_faces', 0):,} across a face."
                    if tp else "No two particles touch at this resolution."))
     P.append(f"<p>Placement method: {e(rz['route'] or '-')}. {e(ctxt)}</p>")

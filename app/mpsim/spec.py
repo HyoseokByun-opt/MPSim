@@ -98,6 +98,28 @@ def _rescale(size_um, d_new):
     return {k: (v * f if k in _LINEAR else v) for k, v in size_um.items()}
 
 
+# the separation an input of 5.3.1 or earlier meant by contacts = "apart"
+LEGACY_GAP_VOX = 2.0
+
+
+def _contacts(opts):
+    """{contacts, particle_gap_vox} from the options.
+
+    particle_gap_vox (Structure tab) is the gap, in voxels, kept between the
+    surfaces of non-overlapping particles: 0 (default) lets them touch, as
+    they do in a filled compound; more moves them apart (never trims them)
+    wherever the loading allows. An input without it keeps its meaning:
+    contacts = "apart" was a 2-voxel gap, "keep" and "separate" stay."""
+    c = opts.get("contacts")
+    if c == "separate":
+        return {"contacts": "separate", "particle_gap_vox": 0.0}
+    g = opts.get("particle_gap_vox")
+    if g in (None, ""):
+        g = LEGACY_GAP_VOX if c == "apart" else 0.0
+    g = float(_num(g, "gap between particles (voxels)", 0.0, 50.0))
+    return {"contacts": "apart" if g > 0.0 else "keep", "particle_gap_vox": g}
+
+
 def _mechtest(mt, rve, errors):
     """A tension or compression test (mechtest.py): direction, lateral
     condition, the load as a displacement (µm), strain (%), force (N) or
@@ -491,11 +513,12 @@ def normalize(form):
         # thermal-stress maps: "constrained" holds the RVE at zero mean strain,
         # "free" lets it expand by alpha* dT so only the phase mismatch remains
         "thermal_bc": "free" if opts.get("thermal_bc") == "free" else "constrained",
-        # touching particles: "apart" moves particles so that no two share a
-        # voxel neighbour wherever the loading allows (default), "keep" lets
-        # them touch where the packing puts them, "separate" trims touching
-        # voxels to matrix as v3 did
-        "contacts": opts.get("contacts") if opts.get("contacts") in ("keep", "separate") else "apart",
+        # touching particles: "keep" (default) lets them touch where the
+        # packing puts them, never overlapping - the usual state of a filled
+        # compound; "apart" moves them so that their surfaces stay
+        # particle_gap_vox voxels apart wherever the loading allows;
+        # "separate" trims touching voxels to matrix as v3 did
+        **_contacts(opts),
         # independent solves (properties x directions, elastic load cases) side
         # by side on the run's cores; "off" solves them one after another
         "parallel_solves": "off" if opts.get("parallel_solves") == "off" else "auto",
