@@ -542,13 +542,31 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         an = form.get("analyses") or {}
         if not any(an.values()):
             form["analyses"] = {"thermal": True}
+        warnings = []
         try:
             spec = S.normalize(form)
         except ValueError as e:
-            return jsonify({"ok": False, "errors": str(e).split("\n")})
+            # analyses that cannot run with this structure (permeability
+            # without pores, moisture without the matrix's D_w, ...) do not
+            # hide the plan of the structure itself: it is planned for the
+            # structure alone and the reasons come back as warnings; a run
+            # with those analyses is still refused when it is submitted
+            errs = str(e).split("\n")
+            alone = copy.deepcopy(form)
+            alone["analyses"] = {"thermal": True}
+            try:
+                spec = S.normalize(alone)
+            except ValueError:
+                return jsonify({"ok": False, "errors": errs})
+            warnings = errs
         from mpsim.pipeline import _plan_phases
-        plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
+        pph = _plan_phases(spec)
+        rv = dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"),
+                  elastic_method=spec["options"]["elastic_method"])
+        need = needed_analyses(spec)
+        plan = R.plan(pph, rv, need, app.config["LIMITS"])
         return jsonify({"ok": True, "plan": plan, "composition": spec.get("composition"),
+                        "warnings": warnings,
                         "labels": [{"name": t["name"], "kind": t["kind"]} for t in spec["labels"]],
                         "phases": [{"name": p["name"], "vf": p["vf"], "d_um": p["size_um"].get("d"),
                                     "dist": _dist_summary(p)} for p in spec["phases"]]})

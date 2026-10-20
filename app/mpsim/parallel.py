@@ -49,6 +49,50 @@ import numpy as np
 _LIMITS = None
 
 
+def _use_threads(n):
+    """This worker's threads from now on: numba's parallel loops, the FFT
+    workers (MPSIM_THREADS) and the BLAS pools."""
+    global _LIMITS
+    import numba
+    n = max(1, min(int(n), numba.config.NUMBA_NUM_THREADS))
+    numba.set_num_threads(n)
+    os.environ["MPSIM_THREADS"] = str(n)
+    try:
+        from threadpoolctl import threadpool_limits
+        _LIMITS = threadpool_limits(limits=n)
+    except Exception:                                                  # noqa: BLE001
+        pass
+    return n
+
+
+# the cores the main process has given the solve this worker runs: a shared
+# dict {slot: threads}, read when the solve starts and about twice a second
+# while it iterates (_Reporter), so that the cores of finished solves go to
+# the ones still running instead of idling
+_SLOT = {"allot": None, "slot": None, "n": None, "t": 0.0}
+
+
+def _task_begin(t):
+    _SLOT.update(allot=t.get("allot"), slot=t.get("slot"), n=None, t=0.0)
+    _poll_threads(force=True)
+
+
+def _poll_threads(force=False):
+    a = _SLOT["allot"]
+    if a is None:
+        return
+    now = time.time()
+    if not force and now - _SLOT["t"] < 0.5:
+        return
+    _SLOT["t"] = now
+    try:
+        n = a.get(_SLOT["slot"])
+    except Exception:                                                  # noqa: BLE001
+        return
+    if n and n != _SLOT["n"]:
+        _SLOT["n"] = _use_threads(n)
+
+
 def _init(threads, log_dir):
     # NUMBA_NUM_THREADS is not changed here: a worker whose main module
     # imported numba before this initializer has already launched its pool,
@@ -85,6 +129,7 @@ class _Reporter:
         self.q, self.name, self.target, self.t = q, name, target, 0.0
 
     def __call__(self, *a):
+        _poll_threads()
         if self.q is None:
             return
         if len(a) == 2:
@@ -122,6 +167,7 @@ def stokes_task(t):
     pores. The velocity components go back as files (the viewer, the
     hydraulic tortuosity and the filtration stage read them)."""
     from .solvers import puma_backend as PB
+    _task_begin(t)
     labels = _worker_labels(t, PB)
     rep = _Reporter(t.get("q"), t.get("name") or f"Stokes flow {t['d']}", t["tol"])
     pr = PB.permeability(labels, t["void"], t["voxel_m"], t["d"], tol=t["tol"], progress=rep, should_stop=None)
@@ -137,6 +183,7 @@ def stokes_task(t):
 def tort_task(t):
     """One diffusion direction: PuMA's continuum tortuosity in the open pores."""
     from .solvers import puma_backend as PB
+    _task_begin(t)
     labels = _worker_labels(t, PB)
     rep = _Reporter(t.get("q"), t.get("name") or f"Diffusion {t['d']}", t["tol"])
     tr = PB.tortuosity(labels, t["void"], t["voxel_m"], t["d"], tol=t["tol"], progress=rep, should_stop=None)
@@ -148,8 +195,10 @@ def tort_task(t):
 def emi_task(t):
     """The complex admittivity at one frequency along one direction."""
     from .solvers import complex_cond as CC
+    _task_begin(t)
     labels = np.ascontiguousarray(np.load(t["labels"], mmap_mode="r"))
-    r = CC.solve(labels, t["kap"], t["d"], bc=t["bc"], tol=t["tol"], should_stop=None)
+    r = CC.solve(labels, t["kap"], t["d"], bc=t["bc"], tol=t["tol"], should_stop=None,
+                 callback=lambda it, res: _poll_threads())
     return {"kind": "emi", "i": t["i"], "d": t["d"],
             "r": {"kappa": complex(r["kappa"]), "iterations": r["iterations"], "converged": bool(r["converged"])}}
 
@@ -157,6 +206,7 @@ def emi_task(t):
 def radiation_task(t):
     """Ray casting of the pore space (one task: PuMA's casting runs on one core)."""
     from .solvers import puma_backend as PB
+    _task_begin(t)
     labels = _worker_labels(t, PB)
     return {"kind": "radiation", "r": PB.radiation(labels, t["void"], t["voxel_m"], t["sources"], t["rays"], None)}
 
@@ -166,6 +216,7 @@ def struct_task(t):
     distributions of a phase, its percolation, the porosimetry, the pore
     network or the grain statistics. Its log lines come back with it."""
     from .solvers import puma_backend as PB
+    _task_begin(t)
     labels = _worker_labels(t, PB)
     what, h, lines = t["what"], t["h"], []
     out = {"kind": "struct", "what": what, "gkey": t.get("gkey"), "lines": lines}
@@ -207,6 +258,7 @@ def cond_task(t):
     """One conduction-type solve (one property, one direction)."""
     from .solvers import puma_backend as PB
     from .solvers import conduction as CD
+    _task_begin(t)
     labels = np.load(t["labels"], mmap_mode="r")
     labels = np.ascontiguousarray(labels)
     if os.environ.get("MPSIM_WORKER_LOG_DIR"):
@@ -264,6 +316,7 @@ def cond_task(t):
 def elastic_task(t):
     """One elastic load case (a unit strain or the thermal load)."""
     from .solvers import puma_backend as PB
+    _task_begin(t)
     labels = np.ascontiguousarray(np.load(t["labels"], mmap_mode="r"))
     if os.environ.get("MPSIM_WORKER_LOG_DIR"):
         PB.set_log_dir(os.path.join(os.environ["MPSIM_WORKER_LOG_DIR"], f"w{os.getpid()}"))
@@ -280,9 +333,11 @@ def elastic_task(t):
 class SolvePool:
     """A process pool for the independent solves of one job."""
 
-    def __init__(self, workers, threads_each, log_dir=None):
+    def __init__(self, workers, threads_each, log_dir=None, cores=None):
         self.workers = int(workers)
         self.threads_each = int(threads_each)
+        # the job's cores: what the running solves share between them
+        self.cores = max(int(cores or 0), self.workers * self.threads_each)
         # inside the run's directory when the server runs it (MPSIM_TMP), so
         # that a stopped run's shared grids go with the stop instead of
         # staying in the system's temporary folder
@@ -298,8 +353,9 @@ class SolvePool:
         try:
             self.mgr = ctx.Manager()
             self.q = self.mgr.Queue()
+            self.allot = self.mgr.dict()
         except Exception:                                              # noqa: BLE001
-            self.mgr, self.q = None, None
+            self.mgr, self.q, self.allot = None, None, None
 
     def share(self, labels, name="labels"):
         p = os.path.join(self.tmp, f"{name}.npy")
@@ -319,12 +375,38 @@ class SolvePool:
         A job that raises, or that a broken pool (a worker killed, e.g. out of
         memory) cannot run, comes back as {"failed": message, "name": ...}:
         the caller leaves it to the stage that solves it in turn."""
-        for _, t in jobs:
+        for i, (_, t) in enumerate(jobs):
             t["q"] = self.q if on_progress is not None else None
+            t["allot"], t["slot"] = self.allot, i
         out = [None] * len(jobs)
         queue = list(range(len(jobs)))
         running = {}
         held = [0.0]
+        threads_of = {}
+
+        def share():
+            """The job's cores over the solves running now: each starts with
+            an equal share of the cores left for it, and when no solve is
+            waiting any more, the cores of the finished ones go to those still
+            running (they take them up within half a second)."""
+            if self.allot is None or not running:
+                return
+            idx = [i for i, _ in running.values()]
+            if queue:
+                base = max(1, self.cores // max(1, self.workers))
+                want = {i: threads_of.get(i, base) for i in idx}
+            else:
+                n = len(idx)
+                q, r = divmod(self.cores, n)
+                order = sorted(idx)
+                want = {i: max(1, q + (1 if k < r else 0)) for k, i in enumerate(order)}
+            for i, n in want.items():
+                if threads_of.get(i) != n:
+                    threads_of[i] = n
+                    try:
+                        self.allot[i] = n
+                    except Exception:                                  # noqa: BLE001
+                        pass
 
         def drain():
             while self.q is not None and on_progress is not None:
@@ -355,6 +437,16 @@ class SolvePool:
                     continue
                 fn, t = jobs[i]
                 queue.remove(i)
+                # its share: an equal part of the job's cores while more
+                # solves wait, else every core the running ones leave free
+                busy = sum(threads_of.get(j, 0) for j, _ in running.values())
+                base = max(1, self.cores // self.workers)
+                threads_of[i] = max(1, min(self.cores - busy, base) if queue else self.cores - busy)
+                if self.allot is not None:
+                    try:
+                        self.allot[i] = threads_of[i]
+                    except Exception:                                  # noqa: BLE001
+                        pass
                 try:
                     running[self.ex.submit(fn, t)] = (i, m)
                 except Exception as e:                                 # noqa: BLE001
@@ -369,6 +461,7 @@ class SolvePool:
             drain()
             for f in done:
                 i, m = running.pop(f)
+                threads_of.pop(i, None)
                 held[0] -= m
                 try:
                     out[i] = f.result()
@@ -379,6 +472,7 @@ class SolvePool:
                 self.kill()
                 raise InterruptedError
             start()
+            share()
         return out
 
     def kill(self):

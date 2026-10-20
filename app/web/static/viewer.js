@@ -45,7 +45,7 @@
     jobId: null, meta: null, labels: null, fields: {}, surfaces: {}, surfLoaded: false, network: null,
     // "smooth": SurfaceNets skins, one per particle; "voxels": the voxel faces
     // the solver sees, flat shaded and coloured voxel by voxel
-    surfStyle: "smooth", voxels: {}, voxLoaded: false,
+    surfStyle: "voxels", voxels: {}, voxLoaded: false,
     // the RVE faces and the structure sections at the solver's resolution
     // (the browser volume is a quarter of it on a 640-voxel grid)
     faceData: {}, lslices: {}, fslices: {},
@@ -591,6 +591,7 @@
     }
     await buildVoxVolume();
     buildRegion();
+    buildSlabs();
     await buildNetwork();
     await buildVectors(ctf);
     await buildPaths();
@@ -705,6 +706,7 @@
     // opacity by phase: the matrix and hidden phases transparent
     const op = PWF.newInstance(), lc = CTF.newInstance();
     S.meta.labels.forEach((l) => {
+      // no matrix is drawn as voxels; a further matrix shows as its slab (buildSlabs)
       const drawn = !(l.kind === "matrix" || l.kind === "interphase") && !S.hidden[l.value];
       op.addPoint(l.value - 0.45, drawn ? S.opacity : 0); op.addPoint(l.value + 0.45, drawn ? S.opacity : 0);
       const c = hex2rgb(S.colours[l.value] || l.color);
@@ -776,6 +778,31 @@
       styleSlice(f.actor, ctf, true);
       if (R.slices[ax]) R.slices[ax].actor.setVisibility(false);
     }
+  }
+  // A further matrix (a section of the RVE) is drawn as its slab: a light box
+  // in its colour with outlined edges, so that the particles inside it stay
+  // visible whatever the field shown. Hidden with its phase in the legend.
+  function buildSlabs() {
+    const Cube = ns("Filters.Sources.vtkCubeSource"), Mapper = ns("Rendering.Core.vtkMapper"), Actor = ns("Rendering.Core.vtkActor");
+    (R.slabs || []).forEach((a) => R.renderer.removeActor(a));
+    R.slabs = [];
+    const L = S.meta.length_um || S.meta.shape.map((n) => n * S.meta.spacing_um);
+    S.meta.labels.forEach((l) => {
+      const sec = l.section;
+      if (l.kind !== "matrix" || !sec || !S.particles || S.hidden[l.value]) return;
+      const ax = "xyz".indexOf(sec.axis);
+      const lo = [0, 0, 0], hi = L.slice();
+      lo[ax] = sec.from * L[ax]; hi[ax] = sec.to * L[ax];
+      const c = hex2rgb(S.colours[l.value] || l.color);
+      const src = Cube.newInstance({ center: [0, 1, 2].map((k) => 0.5 * (lo[k] + hi[k])),
+        xLength: hi[0] - lo[0], yLength: hi[1] - lo[1], zLength: hi[2] - lo[2] });
+      const m = Mapper.newInstance(); m.setInputConnection(src.getOutputPort());
+      const a = Actor.newInstance(); a.setMapper(m);
+      const p = a.getProperty();
+      p.setColor(...c); p.setOpacity(0.15);
+      p.setEdgeVisibility(true); p.setEdgeColor(...c.map((v) => v * 0.75)); p.setLineWidth(2.5);
+      R.renderer.addActor(a); R.slabs.push(a);
+    });
   }
   // Where the particle surfaces (or voxel faces) show only a corner of a
   // large RVE, that region is outlined in orange.

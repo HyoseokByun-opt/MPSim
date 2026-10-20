@@ -316,15 +316,15 @@ def _rhs(kd, axis, out):
 
 
 @njit(parallel=True, cache=True)
-def _mean_flux(u, kf, axis, add):
+def _mean_flux_rows(u, kf, axis, add, rows):
     n0, n1, n2 = u.shape
-    total = 0.0
     for i0 in prange(n0):
         i = np.int64(i0)
         ip = i + 1 if i + 1 < n0 else 0
         row = 0.0
         for j in range(n1):
             jp = j + 1 if j + 1 < n1 else 0
+            line = 0.0
             for k in range(n2):
                 kp = k + 1 if k + 1 < n2 else 0
                 if axis == 0:
@@ -333,9 +333,17 @@ def _mean_flux(u, kf, axis, add):
                     g = u[i, jp, k] - u[i, j, k]
                 else:
                     g = u[i, j, kp] - u[i, j, k]
-                row += kf[i, j, k] * (g + add)
-        total += row
-    return total / (n0 * n1 * n2)
+                line += kf[i, j, k] * (g + add)
+            row += line
+        rows[i] = row
+
+
+def _mean_flux(u, kf, axis, add):
+    """The mean flux along `axis`; blocked like _sums3, so the same on any
+    number of threads."""
+    rows = np.empty(u.shape[0])
+    _mean_flux_rows(u, kf, axis, float(add), rows)
+    return float(rows.sum()) / u.size
 
 
 @njit(cache=True)
@@ -420,7 +428,9 @@ class FFTPreconditioner:
         self.inv = inv
 
     def __call__(self, r):
-        w = self.workers
+        # None: the threads of the moment (a parallel-solve worker may be given
+        # more cores while it solves, when other solves have finished)
+        w = self.workers if self.workers is not None else _threads()
         if self.zbc == "periodic":
             R = sfft.rfftn(r, workers=w)
             R *= self.inv
@@ -438,37 +448,65 @@ class FFTPreconditioner:
 # threads; the vector updates between them (means, dot products, axpy) were
 # single-threaded NumPy, about half the time of a large solve. Fused here, one
 # pass over memory each, so that one direction uses every core of the job.
+# Sums are blocked - each grid line, then each slab, then NumPy's pairwise sum
+# over the slabs - so that they are as accurate as NumPy's and do not depend
+# on the number of threads: the same answer on 1 or 64 cores.
 @njit(parallel=True, cache=True)
-def _sums3(a, b):
-    """(sum a, sum a*b, sum b) over two arrays of one shape."""
+def _sums3_rows(a, b, out):
+    """Per slab i0: (sum a, sum a*b, sum b) into out[:, i0]."""
     n0, n1, n2 = a.shape
-    sa = 0.0
-    sab = 0.0
-    sb = 0.0
     for i0 in prange(n0):
+        sa = 0.0
+        sab = 0.0
+        sb = 0.0
         for i1 in range(n1):
+            la = 0.0
+            lab = 0.0
+            lb = 0.0
             for i2 in range(n2):
                 x = a[i0, i1, i2]
                 y = b[i0, i1, i2]
-                sa += x
-                sab += x * y
-                sb += y
-    return sa, sab, sb
+                la += x
+                lab += x * y
+                lb += y
+            sa += la
+            sab += lab
+            sb += lb
+        out[0, i0] = sa
+        out[1, i0] = sab
+        out[2, i0] = sb
+
+
+def _sums3(a, b):
+    """(sum a, sum a*b, sum b) over two arrays of one shape."""
+    out = np.empty((3, a.shape[0]))
+    _sums3_rows(a, b, out)
+    s = out.sum(axis=1)
+    return float(s[0]), float(s[1]), float(s[2])
 
 
 @njit(parallel=True, cache=True)
-def _cg_step(u, r, p, Ap, alpha, shift):
-    """u += alpha p;  r -= alpha (Ap - shift);  returns the new |r|^2."""
+def _cg_step_rows(u, r, p, Ap, alpha, shift, out):
+    """u += alpha p;  r -= alpha (Ap - shift);  the new |r|^2 per slab."""
     n0, n1, n2 = u.shape
-    rr = 0.0
     for i0 in prange(n0):
+        rr = 0.0
         for i1 in range(n1):
+            lr = 0.0
             for i2 in range(n2):
                 u[i0, i1, i2] += alpha * p[i0, i1, i2]
                 v = r[i0, i1, i2] - alpha * (Ap[i0, i1, i2] - shift)
                 r[i0, i1, i2] = v
-                rr += v * v
-    return rr
+                lr += v * v
+            rr += lr
+        out[i0] = rr
+
+
+def _cg_step(u, r, p, Ap, alpha, shift):
+    """u += alpha p;  r -= alpha (Ap - shift);  returns the new |r|^2."""
+    out = np.empty(u.shape[0])
+    _cg_step_rows(u, r, p, Ap, float(alpha), float(shift), out)
+    return float(out.sum())
 
 
 @njit(parallel=True, cache=True)
@@ -570,7 +608,7 @@ def solve_direction(labels, vals, direction, rpair=None, tol=1e-7, maxiter=20000
     fmin = min(float(k.min()) for k in fpos)
     fmax = max(float(k.max()) for k in fpos)
     k0 = math.sqrt(fmin * fmax)
-    M = FFTPreconditioner(shape, k0, workers=_threads() if workers is None else workers,
+    M = FFTPreconditioner(shape, k0, workers=workers,
                           zbc="neumann" if film else "periodic")
 
     u = np.zeros(shape)
@@ -723,7 +761,7 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
 
     fpos = [k[k > 0] for k in kf]
     k0 = math.sqrt(min(float(k.min()) for k in fpos) * max(float(k.max()) for k in fpos))
-    M = FFTPreconditioner(shape, k0, workers=_threads() if workers is None else workers, zbc="dirichlet")
+    M = FFTPreconditioner(shape, k0, workers=workers, zbc="dirichlet")
     u = M(b)                               # a good start: the constant-coefficient solution
     Ap = np.empty(shape)
     _apply_film_z(u, kf[0], kf[1], kf[2], gb, gt, Ap)

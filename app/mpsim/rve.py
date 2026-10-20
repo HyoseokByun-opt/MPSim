@@ -229,7 +229,7 @@ def plan(phases, rve=None, props=None, limits=None):
             h = float(rve.get("L_um") or L_req) / max(even_up(float(rve["N"])), 8)
         if rve.get("L_um"):
             L_user = float(rve["L_um"])
-            if L_user < L_req * (1 - 1e-9) and rve.get("auto_enlarge", True):
+            if L_user < L_req * (1 - 1e-9) and rve.get("auto_enlarge", False):
                 notes.append(f"The RVE edge length was enlarged from {L_user:.4g} µm to {L_req:.4g} µm ({why}).")
                 L = L_req
             else:

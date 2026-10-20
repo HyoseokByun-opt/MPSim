@@ -1,15 +1,24 @@
-"""NASA PuMA backend - the default solver for every transport and elastic property.
+"""NASA PuMA backend.
 
 PuMA (Ferguson et al., SoftwareX 2021; conda-forge package "puma") is the
 reference open-source code for voxel homogenisation. What is used from it:
 
-* conductivity (FV)   compute_thermal_conductivity / compute_electrical_conductivity
-                      - the same operator serves k, sigma, eps_r and mu_r
+* conductivity (FE)   periodic Q1 finite elements - the optional conduction
+                      method; the default is the built-in periodic FV
+                      (conduction.py), whose operator equals PuMA's FV
+                      operator but with periodic instead of fixed end slices
+                      (checked by the self-test)
 * elasticity (FE)     periodic Q1 element-by-element solver
-                      (Lopes et al., Comput. Mater. Sci. 219, 2023)
-* permeability (FE)   Stokes flow, periodic sides
-* tortuosity (FV)     continuum diffusion in the pore phase
-* surface area        marching-cubes isosurface
+                      (Lopes et al., Comput. Mater. Sci. 219, 2023) - the
+                      optional elastic method; the default is FANS (fans.py)
+* permeability (FE)   Stokes flow, periodic sides - the permeability solver
+* tortuosity (FV)     continuum diffusion in the pore phase - the diffusion
+                      solver
+* ray casting, surface area, mean intercept length
+
+PuMA's solves are single-threaded Python and NumPy; the FE conduction and
+elasticity, the Stokes flow and the tortuosity run here on all of a job's
+cores with PuMA's equations (see the multi-core sections below).
 
 PuMA has no thermal-expansion load. `ThermoElasticFE` adds one *inside* PuMA's
 own finite-element formulation rather than beside it:
@@ -40,6 +49,9 @@ _PUMA = None
 _PUMA_ERR = None
 
 
+_LOG_DIR = None
+
+
 def _load():
     global _PUMA, _PUMA_ERR
     if _PUMA is not None or _PUMA_ERR is not None:
@@ -50,6 +62,8 @@ def _load():
             warnings.simplefilter("ignore")
             import pumapy
         _PUMA = pumapy
+        if _LOG_DIR:
+            _apply_log_dir(_LOG_DIR)
     except Exception as e:                                    # noqa: BLE001
         _PUMA_ERR = e
     return _PUMA
@@ -85,13 +99,19 @@ def require():
 
 def set_log_dir(path):
     """PuMA writes a log file per solve into settings['log_location'] (default
-    'logs' in the working directory). Keep those files inside the run folder."""
-    pm = _load()
-    if pm is None:
-        return
+    'logs' in the working directory). Keep those files inside the run folder.
+    Applied when PuMA is loaded: a run that does not use PuMA does not import
+    it (1.4 s)."""
+    global _LOG_DIR
+    _LOG_DIR = path
+    if _PUMA is not None:
+        _apply_log_dir(path)
+
+
+def _apply_log_dir(path):
     try:
         os.makedirs(path, exist_ok=True)
-        pm.settings["log_location"] = path
+        _PUMA.settings["log_location"] = path
     except Exception:                                         # noqa: BLE001
         pass
 
@@ -420,7 +440,7 @@ def set_fe_stop(mode):
     _STOP = mode
 
 
-def _minres_parallel(matvec_into, b, tol, maxiter, dinv=None, floor=0.0):
+def _minres_parallel(matvec_into, b, tol, maxiter, dinv=None, floor=0.0, stop=None):
     """scipy.sparse.linalg.minres (1.11) with M = I, x0 = 0, shift = 0: the same
     recurrences; returns (x, info) as scipy does. Writes PuMA's
     MinResSolverDisplay line every iteration, the driving residual first.
@@ -439,7 +459,9 @@ def _minres_parallel(matvec_into, b, tol, maxiter, dinv=None, floor=0.0):
 
     floor: an absolute residual below which the system counts as solved (a
     round-off multiple of the matrix scale). A homogeneous RVE has b = 0 up to
-    round-off, and ||r|| / ||b|| cannot fall below round-off relative to it."""
+    round-off, and ||r|| / ||b|| cannot fall below round-off relative to it.
+
+    stop: "relres" or "scipy" for this call (default: the module setting)."""
     n = b.size
     eps = np.finfo(float).eps
     x = np.zeros(n)
@@ -507,7 +529,7 @@ def _minres_parallel(matvec_into, b, tol, maxiter, dinv=None, floor=0.0):
         test1 = math.inf if (ynorm == 0 or Anorm == 0) else rnorm / (Anorm * ynorm)
         test2 = math.inf if Anorm == 0 else root / Anorm
         Acond = gmax / gmin
-        if _STOP == "relres":
+        if (stop or _STOP) == "relres":
             relres = rnorm / beta1
             if relres <= tol or rnorm <= floor:
                 istop = 1
@@ -1060,10 +1082,13 @@ def permeability(labels, void_ids, voxel_m, direction, tol=1e-6, maxiter=50000,
     ws = _workspace(binary, voxel_m)
     t0 = time.time()
     with _tapped(progress, log, should_stop, tag=direction) as tap:
-        keff, (ux, uy, uz) = pm.compute_permeability(
-            ws, (1, 1), direction=direction, tol=tol, maxiter=maxiter,
-            solver_type="minres", display_iter=True, matrix_free=True,
-            output_fields=True)
+        if _FE_PARALLEL:
+            keff, (ux, uy, uz) = _permeability_parallel(ws, direction, tol, maxiter)
+        else:
+            keff, (ux, uy, uz) = pm.compute_permeability(
+                ws, (1, 1), direction=direction, tol=tol, maxiter=maxiter,
+                solver_type="minres", display_iter=True, matrix_free=True,
+                output_fields=True)
     return {"K": np.asarray(keff, float), "u": (ux, uy, uz), "seconds": time.time() - t0,
             "iterations": tap.iterations, "converged": tap.converged()}
 
@@ -1078,9 +1103,12 @@ def tortuosity(labels, void_ids, voxel_m, direction, tol=1e-6, maxiter=50000,
     ws = _workspace(binary, voxel_m)
     t0 = time.time()
     with _tapped(progress, log, should_stop, tag=direction) as tap:
-        eta, deff, poro, Cfield = pm.compute_continuum_tortuosity(
-            ws, (0, 0), direction, side_bc="p", tolerance=tol, maxiter=maxiter,
-            solver_type="cg", display_iter=True)
+        if _FE_PARALLEL:
+            eta, deff, poro, Cfield = _tortuosity_parallel(ws, direction, tol, maxiter)
+        else:
+            eta, deff, poro, Cfield = pm.compute_continuum_tortuosity(
+                ws, (0, 0), direction, side_bc="p", tolerance=tol, maxiter=maxiter,
+                solver_type="cg", display_iter=True)
     d = "xyz".index(direction)
     return {"tortuosity": float(eta[d]), "d_eff": float(np.asarray(deff)[d]),
             "porosity": float(poro), "C": np.asarray(Cfield),
@@ -1167,3 +1195,420 @@ def orientation_tensor(labels, phase_ids, voxel_m, sigma=0.7, rho=1.4):
         return None
     A = (v.T @ v) / v.shape[0]
     return A
+
+
+# =========================================================================
+# multi-core tortuosity: PuMA's finite-volume diffusion, threaded
+# =========================================================================
+# PuMA's compute_continuum_tortuosity builds a matrix-free product from six
+# np.roll copies of the field per iteration and runs scipy's CG with a Jacobi
+# preconditioner - all on one core. Here PuMA builds everything as before
+# (conductivity map, fixed slices, face coefficients kf_*, right-hand side,
+# initial ramp) and evaluates the effective coefficient and the flux itself;
+# only the product and the CG vector work run in threaded kernels. CG is
+# scipy 1.11's (Templates) recurrence with the same stopping test,
+# ||r|| <= max(atol, 1e-5 ||b||), and the same diagonal preconditioner.
+# The sums are blocked, so the answer does not depend on the thread count.
+@njit(parallel=True, cache=True)
+def _tq_matvec(x, ki, kxm, kxp, kym, kyp, kzm, kzp, out, dot_rows):
+    """out = A x on PuMA's periodic stencil, all arrays (Z, Y, X) views of its
+    Fortran-ordered vectors (x fastest); dot_rows[k] = sum of x*out on slab k."""
+    nz, ny, nx = x.shape
+    for k0 in prange(nz):
+        k = np.int64(k0)
+        kp = k + 1 if k + 1 < nz else 0
+        km = k - 1 if k > 0 else nz - 1
+        acc = 0.0
+        for j in range(ny):
+            jp = j + 1 if j + 1 < ny else 0
+            jm = j - 1 if j > 0 else ny - 1
+            la = 0.0
+            for i in range(nx):
+                ip = i + 1 if i + 1 < nx else 0
+                im = i - 1 if i > 0 else nx - 1
+                v = (ki[k, j, i] * x[k, j, i]
+                     + kxm[k, j, i] * x[k, j, im] + kxp[k, j, i] * x[k, j, ip]
+                     + kym[k, j, i] * x[k, jm, i] + kyp[k, j, i] * x[k, jp, i]
+                     + kzm[k, j, i] * x[km, j, i] + kzp[k, j, i] * x[kp, j, i])
+                out[k, j, i] = v
+                la += x[k, j, i] * v
+            acc += la
+        dot_rows[k] = acc
+
+
+@njit(parallel=True, cache=True)
+def _tq_precond_dot(r, dinv, rows):
+    """rows[k] = sum over slab k of r * dinv * r (= r.z with z = M r)."""
+    nz, ny, nx = r.shape
+    for k in prange(nz):
+        acc = 0.0
+        for j in range(ny):
+            la = 0.0
+            for i in range(nx):
+                v = r[k, j, i]
+                la += v * dinv[k, j, i] * v
+            acc += la
+        rows[k] = acc
+
+
+@njit(parallel=True, cache=True)
+def _tq_direction(p, r, dinv, beta):
+    """p = M r + beta p."""
+    nz, ny, nx = p.shape
+    for k in prange(nz):
+        for j in range(ny):
+            for i in range(nx):
+                p[k, j, i] = dinv[k, j, i] * r[k, j, i] + beta * p[k, j, i]
+
+
+@njit(parallel=True, cache=True)
+def _tq_step(x, r, p, q, alpha, rows):
+    """x += alpha p; r -= alpha q; rows[k] = |r|^2 on slab k."""
+    nz, ny, nx = x.shape
+    for k in prange(nz):
+        acc = 0.0
+        for j in range(ny):
+            la = 0.0
+            for i in range(nx):
+                x[k, j, i] += alpha * p[k, j, i]
+                v = r[k, j, i] - alpha * q[k, j, i]
+                r[k, j, i] = v
+                la += v * v
+            acc += la
+        rows[k] = acc
+
+
+def _tortuosity_parallel(ws, direction, tol, maxiter):
+    """compute_continuum_tortuosity(ws, (0, 0), direction, side_bc="p",
+    tolerance=tol, solver_type="cg") with the CG on all cores. Returns
+    (eta, keff, porosity, C) as PuMA does."""
+    pm = require()
+    from pumapy.physics_models.finite_volume.isotropic_conductivity import IsotropicConductivity
+    from pumapy.material_properties.volume_fraction import compute_volume_fraction
+    from pumapy.utilities.timer import Timer
+    cond_map = pm.IsotropicConductivityMap()
+    cond_map.add_material((0, 0), 1)                 # void k = 1, solid k = 0 (PuMA's map)
+    cond_map.add_material((1, 32000), 0)
+    s = IsotropicConductivity(ws, cond_map, direction, "p", None, tol, maxiter, "cg", True, True)
+    s.error_check()
+    s.log_input()
+    t = Timer()
+    s.initialize()
+    s.assemble_bvector()
+    s.setup_cond_matrices()                          # the matrix-free branch of assemble_Amatrix
+    del s.prescribed_bc
+    print("Time to assemble matrices: ", t.elapsed())
+    t.reset()
+    shp = (s.len_z, s.len_y, s.len_x)                # Fortran order: x fastest
+
+    def v3(a):
+        return np.ascontiguousarray(a, dtype=float).reshape(shp)
+    ki, kxm, kxp = v3(s.kf_i), v3(s.kf_ixm), v3(s.kf_ixp)
+    kym, kyp, kzm, kzp = v3(s.kf_iym), v3(s.kf_iyp), v3(s.kf_izm), v3(s.kf_izp)
+    dinv = v3(s.kf_inonzero)
+    b = v3(s.bvec)
+    x = v3(np.array(s.initial_guess, float))
+    print("Solving Ax=b using cg solver")
+    rows = np.empty(shp[0])
+    q = np.empty(shp)
+    _tq_matvec(x, ki, kxm, kxp, kym, kyp, kzm, kzp, q, rows)
+    r = b - q
+    atol = max(float(tol), 1e-5 * float(np.linalg.norm(b)))
+    resid = float(np.linalg.norm(r))
+    info = 1 if resid > atol else 0
+    p = np.zeros(shp)
+    rho_old = 1.0
+    it = 0
+    while info and it < maxiter:
+        it += 1
+        _tq_precond_dot(r, dinv, rows)
+        rho = float(rows.sum())
+        beta = rho / rho_old if it > 1 else 0.0
+        _tq_direction(p, r, dinv, beta)
+        _tq_matvec(p, ki, kxm, kxp, kym, kyp, kzm, kzp, q, rows)
+        alpha = rho / float(rows.sum())
+        _tq_step(x, r, p, q, alpha, rows)
+        resid = math.sqrt(max(float(rows.sum()), 0.0))
+        if resid <= atol:
+            # as scipy: the true residual decides, not the updated one
+            _tq_matvec(x, ki, kxm, kxp, kym, kyp, kzm, kzp, q, rows)
+            r = b - q
+            resid = float(np.linalg.norm(r))
+            if resid <= atol:
+                info = 0
+        rho_old = rho
+        sys.stdout.write(f"\rIteration: {it}, driving modified residual = {resid:0.10f} --> target = {atol:0.10f}")
+    if info:
+        raise Exception("Convergence to tolerance not achieved.")
+    print(" ... Done")
+    del ki, kxm, kxp, kym, kyp, kzm, kzp, dinv, q, r, p, b
+    s.kf_i = s.kf_ixm = s.kf_ixp = s.kf_iym = s.kf_iyp = s.kf_izm = s.kf_izp = s.kf_inonzero = None
+    s.x = x.reshape(-1)
+    print("Time to solve: ", t.elapsed())
+    s.compute_effective_coefficient()
+    s.solve_time = t.elapsed()
+    s.log_output()
+    porosity = compute_volume_fraction(ws, (0, 0))
+    eta = [porosity / k if k else 0 for k in s.keff]
+    return eta, s.keff, porosity, s.T
+
+
+# =========================================================================
+# multi-core Stokes flow: PuMA's Q1-Q1 permeability, threaded
+# =========================================================================
+# PuMA's matrix-free permeability spends its time on one core in three places:
+# a Python loop over every grid node that applies the periodic numbering
+# (generate_mf_inds_and_preconditioner), the product - einsum over the fluid
+# elements, then np.add.at to scatter the element rows - and scipy's MINRES.
+# Here the node loop runs compiled (the same statements in the same order),
+# the product computes the 32 rows of every fluid element in parallel and
+# then gathers them per unknown, and MINRES is scipy's recurrence with fused
+# threaded kernels and scipy's own stopping test, as PuMA runs it. Element
+# matrices, numbering, right-hand side, reduction and velocity reconstruction
+# stay PuMA's.
+@njit(cache=True)
+def _perm_pbc(dof_map, last_s, last_r, last_c, top, left, front):
+    """PuMA's periodic-numbering loop, compiled (it reads entries it updated
+    earlier, so it stays sequential)."""
+    for nms in range(dof_map.shape[0]):
+        dof_map[nms] += ((1 - last_s[nms]) * (last_r[nms] * (-dof_map[nms] + dof_map[top[nms]])
+                                             + last_c[nms] * (-dof_map[nms] + dof_map[left[nms]])
+                                             + last_r[nms] * last_c[nms] * (dof_map[nms] - dof_map[left[nms]]))
+                         + last_s[nms] * (-dof_map[nms] + dof_map[front[nms]]))
+
+
+@njit(parallel=True, cache=True)
+def _stokes_rows(x, el_v, el_p, of, K, G, Pm, tmp):
+    """The 32 rows of every fluid element: tmp[e, :24] the momentum rows,
+    tmp[e, 24:] the continuity rows (PuMA's two einsum pairs)."""
+    ne = el_p.shape[1]
+    for e in prange(ne):
+        for a in range(24):
+            if of[a, e]:
+                s = 0.0
+                for j in range(24):
+                    if of[j, e]:
+                        s += K[a, j] * x[el_v[j, e]]
+                for j in range(8):
+                    s += G[a, j] * x[el_p[j, e]]
+                tmp[e, a] = s
+            else:
+                tmp[e, a] = 0.0
+        for b in range(8):
+            s = 0.0
+            for j in range(24):
+                if of[j, e]:
+                    s += G[j, b] * x[el_v[j, e]]
+            for j in range(8):
+                s -= Pm[b, j] * x[el_p[j, e]]
+            tmp[e, 24 + b] = s
+
+
+@njit(parallel=True, cache=True)
+def _stokes_gather(tmp, ptr, idx, y):
+    """y[d] = the element rows that belong to unknown d (np.add.at, gathered)."""
+    t = tmp.reshape(-1)
+    for d in prange(y.shape[0]):
+        s = 0.0
+        for q in range(ptr[d], ptr[d + 1]):
+            s += t[idx[q]]
+        y[d] = s
+
+
+@njit(cache=True)
+def _stokes_incidence(el_v, el_p, of, n):
+    """For each unknown the rows (e*32 + a) that add to it, in np.add.at's
+    order (local row first, then element)."""
+    ne = el_p.shape[1]
+    ptr = np.zeros(n + 1, np.int64)
+    for a in range(24):
+        for e in range(ne):
+            if of[a, e]:
+                ptr[el_v[a, e] + 1] += 1
+    for b in range(8):
+        for e in range(ne):
+            ptr[el_p[b, e] + 1] += 1
+    for d in range(n):
+        ptr[d + 1] += ptr[d]
+    fill = ptr[:-1].copy()
+    idx = np.empty(ptr[n], np.int64)
+    for a in range(24):
+        for e in range(ne):
+            if of[a, e]:
+                d = el_v[a, e]
+                idx[fill[d]] = e * 32 + a
+                fill[d] += 1
+    for b in range(8):
+        for e in range(ne):
+            d = el_p[b, e]
+            idx[fill[d]] = e * 32 + 24 + b
+            fill[d] += 1
+    return ptr, idx
+
+
+class _StokesOperator:
+    """PuMA's matrix-free Stokes product, parallel; matvec_into(x, y)."""
+
+    def __init__(self, el_v, el_p, of, K, G, Pm, n):
+        self.el_v = np.ascontiguousarray(el_v, dtype=np.int64)
+        self.el_p = np.ascontiguousarray(el_p, dtype=np.int64)
+        self.of = np.ascontiguousarray(of, dtype=np.bool_)
+        self.K, self.G, self.Pm = (np.ascontiguousarray(a, dtype=np.float64) for a in (K, G, Pm))
+        self.ptr, self.idx = _stokes_incidence(self.el_v, self.el_p, self.of, int(n))
+        self.tmp = np.empty((self.el_p.shape[1], 32))
+        self.shape = (int(n), int(n))
+
+    def matvec_into(self, x, y):
+        _stokes_rows(x, self.el_v, self.el_p, self.of, self.K, self.G, self.Pm, self.tmp)
+        _stokes_gather(self.tmp, self.ptr, self.idx, y)
+
+    def matvec(self, x):
+        y = np.empty(self.shape[0])
+        self.matvec_into(np.ascontiguousarray(np.ravel(x), dtype=np.float64), y)
+        return y
+
+
+_STOKES_CLS = None
+
+
+def _stokes_class():
+    global _STOKES_CLS
+    if _STOKES_CLS is not None:
+        return _STOKES_CLS
+    from pumapy.physics_models.finite_element.fe_permeability import Permeability
+    from scipy.sparse import diags
+
+    class StokesParallel(Permeability):
+        def generate_mf_inds_and_preconditioner(self):
+            # PuMA 3.2.2's method; only the node loop is compiled (_perm_pbc)
+            nodes_n = (self.len_x + 1) * (self.len_y + 1) * (self.len_z + 1)
+            slice_n = (self.len_x + 1) * (self.len_y + 1)
+            ns = np.arange(1, nodes_n + 1, dtype=int)
+            slices = ((ns - 1) / ((self.len_x + 1) * (self.len_y + 1)) + 1).astype(int)
+            cs = (((ns - (slices - 1) * slice_n - 1) / (self.len_y + 1)) + 1).astype(int)
+            rs = (ns - (slices - 1) * slice_n - (cs - 1) * (self.len_y + 1)).astype(int)
+            flag_lastcols = (cs // (self.len_x + 1) == 1)
+            flag_lastrows = (rs // (self.len_y + 1) == 1)
+            flag_lastslices = (slices // (self.len_z + 1) == 1)
+            flag_firstcols = cs == 1
+            flag_firstrows = rs == 1
+            flag_firstslices = slices == 1
+            reps = ns - (slices - 1) * slice_n - cs + (slices - 1) * self.nel + flag_lastslices * ((1 - slices) * self.nel)
+            el_se_back = (reps - flag_lastrows * self.len_y + flag_lastcols * (-self.len_x * (self.len_y + 1) + cs - 1) + 1).astype(int)
+            el_ne_back = (reps + flag_firstrows * self.len_y + flag_lastcols * (-self.nel)).astype(int)
+            el_nw_back = (reps - self.len_y + flag_firstrows * self.len_y + flag_firstcols * self.nel).astype(int)
+            el_sw_back = (reps - self.len_y + flag_firstcols * self.nel + flag_lastrows * (-self.len_y) + 1).astype(int)
+            reps = flag_firstslices * self.nels + flag_lastslices * self.nels
+            del cs, rs, flag_firstcols, flag_firstrows, flag_firstslices
+            el_se_front = el_se_back - self.nel + reps
+            el_ne_front = el_ne_back - self.nel + reps
+            el_nw_front = el_nw_back - self.nel + reps
+            el_sw_front = el_sw_back - self.nel + reps
+            elem_se_back_ms = el_se_back - 1
+            elem_ne_back_ms = el_ne_back - 1
+            elem_nw_back_ms = el_nw_back - 1
+            elem_sw_back_ms = el_sw_back - 1
+            elem_se_front_ms = el_se_front - 1
+            elem_ne_front_ms = el_ne_front - 1
+            elem_nw_front_ms = el_nw_front - 1
+            elem_sw_front_ms = el_sw_front - 1
+            mat_map = self.ws.matrix.swapaxes(1, 0).ravel(order='F') > 0
+            flag_one_fluid = - (mat_map[elem_se_front_ms] * mat_map[elem_ne_front_ms] * mat_map[elem_nw_front_ms] *
+                                mat_map[elem_sw_front_ms] * mat_map[elem_se_back_ms] * mat_map[elem_ne_back_ms] *
+                                mat_map[elem_nw_back_ms] * mat_map[elem_sw_back_ms] - 1)
+            flag_one_solid = (mat_map[elem_se_front_ms] + mat_map[elem_ne_front_ms] + mat_map[elem_nw_front_ms] +
+                              mat_map[elem_sw_front_ms] + mat_map[elem_se_back_ms] + mat_map[elem_ne_back_ms] +
+                              mat_map[elem_nw_back_ms] + mat_map[elem_sw_back_ms]) > 0
+            flag_only_fluid = (mat_map[elem_se_front_ms] + mat_map[elem_ne_front_ms] + mat_map[elem_nw_front_ms] +
+                               mat_map[elem_sw_front_ms] + mat_map[elem_se_back_ms] + mat_map[elem_ne_back_ms] +
+                               mat_map[elem_nw_back_ms] + mat_map[elem_sw_back_ms]) == 0
+            del reps, elem_ne_back_ms, elem_nw_back_ms, elem_sw_back_ms, elem_se_front_ms, elem_ne_front_ms, \
+                elem_nw_front_ms, elem_sw_front_ms
+            vel_nodes_n = np.cumsum(flag_only_fluid * (1 - flag_lastrows) * (1 - flag_lastcols) * (1 - flag_lastslices))
+            dof_map = flag_only_fluid * vel_nodes_n + flag_one_fluid * flag_one_solid * \
+                (nodes_n + np.cumsum(flag_one_solid * flag_one_fluid * (1 - flag_lastrows) * (1 - flag_lastcols) *
+                                     (1 - flag_lastslices)))
+            top_nodes = flag_lastrows * (ns - self.len_y) + (1 - flag_lastrows) - 1
+            left_nodes = flag_lastcols * (ns - self.len_x * (self.len_y + 1)) + (1 - flag_lastcols) - 1
+            front_nodes = flag_lastslices * (ns - (slices - 1) * slice_n) + (1 - flag_lastslices) - 1
+            fluid_el_n = np.cumsum((mat_map[elem_se_back_ms] == 0) * (1 - flag_lastrows) * (1 - flag_lastcols) *
+                                   (1 - flag_lastslices))
+            v_fluid_tmp = np.zeros(nodes_n, dtype=int)
+            np.add.at(v_fluid_tmp, fluid_el_n * (mat_map[elem_se_back_ms] == 0) + (mat_map[elem_se_back_ms] != 0) - 1,
+                      ((mat_map[elem_se_back_ms] == 0) * el_se_back) * (1 - flag_lastrows) * (1 - flag_lastcols) *
+                      (1 - flag_lastslices))
+            dof_map = np.ascontiguousarray(dof_map, dtype=np.int64)
+            _perm_pbc(dof_map, flag_lastslices.astype(np.int64), flag_lastrows.astype(np.int64),
+                      flag_lastcols.astype(np.int64), np.ascontiguousarray(top_nodes, dtype=np.int64),
+                      np.ascontiguousarray(left_nodes, dtype=np.int64), np.ascontiguousarray(front_nodes, dtype=np.int64))
+            del top_nodes, left_nodes, front_nodes, slices, mat_map, flag_one_fluid, flag_one_solid, flag_only_fluid
+            nms = ns - 1
+            dof_map[nms] += (dof_map[nms] > vel_nodes_n[-1]) * (vel_nodes_n[-1] - nodes_n)
+            self.v_fluid = np.zeros(fluid_el_n[-1], dtype=int)
+            np.add.at(self.v_fluid, (ns <= fluid_el_n[-1]) * ns + (ns > fluid_el_n[-1]) - 1,
+                      v_fluid_tmp[nms] * (ns <= fluid_el_n[-1]))
+            v_nodes_n = vel_nodes_n[-1]
+            del vel_nodes_n, nms, ns, fluid_el_n, v_fluid_tmp
+            dofs = np.zeros((8, self.v_fluid.shape[0]), dtype=np.int64)
+            dofs[0] = ((self.v_fluid - 1) % self.nel + (((self.v_fluid - 1) % self.nel) // self.len_y) +
+                       ((self.v_fluid - 1) // self.nel) * (self.len_x + 1) * (self.len_y + 1)) + 2
+            dofs[1] = dofs[0] + self.len_y + 1
+            dofs[2] = dofs[1] - 1
+            dofs[3] = dofs[2] - (self.len_y + 1)
+            dofs[4] = dofs[3] + (self.len_x + 1) * (self.len_y + 1) + 1
+            dofs[5] = dofs[4] + self.len_y + 1
+            dofs[6] = dofs[5] - 1
+            dofs[7] = dofs[6] - (self.len_y + 1)
+            dofs = dof_map[dofs - 1]
+            self.el_dof_p = (3 * v_nodes_n + dofs - 1).astype(np.uint32)
+            self.el_dof_v = np.swapaxes(np.expand_dims(v_nodes_n >= dofs[np.arange(8)], axis=2) *
+                                        (np.expand_dims(dofs[np.arange(8)], axis=2) * 3 - 4 +
+                                         np.tile(np.arange(1, 4), (self.v_fluid.shape[0], 1))), 2, 1)
+            self.el_dof_v = self.el_dof_v.reshape(24, self.v_fluid.shape[0]).astype(np.uint32)
+            self.only_fluid = np.repeat(v_nodes_n >= dofs, 3, axis=0).astype(bool)
+            if self.preconditioner:
+                self.M = np.zeros(self.reduce.shape[0])
+                inds = np.arange(8)
+                np.add.at(self.M, 3 * v_nodes_n + dofs[inds] - 1, -np.expand_dims(self.p[inds, inds], axis=1))
+                np.add.at(self.M, self.el_dof_v, np.einsum('i, jk -> jik', self.k[inds[:3], inds[:3]],
+                                                           v_nodes_n >= dofs[np.arange(8)]).reshape(24, self.v_fluid.shape[0]))
+                self.M = diags(1. / self.M, 0).tocsr()
+
+        def assemble_Amatrix(self):
+            print("Creating A matrix ... ", flush=True, end='')
+            self.Amat = _StokesOperator(self.el_dof_v, self.el_dof_p, self.only_fluid, self.k, self.g, self.p,
+                                        self.reduce.shape[0])
+            print("Done")
+
+        def solve(self):
+            # Permeability.solve, with PropertySolver.solve's MINRES on all cores
+            self.x_full = np.zeros(4 * self.nels, dtype=float)
+            self.del_matrices = False
+            for d in self.direction:
+                print(f"Running {d} direction")
+                self.assemble_bvector(d)
+                b = np.ascontiguousarray(np.asarray(self.bvec.todense(), dtype=float).ravel())
+                print("Solving Ax=b using minres solver")
+                self.x, info = _minres_parallel(self.Amat.matvec_into, b, self.tolerance, self.maxiter, None, 0.0,
+                                                stop="scipy")
+                if info > 0:
+                    raise Exception("Convergence to tolerance not achieved.")
+                print(" ... Done")
+                self.x_full[self.reduce] = self.x
+                self.compute_effective_coefficient(d)
+            self.keff = (self.keff * self.voxlength ** 2) / self.nels
+            print(f'\nEffective permeability tensor: \n{self.keff}')
+
+    _STOKES_CLS = StokesParallel
+    return _STOKES_CLS
+
+
+def _permeability_parallel(ws, direction, tol, maxiter):
+    """compute_permeability(ws, (1, 1), direction, tol, maxiter, "minres",
+    matrix_free=True, output_fields=True) on all cores."""
+    solver = _stokes_class()(ws, (1, 1), direction, tol, maxiter, "minres", True, True, False, True)
+    solver.error_check()
+    solver.log_input()
+    solver.compute()
+    solver.log_output()
+    return solver.keff, (solver.ux, solver.uy, solver.uz)

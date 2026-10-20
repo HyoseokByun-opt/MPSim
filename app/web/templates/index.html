@@ -79,6 +79,7 @@
           <div class="vpane v3d" id="v3d">
             <div class="vempty" id="vEmpty"></div>
             <div class="vhud" id="vHud"></div>
+            <div class="vregion" id="vRegionBanner" hidden></div>
             <div class="vcbar" id="vCbar"></div>
             <div class="vfoot" id="vFoot"></div>
           </div>
@@ -167,8 +168,8 @@
         <div class="sec"><div class="sh" id="hScene"></div><div class="sb">
           <label class="chk"><span class="switch"><input type="checkbox" id="vFaces"><span></span></span> Field on the RVE faces</label>
           <label class="chk"><span class="switch"><input type="checkbox" id="vParticles" checked><span></span></span> Particle and pore surfaces</label>
-          <div class="seg sm" id="vSurfStyle" title="How particles and pores are drawn"><button data-style="smooth" class="on">Smooth</button><button data-style="voxels">Voxels</button></div>
-          <div class="hint" id="vSurfStyleHint">Smooth: a surface per particle, smoothed within a voxel of the voxel boundary. Voxels: every voxel the solver used (GPU volume rendering), each in the colour of its own value.</div>
+          <div class="seg sm" id="vSurfStyle" title="How particles and pores are drawn"><button data-style="voxels" class="on">Voxels</button><button data-style="smooth">Smooth</button></div>
+          <div class="hint" id="vSurfStyleHint">Voxels (default): every voxel the solver used (GPU volume rendering), each in the colour of its own value - the whole RVE at any size. Smooth: a surface per particle, smoothed within a voxel of the voxel boundary; an RVE with more particles than the browser can draw so is shown as a corner region.</div>
           <div class="note warn" id="vRegionNote" hidden></div>
           <label class="chk"><span class="switch"><input type="checkbox" id="vColorParticles" checked><span></span></span> Colour surfaces by the field</label>
           <div class="slrow"><span class="hint" style="text-align:left">Opacity</span><input type="range" id="vOpacity" min="0.05" max="1" step="0.05" value="1"><span id="vOpacityV">1.00</span></div>

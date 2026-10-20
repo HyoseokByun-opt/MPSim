@@ -416,6 +416,118 @@ def _generate_region(N, h, phases, disp, **kw):
     return lab, info
 
 
+def _generate_sections(N, h, phases, seed=0, log=print, **kw):
+    """Fillers confined to slabs of the cube (a phase's 'section', fractions
+    of the edge along one axis). Every group of fillers that shares a slab is
+    generated in it as a 'region' dispersion is - a film of the slab's
+    thickness, every particle wholly inside it, padded with matrix - and the
+    groups, whose slabs do not overlap (spec), are merged: labels, particle
+    lists (polyhedron plane tables with their template numbers moved on),
+    contact masks and counts. Contacts between particles of two slabs that
+    meet are not counted; each group counts its own."""
+    log = log or (lambda *a: None)
+    groups = []
+    for i, ph in enumerate(phases):
+        sec = ph.get("section")
+        if not sec or ph["shape"] == G.NETWORK or float(ph["vf"]) <= 0.0:
+            continue
+        for g in groups:
+            if g[0] == sec:
+                g[1].append(i)
+                break
+        else:
+            groups.append((sec, [i]))
+    t0 = time.time()
+    labels = np.zeros((N, N, N), np.uint8)
+    info = {"route": None, "contacts_mode": kw.get("contacts"), "gap_vox": None,
+            "phases": [{"name": ph.get("name", f"phase {i + 1}"), "vf_target": float(ph["vf"]), "vf_voxel": 0.0,
+                        "n_particles": 0, "jammed": False, "surface_true_um2": None, "surface_voxel_um2": 0.0,
+                        "octant_cov": 0.0} for i, ph in enumerate(phases)]}
+    cat = {"codes": [], "P": [], "R": [], "phase": [], "centers": []}
+    plane_sets, nf_sets, meta = [], [], []
+    cm = None
+    sums = {"contact_faces": 0, "touching_pairs": 0, "voxel_conflicts": 0, "contacts_removed": 0}
+    routes, shr, scales, secs = [], None, [], []
+    for gi, (sec, idx) in enumerate(groups):
+        if kw.get("should_stop") is not None and kw["should_stop"]():
+            raise InterruptedError
+        log(f"  section {gi + 1}: {', '.join(phases[i].get('name', str(i)) for i in idx)} in "
+            f"{sec['axis']} {100 * sec['from']:.4g}-{100 * sec['to']:.4g} % of the edge")
+        sub = [dict(phases[i], section=None) for i in idx]
+        lab_g, ig = _generate_region(N, h, sub, {"mode": "region", "axis": sec["axis"], "from": sec["from"],
+                                                 "to": sec["to"]}, seed=seed + 7919 * gi, log=log, **kw)
+        lut = np.zeros(len(idx) + 1, np.uint8)
+        lut[1:] = [i + 1 for i in idx]
+        m = lab_g > 0
+        labels[m] = lut[lab_g[m]]
+        del m
+        for k, i in enumerate(idx):
+            info["phases"][i] = dict(ig["phases"][k], name=phases[i].get("name", f"phase {i + 1}"))
+        pl, nf = ig["planes"]
+        off = sum(len(x) for x in nf_sets)
+        p = ig["particles"]
+        P = np.array(p["P"], float, copy=True)
+        if len(P):
+            poly = np.asarray(p["codes"]) == 6
+            P[poly, 1] += off
+        cat["codes"].append(np.asarray(p["codes"], np.int64))
+        cat["P"].append(P)
+        cat["R"].append(np.asarray(p["R"], float))
+        cat["phase"].append(np.asarray([idx[int(k)] for k in p["phase"]], np.int64))
+        cat["centers"].append(np.asarray(p["centers"], float))
+        plane_sets.append(np.asarray(pl))
+        nf_sets.append(np.asarray(nf))
+        meta += list(ig.get("poly_meta") or [])
+        if ig.get("contact_mask") is not None:
+            cm = ig["contact_mask"] if cm is None else (cm | ig["contact_mask"])
+        for k_ in sums:
+            sums[k_] += int(ig.get(k_, 0) or 0)
+        routes.append(ig.get("route") or "")
+        if ig.get("pack_scale") is not None:
+            scales.append(float(ig["pack_scale"]))
+        s_ = ig.get("shrunk")
+        if s_ and s_.get("n"):
+            if shr is None:
+                shr = dict(s_)
+            else:
+                tot = shr["n"] + s_["n"]
+                shr = {"n": tot, "min": min(shr["min"], s_["min"]),
+                       "mean": (shr["mean"] * shr["n"] + s_["mean"] * s_["n"]) / tot,
+                       "below_90": int(shr.get("below_90", 0)) + int(s_.get("below_90", 0))}
+        info["gap_vox"] = ig.get("gap_vox")
+        secs.append({"axis": sec["axis"], "from": sec["from"], "to": sec["to"],
+                     "phases": [phases[i].get("name", str(i)) for i in idx],
+                     "vf_in_section": float(sum(ig["phases"][k]["vf_voxel"] for k in range(len(idx))))
+                     / max(float(sec["to"]) - float(sec["from"]), 1e-9)})
+    if plane_sets:
+        planes = np.concatenate(plane_sets, axis=0)
+        nfaces = np.concatenate(nf_sets)
+    else:
+        planes, nfaces = SH.EMPTY_PLANES
+    joined = {k: (np.concatenate(v) if v else None) for k, v in cat.items()}
+    info["particles"] = {"codes": joined["codes"] if joined["codes"] is not None else np.zeros(0, np.int64),
+                         "P": joined["P"] if joined["P"] is not None else np.zeros((0, 6)),
+                         "R": joined["R"] if joined["R"] is not None else np.zeros((0, 3, 3)),
+                         "phase": joined["phase"] if joined["phase"] is not None else np.zeros(0, np.int64),
+                         "centers": joined["centers"] if joined["centers"] is not None else np.zeros((0, 3))}
+    info["particles"]["axes"] = (info["particles"]["R"][:, 2, :] if len(info["particles"]["R"])
+                                 else np.zeros((0, 3)))
+    info["planes"] = (planes, nfaces)
+    info["poly_meta"] = meta
+    info["contact_mask"] = cm
+    info.update(sums)
+    info["route"] = "sections: " + "; ".join(dict.fromkeys(r for r in routes if r))
+    info["sections"] = secs
+    if shr is not None:
+        info["shrunk"] = shr
+    if scales:
+        info["pack_scale"] = min(scales)
+    info["seconds"] = time.time() - t0
+    info["N"], info["h_um"], info["L_um"] = N, h, N * h
+    info["nz"], info["film"], info["T_um"] = N, False, N * h
+    return labels, info
+
+
 def sample_positions(n, rho, L, Lz, rng):
     """n positions in the box drawn from the relative density rho (rejection)."""
     out = np.empty((0, 3))
@@ -2029,6 +2141,9 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     """
     if (dispersion or {}).get("mode", "uniform") == "uniform":
         dispersion = None
+    if nz is None and any(ph.get("section") for ph in phases):
+        return _generate_sections(N, h, phases, seed=seed, log=log, should_stop=should_stop, contacts=contacts,
+                                  want_contact_faces=want_contact_faces, gap_vox=gap_vox)
     if dispersion is not None and dispersion["mode"] == "region" and nz is None:
         return _generate_region(N, h, phases, dispersion, seed=seed, log=log, should_stop=should_stop,
                                 contacts=contacts, want_contact_faces=want_contact_faces, gap_vox=gap_vox)

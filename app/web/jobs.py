@@ -464,13 +464,12 @@ class JobQueue:
 
     @staticmethod
     def default_threads(cores, concurrency):
-        """A quarter of the machine per run by default, and never more than an
-        equal share when several runs go at once. Within a run the cores go to
-        its independent problems first (mpsim.parallel) and what is left over
-        to the threads of each solve: measured on a 14-core PC (guide, "Cores"),
-        a PuMA FE solve scales to about 4x on 14 threads, but one thread per
-        solve is still the most work per core."""
-        return max(1, min(cores // 4, cores // max(1, concurrency)))
+        """All of the machine's cores, shared equally by the runs set to go at
+        once (5.5; before, a quarter of the PC per run left three quarters idle
+        beside a single run). Within a run the cores go to its independent
+        problems and the threads of each solve (mpsim.parallel), and the cores
+        of finished solves to those still running."""
+        return max(1, cores // max(1, concurrency))
 
     def configure(self, concurrency=None, threads=None, mem_budget_gb=None):
         """Change how many jobs run at once and how many cores each one gets.
@@ -623,9 +622,16 @@ class JobQueue:
             return self.threads
         cores = os.cpu_count() or 2
         side = self.side_by_side(job)
-        if side < self.concurrency:
-            return max(1, cores // max(1, side))
-        return self.threads
+        # fewer runs than the set number at once - by memory, or because no
+        # more are queued: those runs share the cores the others would have
+        # had, as far as the runs already going leave them free (never below
+        # the equal share)
+        waiting = sum(1 for j in self.jobs.values() if j.state == "queued")
+        going = [j for j in self.jobs.values() if j.state == "running" and j is not job]
+        n = max(1, min(side, self.concurrency, len(going) + max(1, waiting)))
+        free = cores - sum(int(j.threads or 0) for j in going)
+        return max(self.threads if side >= self.concurrency else 1,
+                   min(cores // n, max(free, 1)))
 
     def side_by_side(self, job):
         """How many runs the size of `job` the memory budget holds at once

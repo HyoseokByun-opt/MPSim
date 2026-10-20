@@ -196,6 +196,8 @@ def _generator_phases(spec):
         out.append({"name": ph["name"], "shape": ph["shape"], "size_um": size, "dist": ph["dist"],
                     "vf": ph["vf"], "orientation": ph["orientation"], "overlap": ph["overlap"],
                     "gap_frac": ph["gap_frac"]})
+        if ph.get("section"):
+            out[-1]["section"] = dict(ph["section"])
     return out
 
 
@@ -758,12 +760,13 @@ def _dem_radii(spec, solid, n_target, seed=11):
         sc = G.sample_scales(20000, dd, rng)
         mean_v.append(float(np.mean((d_eq[-1] * sc) ** 3)))
     vf = np.array([p["vf"] for p in phases], float)
+    has = vf > 0                                   # a phase at 0 % gets no particle at all
     share = vf / np.array(mean_v)
     share = share / share.sum()
-    counts = np.maximum(1, np.round(share * n_target)).astype(int)
-    big = int(np.argmax(d_eq))
+    counts = np.where(has, np.maximum(1, np.round(share * n_target)), 0).astype(int)
+    big = int(np.argmax(np.where(has, d_eq, -1.0)))
     if counts[big] < 40:
-        counts = np.maximum(1, np.round(counts * 40.0 / counts[big])).astype(int)
+        counts = np.where(has, np.maximum(1, np.round(counts * 40.0 / counts[big])), 0).astype(int)
     box = (float(np.sum(counts * np.pi / 6.0 * np.array(mean_v))) / float(vf.sum())) ** (1.0 / 3.0)
     if box < 2.0 * max(ext):
         counts = np.maximum(1, np.round(counts * (2.0 * max(ext) / box) ** 3)).astype(int)
@@ -1013,15 +1016,24 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
             last["s"] = math.floor(strain)
             log(f"    strain {strain:.2f}: μr {eta:.4g} (CG {its} iterations)")
     live = _dem_slot("dem", f"Particle dynamics, {gd:g} 1/s", spec, solid, owner, viewer)
+    try:
+        early = _dem_rates_start(radii, owner, hks, phi, vo, do, gd, bodies, log)
+    except Exception as e_:                                            # noqa: BLE001
+        early = None
+        log(f"    (the flow-curve runs could not be started beside it: {e_}; they follow it)")
     log(f"    particle dynamics: {what}, φ {phi:.3f}, resin {mu_res:.4g} Pa·s at {gd:g} 1/s, "
         f"roughness {do['roughness_nm']:g} nm, closest approach {do['hmin_nm']:g} nm, friction {do['mu_f']:g}, "
         f"bound layer {do['bound_nm']:g} nm, adhesion {do['adhesion_mJ_m2']:g} mJ/m², "
         f"Hamaker " + ", ".join(f"{spec['phases'][i]['name']} {a:.3g} J" for i, a in zip(solid, hks)))
-    out = SU.shear_viscosity(radii, phi, mu_res, gd, roughness_m=do["roughness_nm"] * 1e-9,
-                             hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
-                             strain=tot, backend=do["backend"], log=log, progress=cb, should_stop=should_stop,
-                             bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, live=live,
-                             bodies=bodies)
+    try:
+        out = SU.shear_viscosity(radii, phi, mu_res, gd, roughness_m=do["roughness_nm"] * 1e-9,
+                                 hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"],
+                                 strain=tot, backend=do["backend"], log=log, progress=cb, should_stop=should_stop,
+                                 bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, live=live,
+                                 bodies=bodies)
+    except BaseException:
+        _dem_rates_kill(early)                 # Stop or an error: the side-by-side runs end with it
+        raise
     if live is not None:
         live.done(eta=out["eta_mean"])
     prog.end()
@@ -1073,7 +1085,7 @@ def _dem_viscosity(spec, solid, phi, vo, log, event, prog, should_stop, viewer=N
     res["rate_curve"] = None
     if do["rates"] > 0:
         res["rate_curve"], res["rate_note"] = _dem_rates(radii, owner, hks, phi, vo, do, mu_res, gd, res, log, event,
-                                                         prog, should_stop, bodies=bodies)
+                                                         prog, should_stop, bodies=bodies, early=early)
     log(f"    particle dynamics: μr {res['mu_r']:.4g} ± {res['se']:.2g} (strain {s0:g}-{tot:g}; lubrication "
         f"{res['eta_lub']:.3g}, contacts {res['eta_contact']:.3g}; {res['contacts_per_particle']:.2f} contacts per particle; "
         f"{out['backend']}, {out['seconds']:.0f} s)")
@@ -1087,8 +1099,9 @@ def dem_direct(spec, need):
     vo = spec["options"]["viscosity"]
     if set(need) != {"viscosity"} or not vo["dem"]["on"] or vo["rve_with_dem"]:
         return False
-    solid = [ph for ph in spec["phases"] if not ph["void"] and ph["shape"] != G.NETWORK]
-    if not solid or any(ph["void"] or ph.get("shell") for ph in spec["phases"]):
+    # a phase set to 0 % takes no part (it stays in the form, but has no particles)
+    solid = [ph for ph in spec["phases"] if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
+    if not solid or any((ph["void"] or ph.get("shell")) and ph["vf"] > 0 for ph in spec["phases"]):
         return False
     return float(sum(ph["vf"] for ph in solid)) > 0.35
 
@@ -1100,7 +1113,9 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     results and the realisation record."""
     import types
     vo = opts["viscosity"]
-    solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
+    # the phases with particles (a phase set to 0 % has none; it would otherwise
+    # get the one particle every phase is given, or forty when its are the largest)
+    solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
     phi = float(sum(spec["phases"][i]["vf"] for i in solid))
     sph = all(spec["phases"][i]["shape"] == "sphere" for i in solid)
     why = f"{'spheres' if sph else 'particles'} at {100 * phi:.0f} vol%"
@@ -1315,27 +1330,134 @@ def _dem_slot(slot, name, spec, solid, owner, viewer):
     return s
 
 
-def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, event, prog, should_stop, bodies=None):
-    """The particle dynamics at further shear rates, log-spaced over the
-    flow curve's range, with the resin's viscosity at each rate. Returns the
-    curve {gd, mu_r, se} (the reference rate included) and a note; None when
-    the attraction stays below 1 % of the viscous force over the whole range
-    - the relative viscosity then does not depend on the rate."""
-    from .solvers import suspension as SU
+def _dem_rate_plan(radii, hks, vo, do, gd_ref):
+    """The further shear rates of the flow curve, or (None, note) when the
+    attraction stays below 1 % of the viscous force over the whole range."""
     a = float(np.median(radii))
     rs = 0.5 * a
     f_att = max(hks) * rs / (6.0 * (do["hmin_nm"] * 1e-9) ** 2) + 2.0 * math.pi * do["adhesion_mJ_m2"] * 1e-3 * rs
     lo, hi = vo["gd_min"], vo["gd_max"]
     f_visc = 6.0 * math.pi * float(VI.matrix_flow(vo["model"], [lo])[0]) * a * a * lo
     if f_att < 0.01 * f_visc:
-        note = (f"the attraction stays below 1 % of the viscous force down to {lo:g} 1/s: the relative viscosity "
-                f"does not depend on the shear rate")
+        return None, (f"the attraction stays below 1 % of the viscous force down to {lo:g} 1/s: the relative "
+                      f"viscosity does not depend on the shear rate")
+    rates = np.logspace(math.log10(lo), math.log10(hi), do["rates"])
+    return [float(g) for g in rates if abs(math.log10(g / gd_ref)) > 0.15], None
+
+
+def _dem_rate_worker(kw):
+    """One flow-curve run in a worker process (the CPU, its share of the cores)."""
+    os.environ["MPSIM_TI_THREADS"] = str(kw.pop("threads"))
+    from .solvers import suspension as SU
+    SU.init_backend("cpu")
+    out = SU.shear_viscosity(**kw)
+    return {"eta_mean": float(out["eta_mean"]), "eta_se": float(out["eta_se"]), "seconds": float(out["seconds"])}
+
+
+def _dem_rates_start(radii, owner, hks, phi, vo, do, gd_ref, bodies, log):
+    """Starts the flow-curve runs beside the reference run when the particle
+    dynamics runs on the CPU: kernels on a few hundred particles keep only a
+    few cores busy, so the runs at further rates go side by side in worker
+    processes, each with its share of the cores. None on a GPU (one device:
+    the runs follow each other) or without further rates."""
+    if do["rates"] <= 0:
+        return None
+    from .solvers import suspension as SU
+    if do["backend"] != "cpu" and SU.cuda_device_count() > 0:
+        return None
+    rates, _ = _dem_rate_plan(radii, hks, vo, do, gd_ref)
+    if not rates:
+        return None
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    try:
+        cores = int(os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 2)
+    except ValueError:
+        cores = os.cpu_count() or 2
+    # as many at once as the free memory holds beside the reference run: a
+    # process is Taichi's runtime and about 2 GB per 100 000 spheres
+    n_sph = len(radii) if bodies is None else int(sum(len(bodies["templates"][t][1]) for t in bodies["tpl"]))
+    per_gb = 0.4 + 2.0 * n_sph / 1e5
+    try:
+        import psutil
+        fit = int(0.9 * psutil.virtual_memory().available / 2 ** 30 / per_gb) - 1
+    except Exception:                                                  # noqa: BLE001
+        fit = len(rates)
+    workers = min(len(rates), fit)
+    if workers < 1:
+        log(f"    flow curve: the free memory holds no further run beside this one ({per_gb:.1f} GB each): "
+            f"the runs follow it")
+        return None
+    share = max(1, cores // (workers + 1))
+    ex = ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn"))
+    futs = {}
+    for g in rates:
+        mu_g = float(VI.matrix_flow(vo["model"], [g])[0])
+        kw = dict(radii_m=np.asarray(radii, float), phi=phi, mu_resin=mu_g, gd=g, roughness_m=do["roughness_nm"] * 1e-9,
+                  hmin_m=do["hmin_nm"] * 1e-9, hamaker_J=np.asarray(hks)[owner], mu_f=do["mu_f"], strain=do["strain"],
+                  backend="cpu", bound_m=do["bound_nm"] * 1e-9, adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3,
+                  frames=0.0, bodies=bodies, threads=share)
+        futs[g] = ex.submit(_dem_rate_worker, kw)
+    log(f"    flow curve: {len(rates)} further shear rates started beside it"
+        + (f", {workers} at a time (memory, {per_gb:.1f} GB each)" if workers < len(rates) else "")
+        + f", {share} core(s) each")
+    return {"ex": ex, "futs": futs}
+
+
+def _dem_rates_kill(early):
+    """Ends the side-by-side flow-curve runs at once (Stop, an error)."""
+    if early is None:
+        return
+    for p_ in list((getattr(early["ex"], "_processes", None) or {}).values()):
+        try:
+            p_.terminate()
+        except Exception:                                              # noqa: BLE001
+            pass
+    early["ex"].shutdown(wait=False, cancel_futures=True)
+
+
+def _dem_rates(radii, owner, hks, phi, vo, do, mu_ref, gd_ref, res_ref, log, event, prog, should_stop, bodies=None,
+               early=None):
+    """The particle dynamics at further shear rates, log-spaced over the
+    flow curve's range, with the resin's viscosity at each rate. Returns the
+    curve {gd, mu_r, se} (the reference rate included) and a note; None when
+    the attraction stays below 1 % of the viscous force over the whole range
+    - the relative viscosity then does not depend on the rate."""
+    from .solvers import suspension as SU
+    rates, note = _dem_rate_plan(radii, hks, vo, do, gd_ref)
+    if rates is None:
         log(f"    flow curve: {note}")
         return None, note
-    rates = np.logspace(math.log10(lo), math.log10(hi), do["rates"])
-    rates = [float(g) for g in rates if abs(math.log10(g / gd_ref)) > 0.15]
     pts = [(gd_ref, res_ref["mu_r"], res_ref["se"])]
     stage = "Viscosity · particle dynamics, flow curve"
+    if early is not None:
+        # the runs started beside the reference run: wait for them
+        prog.stage(stage, f"{len(rates)} further shear rates, run side by side", units=float(len(rates)))
+        from concurrent.futures import wait, FIRST_COMPLETED
+        ex, futs = early["ex"], early["futs"]
+        try:
+            pending = set(futs.values())
+            while pending:
+                done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+                if should_stop is not None and should_stop():
+                    _dem_rates_kill(early)
+                    raise InterruptedError
+                event("stage", name=stage, detail=f"{len(futs) - len(pending)} of {len(futs)} shear rates done",
+                      progress=prog.sub((len(futs) - len(pending)) / max(len(futs), 1)))
+            for g, f_ in futs.items():
+                out = f_.result()                     # a worker's error is raised here
+                mu_g = float(VI.matrix_flow(vo["model"], [g])[0])
+                pts.append((g, out["eta_mean"], out["eta_se"]))
+                log(f"    flow curve: {g:.3g} 1/s, resin {mu_g:.4g} Pa·s -> μr {out['eta_mean']:.4g} ± "
+                    f"{out['eta_se']:.2g} ({out['seconds']:.0f} s, side by side)")
+        except BaseException:
+            _dem_rates_kill(early)
+            raise
+        ex.shutdown(wait=False)
+        prog.end()
+        pts.sort()
+        return ({"gd": [p[0] for p in pts], "mu_r": [p[1] for p in pts], "se": [p[2] for p in pts]},
+                f"{len(pts)} shear rates from {pts[0][0]:.3g} to {pts[-1][0]:.3g} 1/s")
     prog.stage(stage, f"{len(rates)} further shear rates, {len(radii)} {'spheres' if bodies is None else 'particles'} "
                f"each, on {SU.device_text(do['backend'])}", units=float(len(rates)))
     for k, g in enumerate(rates):
@@ -1608,6 +1730,18 @@ def build_labels(spec, gen_labels, info, h_um):
     parts = info["particles"]
     planes, nfaces = info["planes"]
     notes = []
+    # further matrices: the matrix voxels of their slabs (sections)
+    for li, t in enumerate(table):
+        if t["kind"] == "matrix" and t.get("section"):
+            sec = t["section"]
+            ax = "xyz".index(sec["axis"])
+            n_ax = lab.shape[ax]
+            k0, k1 = int(round(sec["from"] * n_ax)), int(round(sec["to"] * n_ax))
+            sl = [slice(None)] * 3
+            sl[ax] = slice(k0, k1)
+            sub = lab[tuple(sl)]
+            sub[sub == 0] = li
+            notes.append(f"{t['name']} fills the matrix of {sec['axis']} {k0 * h_um:.4g}-{k1 * h_um:.4g} µm")
     for li, t in enumerate(table):
         if t["kind"] != "shell":
             continue
@@ -1803,7 +1937,10 @@ def thermal_interfaces(spec, h_um, area_ratio):
             continue
         if ph.get("r_int", 0) > 0 and not ph["void"]:
             r = ph["r_int"] * area_ratio.get(i, 1.5) / h_m
-            rpair[0, outer[i]] = rpair[outer[i], 0] = r
+            # against every matrix (the main one and the regions)
+            for mi, tm in enumerate(table):
+                if tm["kind"] == "matrix":
+                    rpair[mi, outer[i]] = rpair[outer[i], mi] = r
             any_r = True
     if wants_contact_faces(spec):
         any_c = True
@@ -1819,6 +1956,13 @@ def thermal_interfaces(spec, h_um, area_ratio):
 # =========================================================================
 # conduction-type solves
 # =========================================================================
+def emi_directions(opts):
+    """The in-plane directions of the EMI admittivity: those among the load
+    directions asked for, x alone when only z is (the field in a shielding
+    layer lies in its plane)."""
+    return tuple(i for i, d in enumerate("xy") if d in opts["directions"]) or (0,)
+
+
 def cond_backend(spec, backend):
     if spec["rve"].get("film"):
         # PuMA's finite elements are periodic in all three directions; a film
@@ -2172,7 +2316,8 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
         threads = int(os.environ.get("NUMBA_NUM_THREADS") or 0)
     except ValueError:
         threads = 0
-    threads = threads or max(1, (os.cpu_count() or 4) // 4)
+    # without a job setting (the command line, a script): every core
+    threads = threads or max(1, os.cpu_count() or 1)
     dirs = opts["directions"]
     n_vox = int(labels.size)
     mem_est = R.memory_estimate(labels.shape[0], set(need) | {"thermal"}, nz=labels.shape[2],
@@ -2262,12 +2407,14 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
         freqs = np.logspace(math.log10(eo["f_min_hz"]), math.log10(eo["f_max_hz"]), int(eo["n_freq"]))
         ebc = "film" if spec["rve"].get("film") else "periodic"
         cache = {}
+        edirs = emi_directions(opts)
         for i, fq in enumerate(freqs):
-            for d in (0, 1):
+            for d in edirs:
                 kap, pol = CC.cap_contrast(labels, CC.admittivity(table, fq), d, cache=cache)
                 emi_pol[(i, d)] = pol
                 add(PAR.emi_task, "emi", {"i": i, "d": d, "kap": kap, "bc": ebc, "tol": min(opts["tol"], 1e-7),
-                                          "name": f"EMI {fq:.3g} Hz {'xyz'[d]}"}, units=1.0 / (2 * len(freqs)))
+                                          "name": f"EMI {fq:.3g} Hz {'xyz'[d]}"},
+                    units=1.0 / (len(edirs) * len(freqs)))
     # the structure analyses of the first realisation
     if first and struct is not None:
         void = list(struct.get("void") or [])
@@ -2352,7 +2499,7 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
     if pool is None or pool.workers != workers or pool.threads_each != th_each:
         if pool is not None:
             pool.close()
-        pool = box["pool"] = PAR.SolvePool(workers, th_each, log_dir)
+        pool = box["pool"] = PAR.SolvePool(workers, th_each, log_dir, cores=threads)
     lab_path = pool.share(labels)
     flow_path = pool.share(flow["labels"], "flow") if any(t.get("_flow") for _, t in tasks) else None
     fine_path = pool.share(rcheck["fine"]["labels"], "fine") if any(t.get("_fine") for _, t in tasks) else None
@@ -2689,6 +2836,9 @@ def _isotropic_structure(spec):
     (a region, a gradient or a few clusters make it directional on purpose)."""
     if ((spec.get("rve") or {}).get("dispersion") or {}).get("mode", "uniform") != "uniform":
         return False
+    # sections and matrix regions layer the RVE on purpose
+    if spec.get("matrix_regions") or any(ph.get("section") for ph in spec["phases"]):
+        return False
     return all(ph["shape"] in ("sphere", G.NETWORK) or ph["orientation"]["mode"] == "iso"
                for ph in spec["phases"])
 
@@ -2718,7 +2868,9 @@ def _cond_refs(key, spec, vf_labels, vals):
             refs["_wiener_dir"] = per
     if _isotropic_structure(spec):
         refs["Hashin–Shtrikman"] = list(AN.hashin_shtrikman(phi, vals))
-    simple = all(t["kind"] in ("matrix", "core") for t in table)
+    # the mean-field models take one matrix with the fillers spread through it
+    simple = (all(t["kind"] in ("matrix", "core") for t in table)
+              and sum(1 for t in table if t["kind"] == "matrix") == 1 and _isotropic_structure(spec))
     if simple:
         km = vals[0]
         phs = []
@@ -2839,7 +2991,13 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         return _clean({k: prev.get(k) for k in ("name", "elapsed_s", "headline", "check_counts", "backend")})
     opts = spec["options"]
     backend = opts["backend"]
-    if backend in ("puma", "puma_fv") and not PB.available():
+    # PuMA is imported (1.4 s) only by a run that uses it
+    uses_puma = (bool(need & {"permeability", "tortuosity", "acoustics", "filtration", "radiation", "morphology",
+                              "grains", "porosimetry", "pore_network", "percolation"})
+                 or (bool(need & set(COND)) and (backend == "puma_fv" or opts.get("cond_method") == "fe"
+                                                  or opts.get("crosscheck")))
+                 or ("cte" in need and opts.get("elastic_method") == "puma"))
+    if backend in ("puma", "puma_fv") and uses_puma and not PB.available():
         log("!! NASA PuMA could not be imported; the built-in verification solvers are used instead: "
             + str(PB.unavailable_reason()))
         backend = "builtin"
@@ -3410,6 +3568,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "pack_scale": ginfo.get("pack_scale"),
                  "sheared": ginfo.get("sheared"),
                  "dispersion": ginfo.get("dispersion"),
+                 "sections": ginfo.get("sections"),
                  "phases": ginfo["phases"], "vf_labels": vf_labels.tolist(),
                  "interface_area_ratio": {str(k): v for k, v in area_ratio.items()}}
         log(f"   realisation {r+1}: {ginfo['route']} · {ginfo['seconds']:.1f} s · "
@@ -3477,7 +3636,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
 
         # ---- the resolution check's finer grid, drawn once, before the batch
         rc_fine = None
-        rc_mode = opts.get("resolution_check", "auto")
+        rc_mode = opts.get("resolution_check", "off")
         if first and any(k in need for k in COND) and (
                 rc_mode == "on" or (rc_mode == "auto" and ginfo.get("touching_pairs", 0) > 0)):
             try:
@@ -3516,6 +3675,23 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 out["refs"] = _cond_refs(key, spec, vf_labels, vals)
                 out["values_used"] = vals.tolist()
                 checks += _cond_checks(key, out["tensor"], out["refs"], spec, out["stats"])
+                # touching particles much more conductive than the matrix: the
+                # area of each contact is a voxel face, so the value follows the
+                # voxel size (AlN/epoxy, 7.5 voxels per diameter: 2.57 W/m.K,
+                # 1.81 on a 1.5x finer grid, 0.64 with the particles apart)
+                faces_ = int(ginfo.get("contact_faces", 0) or 0)
+                fill_v = [float(v) for v, t in zip(vals, table) if t["kind"] in ("core", "shell") and float(v) > 0]
+                mat_v = [float(v) for v, t in zip(vals, table) if t["kind"] == "matrix" and float(v) > 0]
+                contrast = (max(fill_v) / min(mat_v)) if (fill_v and mat_v) else 0.0
+                if faces_ > 0 and contrast >= 20.0 and opts.get("resolution_check", "off") != "on":
+                    checks.append({"id": f"{key}_contacts", "group": COND[key]["title"],
+                                   "label": "Touching particles much more conductive than the matrix",
+                                   "value": faces_, "target": 0, "unit": "", "status": "warn",
+                                   "note": f"{faces_:,} voxel faces of contact between particles up to {contrast:.0f}x "
+                                           "as conductive as the matrix: each contact is a whole voxel face, so the "
+                                           "value follows the voxel size and can fall by tens of per cent on a finer "
+                                           "grid. Tick the resolution check to see by how much; a contact resistance "
+                                           "R_c, a finer grid or a gap between particles bounds it (guide 5.5)."})
             event("partial", key=key, value=_clean(np.diag(out["tensor"])))
             live(key)
 
@@ -3523,10 +3699,10 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if first and "emi" in need and opts["emi"].get("method", "complex") == "complex":
             eo = opts["emi"]
             freqs = np.logspace(math.log10(eo["f_min_hz"]), math.log10(eo["f_max_hz"]), int(eo["n_freq"]))
-            # both in-plane directions, as the static sigma and eps: one
+            # the in-plane directions asked for (x when only z is): one
             # realisation of an "isotropic" structure can still differ 1.6x
-            # between x and y near percolation
-            edirs = (0, 1)
+            # between x and y near percolation, which x and y together show
+            edirs = emi_directions(opts)
             ebc = "film" if film else "periodic"
             prog.stage("EMI · complex admittivity",
                        f"{len(freqs)} frequencies × {len(edirs)} in-plane direction(s), sigma + j w eps",
@@ -3594,7 +3770,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             live("emi")
 
         # ---- resolution check (first realisation) ------------------------
-        rc_mode = opts.get("resolution_check", "auto")
+        rc_mode = opts.get("resolution_check", "off")
         cond_keys = [k for k in COND if k in need and k in res_r]
         if first and cond_keys and (rc_mode == "on" or (rc_mode == "auto" and ginfo.get("touching_pairs", 0) > 0)):
             why = "particles touch at voxel level" if rc_mode == "auto" else "requested"
@@ -3656,9 +3832,10 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             # resin flow is asked for (option), and then solved at the same time
             # as the particle dynamics when that runs on a GPU
             from .solvers import suspension as SU
-            solid_v = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
+            solid_v = [i for i, ph in enumerate(spec["phases"])
+                       if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
             dem_possible = (vo["dem"]["on"] and bool(solid_v)
-                            and not any(ph["void"] for ph in spec["phases"]))
+                            and not any(ph["void"] and ph["vf"] > 0 for ph in spec["phases"]))
             if first:
                 phi_v = float(sum(v for v, t in zip(vf_labels, table)
                                   if t["kind"] in ("core", "shell") and float(t["props"]["E"]) > 0))
@@ -3751,7 +3928,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 prog.end()
             if first:
                 vx = {}
-                solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK]
+                solid = [i for i, ph in enumerate(spec["phases"])
+                         if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
                 if solid:
                     prog.stage("Viscosity · maximum packing fraction", "random close packing of these particles", units=1.0)
                     sp_solid = [dict(gen_phases[i], void=False) for i in solid]          # outer sizes
@@ -4409,16 +4587,18 @@ def headline_numbers(props, comp):
 
 
 def backend_versions():
-    out = {"mpsim": __version__, "puma": PB.version()}
-    for mod in ("numpy", "scipy", "pyvista", "vtk", "porespy", "openpnm", "skrf", "numba"):
+    """The versions behind a result, from the installed packages' metadata:
+    importing PoreSpy, OpenPNM, PyVista and PuMA only to read them took about
+    4.5 s of every run (5.5)."""
+    from importlib.metadata import version as _v
+    out = {"mpsim": __version__}
+    for key, dist in (("puma", "pumapy"), ("numpy", "numpy"), ("scipy", "scipy"), ("pyvista", "pyvista"),
+                      ("vtk", "vtk"), ("porespy", "porespy"), ("openpnm", "openpnm"), ("skrf", "scikit-rf"),
+                      ("numba", "numba")):
         try:
-            m = __import__(mod)
-            v = getattr(m, "__version__", None)
-            if mod == "vtk":
-                v = m.vtkVersion.GetVTKVersion()
-            out[mod] = v
+            out[key] = _v(dist)
         except Exception:                                            # noqa: BLE001
-            out[mod] = None
+            out[key] = None
     return out
 
 

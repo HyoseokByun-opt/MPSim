@@ -1742,6 +1742,7 @@ def t_pipeline_live():
             "options": {"directions": "x", "live_figures": True, "particle_gap_vox": 2,
                         "viscosity": {"phi_m_mode": "manual", "phi_m": 0.64, "dem": {"n": 100, "strain": 1.5}}}}
     seen = {"figure": [], "partial_result": 0}
+    lines = []
 
     def event(kind, **p):
         if kind == "figure":
@@ -1749,7 +1750,7 @@ def t_pipeline_live():
         elif kind == "partial_result":
             seen["partial_result"] += 1
     with tempfile.TemporaryDirectory() as d:
-        s = pipeline.run(form, d, log=lambda *a: None, event=event)
+        s = pipeline.run(form, d, log=lambda *a: lines.append(" ".join(str(x) for x in a)), event=event)
         expect(not os.path.exists(os.path.join(d, "result.partial.json")), "result.partial.json left behind")
         with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
             r = json.load(fh)
@@ -1773,10 +1774,22 @@ def t_pipeline_live():
     rc = (v.get("dem") or {}).get("rate_curve")
     expect(rc and len(rc["gd"]) >= 4, f"particle-dynamics flow curve {rc} ({(v.get('dem') or {}).get('rate_note')})")
     expect(rc["mu_r"][0] >= 0.9 * rc["mu_r"][-1], f"μr {rc['mu_r']} at {rc['gd']} 1/s")
+    # on the CPU the further rates run side by side with the reference run,
+    # in worker processes that end with it
+    import multiprocessing as mp
+    import time as _t
+    from mpsim.solvers import suspension as SU
+    side = any("side by side" in ln for ln in lines)
+    if SU.cuda_device_count() == 0:
+        expect(side, "the flow-curve runs did not run side by side on the CPU")
+    t_end = _t.time() + 10.0
+    while mp.active_children() and _t.time() < t_end:
+        _t.sleep(0.2)
+    expect(not mp.active_children(), f"worker processes left running: {mp.active_children()}")
     return (f"μr {v['mu_r_rve']:.3f} (HS {v['refs']['Hashin-Shtrikman lower bound']:.3f}, KD {v['refs']['Krieger-Dougherty']:.3f}), "
             f"{seen['partial_result']} provisional results, {len(seen['figure'])} live figures, "
             f"surface shear rate {min(med):.2f}; particle dynamics μr {rc['mu_r'][0]:.3g} → {rc['mu_r'][-1]:.3g} "
-            f"from {rc['gd'][0]:g} to {rc['gd'][-1]:g} 1/s; {s['elapsed_s']:.0f} s")
+            f"from {rc['gd'][0]:g} to {rc['gd'][-1]:g} 1/s{' (side by side)' if side else ''}; {s['elapsed_s']:.0f} s")
 
 
 @check("Complete pipeline: dense spheres - the particle dynamics gives the viscosity without a voxel RVE (default) "
@@ -2021,6 +2034,154 @@ def t_particle_gap():
             expect(info["contact_faces"] > 0, "gap 0: no particle touches another")
         out.append(f"gap {g:g}: closest surfaces {gmin:.2f} voxels, {info['contact_faces']} contact faces")
     return "; ".join(out)
+
+
+@check("Built-in FV: PuMA's finite-volume operator to rounding, periodic instead of fixed end slices")
+def t_fv_vs_puma():
+    import contextlib
+    import io as _io
+    from mpsim.solvers import conduction as CD
+    PB = _puma()
+    pm = PB.require()
+    from pumapy.physics_models.finite_volume.isotropic_conductivity import IsotropicConductivity
+    rng = np.random.default_rng(4)
+    lab = rng.integers(0, 3, size=(14, 11, 9)).astype(np.uint8)        # unequal sides
+    k = np.array([0.2, 30.0, 3.0])
+    out = []
+    for d in "xyz":
+        cmap = pm.IsotropicConductivityMap()
+        for i, v in enumerate(k):
+            cmap.add_material((i, i), float(v))
+        with contextlib.redirect_stdout(_io.StringIO()):
+            s_ = IsotropicConductivity(PB._workspace(lab, 1e-6), cmap, d, "p", None, 1e-6, 10, "cg", False, True)
+            s_.error_check()
+            s_.initialize()
+            s_.assemble_bvector()
+            s_.assemble_Amatrix()
+        # PuMA's solve frame has the direction first
+        perm = {"x": (0, 1, 2), "y": (1, 0, 2), "z": (2, 1, 0)}[d]
+        lf = np.ascontiguousarray(np.transpose(lab, perm))
+        x = rng.standard_normal(lf.shape)
+        yp = s_.Amat.matvec(x.flatten("F")).reshape(lf.shape, order="F")
+        kf = [np.empty(lf.shape) for _ in range(3)]
+        z = np.zeros((3, 3))
+        for ax in range(3):
+            CD._faces(lf.astype(np.int32), k, z, np.zeros((1, 1, 1), np.uint8), z, False, ax, kf[ax])
+        yo = np.empty_like(x)
+        CD._apply(np.ascontiguousarray(x), kf[0], kf[1], kf[2], yo)
+        inner = (slice(1, lf.shape[0] - 1), slice(None), slice(None))
+        rel = float(np.abs(-2.0 * yp[inner] - yo[inner]).max() / np.abs(yo[inner]).max())
+        expect(rel < 1e-13, f"{d}: the built-in FV operator differs from PuMA's by {rel:.1e}")
+        out.append(f"{d} {rel:.0e}")
+    # the boundary condition: PuMA's fixed slices move with the cut, the periodic FV does not
+    lab2 = (rng.random((24, 24, 24)) < 0.4).astype(np.uint8)
+    kk = np.array([0.2, 30.0])
+    vp, vo = [], []
+    for sh in (0, 12):
+        l2 = np.roll(lab2, sh, axis=0)
+        vp.append(PB.conductivity(l2, kk, "x", 1e-6, tol=1e-9, method="fv", keep_fields=False)["k_eff"])
+        vo.append(CD.solve_direction(l2, kk, 0, tol=1e-10)["k_eff"])
+    expect(abs(vo[1] - vo[0]) / vo[0] < 1e-8, f"periodic FV moved with a shift: {vo}")
+    return (f"operator ×(−2) vs PuMA FV, interior cells: {', '.join(out)}; a half-cell shift: PuMA FV "
+            f"{vp[0]:.4f} → {vp[1]:.4f}, built-in FV {vo[0]:.6f} → {vo[1]:.6f}")
+
+
+@check("Multi-core tortuosity and Stokes flow: PuMA's single-threaded results, any thread count")
+def t_porous_parallel():
+    import numba
+    PB = _puma()
+    rng = np.random.default_rng(5)
+    # connected pores: a smoothed random field, 45 % void
+    from scipy import ndimage
+    f = ndimage.gaussian_filter(rng.standard_normal((20, 22, 18)), 2.0, mode="wrap")
+    lab = (f > np.quantile(f, 0.45)).astype(np.uint8)              # 0 pore, 1 solid
+    res = {}
+    for on in (False, True):
+        PB.set_fe_parallel(on)
+        try:
+            t = PB.tortuosity(lab, [0], 1e-6, "y", tol=1e-8)
+            p = PB.permeability(lab, [0], 1e-6, "z", tol=1e-8)
+        finally:
+            PB.set_fe_parallel(True)
+        res[on] = (t["tortuosity"], np.asarray(t["C"]), float(p["K"][2, 2]), np.asarray(p["u"][2]), p["iterations"])
+    (t0, C0, K0, u0, i0), (t1, C1, K1, u1, i1) = res[False], res[True]
+    dt, dC = abs(t1 - t0) / t0, float(np.abs(C1 - C0).max())
+    dK, du = abs(K1 - K0) / K0, float(np.abs(u1 - u0).max() / np.abs(u0).max())
+    expect(dt < 1e-10 and dC < 1e-10, f"tortuosity {t0} vs {t1} (field {dC:.1e})")
+    expect(dK < 1e-7 and du < 1e-6, f"permeability {K0:.6e} vs {K1:.6e} (field {du:.1e})")
+    # the threaded sums are blocked: one thread or all give the same numbers
+    n0 = numba.get_num_threads()
+    try:
+        numba.set_num_threads(1)
+        t_1 = PB.tortuosity(lab, [0], 1e-6, "y", tol=1e-8)["tortuosity"]
+    finally:
+        numba.set_num_threads(n0)
+    expect(t_1 == t1, f"tortuosity on 1 thread {t_1!r} and on {n0} {t1!r}")
+    return (f"τ {t1:.6f} (PuMA {dt:.0e}, field {dC:.0e}); K {K1:.4e} m² (PuMA {dK:.0e}, field {du:.0e}, "
+            f"{i1}/{i0} MINRES iterations); the same τ on 1 and {n0} threads")
+
+
+@check("Threaded CG: the same conduction and EMI results on one thread and on all")
+def t_thread_invariance():
+    import numba
+    from mpsim.solvers import conduction as CD, complex_cond as CC
+    rng = np.random.default_rng(6)
+    lab = (rng.random((28, 26, 24)) < 0.35).astype(np.uint8)
+    kap = np.array([1e-12 + 2.2e-4j, 1e2 + 5.6e-5j])
+    n0 = numba.get_num_threads()
+    out = {}
+    try:
+        for n in (1, n0):
+            numba.set_num_threads(n)
+            out[n] = (CD.solve_direction(lab, np.array([0.2, 30.0]), 2, tol=1e-9, workers=n)["k_eff"],
+                      CD.solve_direction(lab, np.array([0.2, 30.0]), 2, tol=1e-9, workers=n, film=True)["k_eff"],
+                      CC.solve(lab, kap, 0, tol=1e-9, workers=n)["kappa"])
+    finally:
+        numba.set_num_threads(n0)
+    expect(out[1] == out[n0], f"1 thread {out[1]} against {n0} threads {out[n0]}")
+    return f"k {out[1][0]:.8f}, film {out[1][1]:.8f}, κ {out[1][2]:.6e}: identical on 1 and {n0} threads"
+
+
+@check("Sections: a second matrix and a filler in one half; the slabs, the contents and the layered conduction")
+def t_sections():
+    from mpsim import spec as S, pipeline as PL, generate as GEN
+    form = {"name": "sections", "matrix": {"material_id": "epoxy", "name": "A"},
+            "matrix_regions": [{"material_id": "polyimide", "name": "B", "section": {"axis": "z", "from": 50, "to": 100}}],
+            "phases": [{"material_id": "al2o3", "name": "filler", "shape": "sphere", "size": {"d": 3, "unit": "um"},
+                        "fraction": {"value": 30, "basis": "vol"}, "section": {"mode": "section", "axis": "z", "from": 50, "to": 100}}],
+            "rve": {"auto": False, "L_um": 24, "voxel_um": 0.4, "quality": "fast"}, "analyses": {"thermal": True}}
+    sp = S.normalize(form)
+    c = sp["composition"]
+    expect(abs(c["vf"][0] - 0.15) < 1e-12 and abs(c["matrix_regions"][0]["vf"] - 0.35) < 1e-12
+           and abs(c["vf_matrix"] - 0.5) < 1e-12, f"composition {c}")
+    gp = PL._generator_phases(sp)
+    N, h = 60, 0.4
+    lab, info = GEN.generate(N, h, gp, seed=3, log=lambda *a: None, contacts="keep")
+    lower, upper = lab[:, :, :N // 2], lab[:, :, N // 2:]
+    expect(not lower.any(), f"{int(lower.astype(bool).sum())} filler voxels in the lower half")
+    vf_up = float((upper > 0).mean())
+    expect(abs(vf_up - 0.30) < 0.02, f"filler in its half {vf_up:.4f}")
+    labels, _, _ = PL.build_labels(sp, lab, info, h)
+    mreg = len(sp["labels"]) - 1
+    expect(set(np.unique(labels[:, :, :N // 2]).tolist()) == {0}, "the lower half is not all matrix A")
+    up = labels[:, :, N // 2:]
+    expect(set(np.unique(up).tolist()) == {1, mreg}, f"upper half labels {np.unique(up)}")
+    # layers in series along z, side by side along x: k_z below k_x
+    from mpsim.solvers import conduction as CD
+    vals = np.array([float(t["props"]["k"]) for t in sp["labels"]])
+    kx = CD.solve_direction(labels, vals, 0, tol=1e-8)["k_eff"]
+    kz = CD.solve_direction(labels, vals, 2, tol=1e-8)["k_eff"]
+    expect(kz < kx, f"k_z {kz} not below k_x {kx}")
+    for bad, why in (({"phases": form["phases"] + [{"material_id": "aln", "shape": "sphere", "size": {"d": 2, "unit": "um"},
+                                                     "fraction": {"value": 5, "basis": "vol"}}]}, "mixed"),
+                     ({"matrix_regions": form["matrix_regions"] + [{"material_id": "silicone", "section": {"axis": "z", "from": 70, "to": 90}}]}, "overlap")):
+        try:
+            S.normalize({**form, **bad})
+            raise AssertionError(f"{why}: not refused")
+        except ValueError:
+            pass
+    return (f"filler 30 % of its half ({vf_up:.4f} drawn), matrix A 50 %, B 35 %, filler 15 %; k_x {kx:.4f}, "
+            f"k_z {kz:.4f} W/m·K; a filler over the whole RVE beside it and overlapping regions are refused")
 
 
 def main():

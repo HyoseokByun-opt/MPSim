@@ -89,6 +89,81 @@ def _apply_c(u, kx, ky, kz, out):
                                  - kz[i, j, km] * (c - u[i, j, km]))
 
 
+# ---- the vector work of COCG, threaded --------------------------------------
+# As in the conduction solver: the stencil and the transforms run on all of the
+# job's threads, and the means, (unconjugated) dot products and updates between
+# them run here, fused and threaded, instead of single-threaded NumPy. Sums are
+# blocked (grid line, slab, then NumPy's pairwise sum over the slabs): as
+# accurate as NumPy's and independent of the number of threads, which matters
+# here - near a breakdown of COCG the bilinear form p.Ap cancels heavily.
+@njit(parallel=True, cache=True)
+def _csums3_rows(a, b, out):
+    """Per slab i0: (sum a, sum a*b, sum b) of two complex arrays into out[:, i0]."""
+    n0, n1, n2 = a.shape
+    for i0 in prange(n0):
+        sa = 0j
+        sab = 0j
+        sb = 0j
+        for i1 in range(n1):
+            la = 0j
+            lab = 0j
+            lb = 0j
+            for i2 in range(n2):
+                x = a[i0, i1, i2]
+                y = b[i0, i1, i2]
+                la += x
+                lab += x * y
+                lb += y
+            sa += la
+            sab += lab
+            sb += lb
+        out[0, i0] = sa
+        out[1, i0] = sab
+        out[2, i0] = sb
+
+
+def _csums3(a, b):
+    """(sum a, sum a*b, sum b) of two complex arrays of one shape."""
+    out = np.empty((3, a.shape[0]), np.complex128)
+    _csums3_rows(a, b, out)
+    s = out.sum(axis=1)
+    return complex(s[0]), complex(s[1]), complex(s[2])
+
+
+@njit(parallel=True, cache=True)
+def _ccg_step_rows(u, r, p, Ap, alpha, shift, out):
+    """u += alpha p;  r -= alpha (Ap - shift);  the new ||r||^2 per slab."""
+    n0, n1, n2 = u.shape
+    for i0 in prange(n0):
+        rr = 0.0
+        for i1 in range(n1):
+            lr = 0.0
+            for i2 in range(n2):
+                u[i0, i1, i2] += alpha * p[i0, i1, i2]
+                v = r[i0, i1, i2] - alpha * (Ap[i0, i1, i2] - shift)
+                r[i0, i1, i2] = v
+                lr += v.real * v.real + v.imag * v.imag
+            rr += lr
+        out[i0] = rr
+
+
+def _ccg_step(u, r, p, Ap, alpha, shift):
+    """u += alpha p;  r -= alpha (Ap - shift);  returns the new ||r||^2."""
+    out = np.empty(u.shape[0])
+    _ccg_step_rows(u, r, p, Ap, complex(alpha), complex(shift), out)
+    return float(out.sum())
+
+
+@njit(parallel=True, cache=True)
+def _ccg_direction(p, z, shift, beta):
+    """p = (z - shift) + beta p, in place."""
+    n0, n1, n2 = p.shape
+    for i0 in prange(n0):
+        for i1 in range(n1):
+            for i2 in range(n2):
+                p[i0, i1, i2] = (z[i0, i1, i2] - shift) + beta * p[i0, i1, i2]
+
+
 class _Precond:
     """(k0 L)^-1 with L the 7-point Laplacian on the grid's own boundaries:
     periodic -> FFT, insulated -> cosine transform, fixed potential half a cell
@@ -119,21 +194,21 @@ class _Precond:
     def _fwd(self, a):
         for ax, kind in enumerate(self.kinds):
             if kind == "periodic":
-                a = sfft.fft(a, axis=ax, workers=self.w)
+                a = sfft.fft(a, axis=ax, workers=self.w if self.w is not None else _threads())
             elif kind == "neumann":
-                a = sfft.dct(a, type=2, axis=ax, norm="ortho", workers=self.w)
+                a = sfft.dct(a, type=2, axis=ax, norm="ortho", workers=self.w if self.w is not None else _threads())
             else:
-                a = sfft.dst(a, type=2, axis=ax, norm="ortho", workers=self.w)
+                a = sfft.dst(a, type=2, axis=ax, norm="ortho", workers=self.w if self.w is not None else _threads())
         return a
 
     def _inv(self, a):
         for ax, kind in reversed(list(enumerate(self.kinds))):
             if kind == "periodic":
-                a = sfft.ifft(a, axis=ax, workers=self.w)
+                a = sfft.ifft(a, axis=ax, workers=self.w if self.w is not None else _threads())
             elif kind == "neumann":
-                a = sfft.idct(a, type=2, axis=ax, norm="ortho", workers=self.w)
+                a = sfft.idct(a, type=2, axis=ax, norm="ortho", workers=self.w if self.w is not None else _threads())
             else:
-                a = sfft.idst(a, type=2, axis=ax, norm="ortho", workers=self.w)
+                a = sfft.idst(a, type=2, axis=ax, norm="ortho", workers=self.w if self.w is not None else _threads())
         return a
 
     def __call__(self, r):
@@ -146,7 +221,8 @@ def _threads():
     return t()
 
 
-def solve(labels, kappa, direction, bc="periodic", tol=1e-7, maxiter=20000, should_stop=None, workers=None):
+def solve(labels, kappa, direction, bc="periodic", tol=1e-7, maxiter=20000, should_stop=None, workers=None,
+          callback=None):
     """Effective complex admittivity along `direction` for a unit macroscopic
     field. kappa: complex value per label. Returns {"kappa": complex,
     "column": complex[3], "iterations", "residual", "converged", "seconds"}.
@@ -158,7 +234,7 @@ def solve(labels, kappa, direction, bc="periodic", tol=1e-7, maxiter=20000, shou
         # plates on the faces normal to `direction`: the same problem with that
         # axis moved first
         r = solve(np.moveaxis(labels, direction, 0), kappa, 0, bc="plates_x", tol=tol, maxiter=maxiter,
-                  should_stop=should_stop, workers=workers)
+                  should_stop=should_stop, workers=workers, callback=callback)
         col = np.zeros(3, np.complex128)
         col[direction] = r["kappa"]
         return dict(r, column=col)
@@ -199,19 +275,22 @@ def solve(labels, kappa, direction, bc="periodic", tol=1e-7, maxiter=20000, shou
             _apply_c(x, kf[0], kf[1], kf[2], out)
             out[0, :, :] += gb * x[0, :, :]
             out[-1, :, :] += gt * x[-1, :, :]
+        centred = False
     else:
         b = np.empty(shape, np.complex128)
         kd = kf[direction]
         b[...] = kd - np.roll(kd, 1, axis=direction)
         b -= b.mean()
 
+        # the mean of A x is taken out (the periodic problem fixes it) inside
+        # the fused sums of the iteration
         def A(x, out):
             _apply_c(x, kf[0], kf[1], kf[2], out)
-            out -= out.mean()
+        centred = True
     # reference admittivity: volume-weighted geometric mean of the regions
     frac = np.bincount(labels.ravel(), minlength=len(v)) / labels.size
     k0 = complex(np.exp(np.sum(frac * np.log(v))))
-    M = _Precond(shape, k0, kinds, _threads() if workers is None else workers)
+    M = _Precond(shape, k0, kinds, workers)
 
     u = np.zeros(shape, np.complex128)
     r = b.copy()
@@ -222,26 +301,30 @@ def solve(labels, kappa, direction, bc="periodic", tol=1e-7, maxiter=20000, shou
     Ap = np.empty(shape, np.complex128)
     rho = complex(np.sum(r * z))
     bnorm = float(np.linalg.norm(b)) or 1.0
+    ncell = float(labels.size)
     it, res, converged = 0, 1.0, False
     for it in range(1, maxiter + 1):
         A(p, Ap)
-        pAp = complex(np.sum(p * Ap))
+        # p.(Ap - m) = p.Ap - m sum(p), with m the mean of Ap when centred
+        s_ap, s_pap, s_p = _csums3(Ap, p)
+        m_ap = s_ap / ncell if centred else 0j
+        pAp = s_pap - m_ap * s_p
         if pAp == 0:
             break
         alpha = rho / pAp
-        u += alpha * p
-        r -= alpha * Ap
-        res = float(np.linalg.norm(r)) / bnorm
+        res = math.sqrt(max(_ccg_step(u, r, p, Ap, alpha, m_ap), 0.0)) / bnorm
         if res < tol:
             converged = True
             break
         if should_stop is not None and it % 25 == 0 and should_stop():
             raise InterruptedError
+        if callback is not None:
+            callback(it, res)
         z = M(r)
-        if M.singular:
-            z -= z.mean()
-        rho_new = complex(np.sum(r * z))
-        p = z + (rho_new / rho) * p
+        s_z, s_rz, s_r = _csums3(z, r)
+        m_z = s_z / ncell if M.singular else 0j
+        rho_new = s_rz - m_z * s_r
+        _ccg_direction(p, z, m_z, rho_new / rho)
         rho = rho_new
     if bc == "plates_x":
         # current through the x = 0 plate per cell, over the face, for a unit

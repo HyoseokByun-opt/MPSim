@@ -281,6 +281,9 @@ def parameter_catalogue(form):
             out.append({"path": f"phases.{i}.orientation.spread_deg", "label": f"{name}: orientation spread", "unit": "°", "group": g})
         if (ph.get("shell") or {}).get("enabled"):
             out.append({"path": f"phases.{i}.shell.thickness", "label": f"{name}: shell thickness", "unit": ph.get("size", {}).get("unit", "um"), "group": g})
+        if (ph.get("section") or {}).get("mode") == "section":
+            out += [{"path": f"phases.{i}.section.from", "label": f"{name}: section from", "unit": "% of edge", "group": g},
+                    {"path": f"phases.{i}.section.to", "label": f"{name}: section to", "unit": "% of edge", "group": g}]
         out += [
             {"path": f"phases.{i}.r_int", "label": f"{name}: interfacial resistance R_int", "unit": "m²K/W", "group": g},
             {"path": f"phases.{i}.props.sigma", "label": f"{name}: electrical conductivity", "unit": "S/m", "group": g},
@@ -289,6 +292,16 @@ def parameter_catalogue(form):
             {"path": f"phases.{i}.props.k", "label": f"{name}: thermal conductivity", "unit": "W/m·K", "group": g},
             {"path": f"phases.{i}.props.E", "label": f"{name}: Young's modulus", "unit": "GPa", "group": g},
         ]
+    for k, mr in enumerate(form.get("matrix_regions") or []):
+        name = mr.get("name") or f"Matrix {k + 2}"
+        out += [{"path": f"matrix_regions.{k}.section.from", "label": f"{name}: section from", "unit": "% of edge",
+                 "group": "Matrix regions"},
+                {"path": f"matrix_regions.{k}.section.to", "label": f"{name}: section to", "unit": "% of edge",
+                 "group": "Matrix regions"},
+                {"path": f"matrix_regions.{k}.props.k", "label": f"{name}: thermal conductivity", "unit": "W/m·K",
+                 "group": "Matrix regions"},
+                {"path": f"matrix_regions.{k}.props.E", "label": f"{name}: Young's modulus", "unit": "GPa",
+                 "group": "Matrix regions"}]
     # contact resistance between two different fillers (the pair entry of
     # the contact matrix; empty takes the mean of the two fillers' own)
     fill = [k for k in _fillers(form) if (form["phases"][k].get("shape") != "network")]

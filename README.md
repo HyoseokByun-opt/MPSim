@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.4.0-0b62c4" alt="version 5.4.0">
+  <img src="https://img.shields.io/badge/version-5.5.0-0b62c4" alt="version 5.5.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-64%20checks-2da44e" alt="64 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-73%20checks-2da44e" alt="73 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -60,7 +60,9 @@ The main capabilities are listed below.
   a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression,
   and every blend is checked so that no voxel belongs to two particles. Particles may touch, as in a filled compound
   (the default), or are kept a set number of voxels apart. Sphere packings can be sheared in the resin by
-  particle dynamics before they are drawn, which yields the arrangement of a compound after flow.
+  particle dynamics before they are drawn, which yields the arrangement of a compound after flow. Fillers and further
+  matrix materials can be confined to sections (slabs) of the RVE, so that two compounds, a filled layer on an unfilled
+  one or a resin interlayer are modelled as one structure.
 - **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
   in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
   packing follows the requested density by Monte-Carlo moves weighted against the crowding of hard spheres, and the
@@ -70,7 +72,8 @@ The main capabilities are listed below.
   and convergence are checked on every run; several realisations provide a 95 % confidence interval.
 - **Thin films.** Periodic in x and y, with the real film thickness in z and every particle inside the film.
 - **Conduction.** Thermal, electrical, dielectric and magnetic conduction with a periodic finite-volume solver
-  (multi-core, FFT-preconditioned) and, alternatively, the finite elements of NASA PuMA. Interfacial thermal resistance
+  (multi-core, FFT-preconditioned; its operator is NASA PuMA's finite-volume operator, with periodic instead of fixed
+  faces) and, alternatively, the finite elements of NASA PuMA. Interfacial thermal resistance
   between filler and matrix and at filler-filler contacts is applied on the voxel faces. Anisotropic fillers (for
   example h-BN platelets) carry their conductivity tensor rotated with each particle.
 - **Mechanics.** Stiffness, engineering constants and the thermal-expansion tensor from FANS, the periodic voxel finite
@@ -106,10 +109,13 @@ The main capabilities are listed below.
 - **Linked inputs.** A DOE factor or a calibration unknown can set further inputs: the same value (`x`), a ratio
   (`0.8*x`) or a function of several factors (`sqrt(x1*x2)`). Two grades of one filler can thus share one interfacial
   resistance, which reduces the number of factors and lets the measurements determine a single value.
-- **Parallel execution.** Independent solutions (each property and direction, each Stokes and diffusion direction,
-  each EMI frequency, the structure analyses) run concurrently on the cores assigned to a run within the free memory,
-  and several runs can share one PC. A porous RVE with permeability, diffusion and structure analyses took 1231 s
-  sequentially and 693 s in parallel on 8 cores.
+- **Parallel execution.** Every solve runs on all the cores given to it: the finite-volume conduction and EMI solves,
+  FANS, and PuMA's Stokes flow, diffusion and finite elements, whose single-threaded Python and NumPy parts MPSim runs
+  in parallel kernels with the same equations (a 96³ Stokes direction: 390 s on one core in PuMA's own path, 29 s on
+  14 threads). Independent solutions (each property and direction, each EMI frequency, the structure analyses, and on
+  a CPU the shear rates of a particle-dynamics flow curve) run side by side within the free memory, and the cores of a
+  finished solve go to those still running. A run that goes
+  alone takes every core of the PC by default; several runs share them.
 - **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as voxels, fields on the RVE
   faces and on sections, arrows, animated field lines and pore networks; publication figures rendered on the server
   (PyVista); animations saved as GIF; live fields during the solution; a single-file HTML report for every run.
@@ -161,8 +167,8 @@ computed by particle dynamics. The same particle dynamics then shears a random p
 and the arrangement it leaves is taken as the cured microstructure. Thermal conductivity, thermal expansion, stiffness,
 permittivity, dielectric loss and moisture uptake are solved on this one structure (60 µm RVE, 240³ voxels). All
 results below were obtained with the presets *MUF · epoxy + silica 15 + 3 µm 55 vol%* and *MUF · from flow to the cured
-part* on a 14-core laptop without a GPU. Both presets keep the particles 2 voxels apart (*Gap between particles*), the
-setting with which these values were computed; the default of 0 lets the particles touch.
+part* on a 14-core laptop without a GPU, with the particles touching where they meet (*Gap between particles* 0, the
+default).
 
 <p align="center">
   <img src="docs/images/muf_datasheet.png" alt="Summary of the properties of the cured compound" width="72%">
@@ -197,19 +203,19 @@ the compound reaches 33 Pa·s at 10 s⁻¹. Derived results:
 
 *Domain → Particle arrangement → After shear flow* shears the random packing with the particle dynamics above, with
 the flow along x and the velocity gradient along z, to a whole-number strain (10), at which the sheared periodic images
-coincide with the ordinary ones. The spheres carry half of the packing gap during the shear, so that the final positions
+coincide with the ordinary ones. The spheres are sheared at the size they are drawn with, so that the final positions
 need corrections of a few nanometres only (6 nm on average here).
 
 <p align="center">
   <img src="docs/images/muf_structure.png" alt="The cured microstructure and the orientation of close particle pairs" width="100%">
 </p>
 
-The number of close pairs (surfaces within 5 % of the sum of the radii) increases from 2.5 to 4.5 per sphere. The
+The number of close pairs (surfaces within 5 % of the sum of the radii) increases from 1.7 to 3.8 per sphere. The
 pairs orient along the compression axis of the shear (135° from the flow direction in the x-z plane) and are depleted
-along the extension axis (45°); the mean of n_x·n_z changes from -0.004 to -0.024. This anisotropic pair distribution
+along the extension axis (45°); the mean of n_x·n_z changes from +0.001 to -0.033. This anisotropic pair distribution
 is characteristic of sheared non-Brownian suspensions (J. F. Morris, *Rheologica Acta* **48** (8), 909–923 (2009),
 [doi:10.1007/s00397-009-0352-1](https://doi.org/10.1007/s00397-009-0352-1)). The filler contents of the drawn structure
-are 38.50 and 16.50 vol%, equal to the input. The shear of 2,568 spheres to a strain of 10 took 36 minutes on 14 CPU
+are 38.50 and 16.50 vol%, equal to the input. The shear of 2,568 spheres to a strain of 10 took 17 minutes on 14 CPU
 cores; on an NVIDIA GPU it takes minutes.
 
 ### Thermal conductivity
@@ -227,19 +233,20 @@ substrate side of the gap; a cut plane travels through the RVE.
 
 | Direction | Random packing (W/m·K) | After shear flow (W/m·K) | Change |
 |---|---|---|---|
-| x (flow) | 0.573 | 0.573 | 0.0 % |
-| y (vorticity) | 0.570 | 0.579 | +1.6 % |
-| z (velocity gradient, through the gap) | 0.569 | 0.573 | +0.7 % |
+| x (flow) | 0.584 | 0.588 | +0.7 % |
+| y (vorticity) | 0.579 | 0.602 | +4.0 % |
+| z (velocity gradient, through the gap) | 0.576 | 0.596 | +3.5 % |
 
-The conductivity through the gap is 0.573 W/m·K, 2.9 times that of the resin. It lies 5 % above the Maxwell-Garnett
+The conductivity through the gap is 0.596 W/m·K, 3.0 times that of the resin. It lies 9.5 % above the Maxwell-Garnett
 estimate, which coincides with the lower Hashin–Shtrikman bound (0.544), and well below the Bruggeman estimate (0.685):
-the particles are separated by resin films, and the composite behaves as a dispersion of particles. The heat flux is
-highest in the silica and in the thin resin gaps between near-contacting particles. The changes caused by the shear
-(up to 1.6 %) are smaller than the statistical scatter of a single realisation (±4.3 % at 50 vol% for a 7-diameter
-RVE, and more for this 4-diameter RVE); for
-this low-contrast filler the arrangement after flow does not change the conductivity measurably. Refining the grid
-from 240³ to 360³ changes k_z by +0.12 %. A 1 mm layer has an area-specific thermal resistance of 1745 mm²K/W, and the
-thermal diffusivity is 0.386 mm²/s.
+at a conductivity ratio of 7 between silica and epoxy, the points where particles touch carry little of the heat, and
+the composite remains close to a dispersion of particles. The heat flux is highest in the silica and where particles
+touch. The shear raises the conductivity by 3.5 % through the gap and 4.0 % along y, against 0.7 % along the flow: it
+brings particles into contact (the touching voxel pairs increase from 108,279 to 377,147). These changes are of the order
+of the statistical scatter of a single realisation (±4.3 % at 50 vol% for a 7-diameter RVE, and more for this
+4-diameter RVE), so that several realisations would be needed to establish them. Refining the grid from 240³ to 360³
+changes k_z by −0.04 %. A 1 mm layer has an area-specific thermal resistance of 1678 mm²K/W, and the thermal
+diffusivity is 0.400 mm²/s.
 
 ### Thermal expansion and stiffness
 
@@ -253,22 +260,23 @@ its size.
 
 | Direction | α (ppm/K) | E (GPa) |
 |---|---|---|
-| x (flow) | 18.7 | 13.4 |
-| y (vorticity) | 17.8 | 13.7 |
-| z (velocity gradient) | 18.5 | 13.8 |
+| x (flow) | 17.4 | 15.0 |
+| y (vorticity) | 15.6 | 15.8 |
+| z (velocity gradient) | 16.4 | 15.5 |
 
-The volumetric mean CTE is 18.4 ppm/K, below the Kerner (Mori-Tanaka) estimate for separated spheres (22.6 ppm/K) and
-above the Turner estimate (4.7 ppm/K); near-contacting particles restrain the resin more than separated spheres do.
-The Hill average of the Young's modulus is 13.3 GPa (Poisson's ratio 0.26), within the Hashin–Shtrikman bounds
-(9.4–30.2 GPa); the shear moduli G_yz, G_xz and G_xy are 5.13, 5.01 and 5.39 GPa. The direction dependence is small but consistent with the pair orientation: fewer close pairs lie along
-the flow direction x, where E is lowest and α highest. Its magnitude (up to 5 %) is comparable with the scatter of one
-realisation. The thermal stress concentrates in the fine filler and at near contacts: the mean von Mises stress is
-4 MPa in the resin (99th percentile 13 MPa), 8 MPa in the 15 µm silica (33 MPa) and 15 MPa in the 3 µm silica
-(68 MPa). These local stresses indicate where filler-matrix debonding is likely to start during temperature cycling.
+The volumetric mean CTE is 16.5 ppm/K, below the Kerner (Mori-Tanaka) estimate for separated spheres (22.6 ppm/K) and
+above the Turner estimate (4.7 ppm/K); touching particles restrain the resin more than separated spheres do.
+The Hill average of the Young's modulus is 15.0 GPa (Poisson's ratio 0.25), within the Hashin–Shtrikman bounds
+(9.4–30.2 GPa); the shear moduli G_yz, G_xz and G_xy are 6.04, 5.71 and 5.91 GPa. The direction dependence is
+consistent with the pair orientation: fewer close pairs lie along the flow direction x, where E is lowest and α
+highest. Its magnitude (up to 11 % in α and 5 % in E) is comparable with the scatter of one realisation. The thermal
+stress concentrates in the fine filler and where particles touch: the mean von Mises stress is 4 MPa in the resin
+(99th percentile 12 MPa), 12 MPa in the 15 µm silica (50 MPa) and 23 MPa in the 3 µm silica (85 MPa). These local
+stresses indicate where filler-matrix debonding is likely to start during temperature cycling.
 
 Properties above the glass transition are not reported in this example: in the rubbery state the particles that touch
-on the voxel grid form a rigid skeleton that the real compound, with resin films between the particles, does not have
-(user guide, section 14.5).
+on the voxel grid form a rigid skeleton that the real compound, with resin films between the particles, does not have.
+The same run gives α2 of 7.7–11.5 ppm/K, below α1, and a hot modulus of 3.1–3.8 GPa (user guide, section 14.5).
 
 ### Permittivity and dielectric loss
 
@@ -298,18 +306,18 @@ an eigenstrain solution with FANS.
 | Quantity | Cured compound | Epoxy |
 |---|---|---|
 | Saturated uptake | 0.77 wt% | 2.5 wt% |
-| Diffusivity D_x / D_y / D_z (10⁻¹² m²/s) | 2.00 / 2.04 / 1.99 | 3.0 |
-| 1 mm part, both faces exposed: 50 % / 95 % of saturation | 6.9 h / 39 h | 4.6 h / 26 h |
-| Swelling strain at saturation (per direction) | 0.23 % | 0.75 % |
+| Diffusivity D_x / D_y / D_z (10⁻¹² m²/s) | 1.87 / 1.96 / 1.92 | 3.0 |
+| 1 mm part, both faces exposed: 50 % / 95 % of saturation | 7.1 h / 41 h | 4.6 h / 26 h |
+| Swelling strain at saturation (per direction) | 0.20 % | 0.75 % |
 
 The saturated uptake equals the resin uptake scaled by the mass fraction of the resin. The effective diffusivity is
-0.67 times that of the resin, 15 % below the Maxwell estimate for impermeable spheres (0.78), because at 55 vol% the
-diffusion paths wind between closely spaced particles. The silica restrains the hygroscopic swelling of the resin to
-0.23 %, which corresponds to a coefficient of moisture expansion of 0.29 per unit mass fraction of water.
+0.64 times that of the resin, 18 % below the Maxwell estimate for impermeable spheres (0.78), because at 55 vol% the
+diffusion paths wind between closely spaced and touching particles. The silica restrains the hygroscopic swelling of the
+resin to 0.20 %, which corresponds to a coefficient of moisture expansion of 0.26 per unit mass fraction of water.
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **64 problems with known solutions** (42 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **73 problems with known solutions** (49 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -317,6 +325,10 @@ reference values. A selection:
 | Series and parallel laminates (bulk and thin film) | 1.81818 / 5.5 | exact |
 | Interfacial thermal resistance | Hasselman–Johnson | within 0.26 % |
 | Simple cubic sphere array, extrapolated from 256³ | converged reference | 64³: FV +0.7 %, FE +4.0 % |
+| Built-in periodic FV against PuMA's FV, same field on a three-phase grid | PuMA's operator | equal to 2e-16 |
+| Multi-core PuMA Stokes flow and tortuosity | PuMA's single-threaded path | K within 4e-10, τ within 1e-15 |
+| Threaded solves on one thread and on all | the same numbers | identical |
+| Sections: a filler at 30 % of one half, a second matrix in that half | composition, no filler in the other half | exact |
 | Two-phase thermal expansion | Levin's exact relation | relative error 5e-7 |
 | Complex laminates (EMI homogenisation) | series/parallel closed form | error 1e-13 |
 | Dilute spheres, complex admittivity | Maxwell-Garnett | within 0.06 % |
@@ -352,10 +364,10 @@ published. Each preset was run as loaded; the preset descriptions discuss the re
 
 | Preset | Reference | Reported | Computed |
 |---|---|---|---|
-| Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 2025 [1] | 640 W/m·K | 644 W/m·K, with 12.5 MW/m²K at the interface |
+| Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 2025 [1] | 640 W/m·K | 646 W/m·K, with 12.5 MW/m²K at the interface |
 | Power-module baseplate · AlSiC 63 vol% | Guo et al., *J. USTB* 2014 [2] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.84 ppm/K |
 | mmWave substrate · PTFE + silica 60 wt% | Murali et al., *Compos. Part A* 2009 [3] | Dk 2.9 | Dk 3.01 |
-| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [4] | μr 7.5 (printed) | μr 5.1 (separate spheres) |
+| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [4] | μr 7.5 (printed) | μr 5.96 (spheres) |
 
 1. Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, *Materials* **18** (16), 3882 (2025). [doi:10.3390/ma18163882](https://doi.org/10.3390/ma18163882) — 400 µm diamond, 50 vol%: 640 W/m·K.
 2. M. Guo, J. Liu, C. Jia, S. Guo, Y. Li, H. Zhou, “Microstructure and properties of SiCp/Al electronic packaging materials fabricated by pseudo-semi-solid thixoforming”, *Journal of University of Science and Technology Beijing* **36** (4), 489–495 (2014). [doi:10.13374/j.issn1001-053x.2014.04.011](https://doi.org/10.13374/j.issn1001-053x.2014.04.011) — as tabulated in L. Lai et al., *Micromachines* **14** (8), 1491 (2023), Table 2, [doi:10.3390/mi14081491](https://doi.org/10.3390/mi14081491).
@@ -545,7 +557,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.4.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.5.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

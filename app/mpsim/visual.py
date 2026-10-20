@@ -77,6 +77,9 @@ VIVID = ["#1e50ff", "#ff3a1c", "#14c2e6", "#ffa600", "#20c75a", "#a23cff", "#ff3
          "#ffd400", "#6f5cff"]
 PHASE_COLORS = [MATRIX_COLOR] + VIVID          # the fallback order (no material known)
 VOID_COLOR = "#7fd3f7"
+# further matrices (matrix regions): muted tones that read apart from the main
+# matrix's light grey and from the vivid fillers
+MATRIX_REGION_COLORS = ["#a9b8cc", "#e2cfa8", "#bcd5b8", "#d6bcd2"]
 INTERPHASE_COLOR = "#9a9a9a"
 
 
@@ -110,7 +113,8 @@ def region_colors(table):
     for i, t in enumerate(table):
         void = float((t.get("props") or {}).get("E", 1.0) or 0.0) <= 0
         if t["kind"] == "matrix":
-            out[i] = VOID_COLOR if void else MATRIX_COLOR
+            out[i] = (VOID_COLOR if void else MATRIX_COLOR if t.get("region") is None
+                      else MATRIX_REGION_COLORS[int(t["region"]) % len(MATRIX_REGION_COLORS)])
         elif t["kind"] == "interphase":
             out[i] = INTERPHASE_COLOR
         elif void:
@@ -302,7 +306,8 @@ class ViewWriter:
             "shape": self.shape, "spacing_um": self.spacing, "stride": self.stride,
             "full_shape": list(labels.shape), "voxel_um": float(voxel_um),
             "length_um": [float(n * voxel_um) for n in labels.shape],
-            "labels": [{"value": i, "name": t["name"], "kind": t["kind"],
+            "labels": [{"value": i, "name": t["name"], "kind": t["kind"], "region": t.get("region"),
+                        "section": t.get("section"),
                         "color": colors[i], "void": bool(t["props"].get("E", 1.0) <= 0),
                         "vf": float(counts[i] / labels.size)} for i, t in enumerate(table)],
             "fields": [], "vectors": [], "paths": [], "surfaces": [], "network": None,
@@ -593,6 +598,8 @@ class ViewWriter:
             self.surf_owner = None
 
     def _drawn(self):
+        # no matrix is drawn as voxels or skins; a further matrix (a section)
+        # is drawn as its slab - a light box with its edges (viewer, report)
         return [lab for lab in self.meta["labels"] if lab["kind"] not in ("matrix", "interphase")]
 
     def _phase_masks(self, grid):
@@ -1470,6 +1477,7 @@ def render_scene(view_dir, req, out_png):
         if not show_particles or vox or vvol:
             break
         lab = meta["labels"][sf["label"]]
+        op_s = op
         pts, nrm, tri = load_surface(view_dir, sf)
         faces = np.hstack([np.full((len(tri), 1), 3, np.int64), tri.astype(np.int64)]).ravel()
         mesh = pv.PolyData(pts.astype(np.float64), faces)
@@ -1478,11 +1486,24 @@ def render_scene(view_dir, req, out_png):
             vals = np.fromfile(os.path.join(view_dir, sf["fields"][fmeta["key"]]), "<f4")
             mesh.point_data["f"] = np.maximum(vals, clim[0] * 1e-3) if log else vals
             p.add_mesh(mesh, scalars="f", cmap=cmap, clim=clim, log_scale=log, smooth_shading=True,
-                       opacity=op, specular=0.25, show_scalar_bar=not bar_done, scalar_bar_args=sbar)
+                       opacity=op_s, specular=0.25, show_scalar_bar=not bar_done, scalar_bar_args=sbar)
             bar_done = True
         else:
-            p.add_mesh(mesh, color=lab["color"], smooth_shading=True, opacity=op, specular=0.35,
+            p.add_mesh(mesh, color=lab["color"], smooth_shading=True, opacity=op_s, specular=0.35,
                        specular_power=20)
+    if show_particles:
+        # a further matrix: its slab as a light box with outlined edges
+        Ls = [float(n) * s for n in (nx, ny, nz)]
+        for lab in meta["labels"]:
+            sec = lab.get("section")
+            if lab.get("kind") != "matrix" or not sec:
+                continue
+            ax = "xyz".index(sec["axis"])
+            b = [0.0, Ls[0], 0.0, Ls[1], 0.0, Ls[2]]
+            b[2 * ax], b[2 * ax + 1] = float(sec["from"]) * Ls[ax], float(sec["to"]) * Ls[ax]
+            box = pv.Box(bounds=b)
+            p.add_mesh(box, color=lab["color"], opacity=0.18, smooth_shading=False)
+            p.add_mesh(box.extract_feature_edges(), color=lab["color"], line_width=3)
     if mode == "field" and fmeta:
         pieces = []
         fc = meta.get("faces") or {}

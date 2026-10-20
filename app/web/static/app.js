@@ -83,12 +83,37 @@
     accurate: "14 voxels across the smallest feature, RVE ≥ 10 × the largest particle, ≥ 100 particles. Suitable for reporting; add realisations (2–3) for a confidence interval.",
   };
   const BACKEND = { puma: "NASA PuMA FE + periodic FV", puma_fv: "NASA PuMA FV", builtin: "built-in verification solver" };
-  const backendTxt = (r) => (BACKEND[r.backend] || "") + (r.plan && r.plan.film ? " · thin film" : "");
+  // the methods a run actually used, from its own analyses and options (the
+  // conduction default is the built-in periodic FV, elasticity FANS; PuMA
+  // solves flow and diffusion, and conduction or elasticity when chosen)
+  function runMethods(r) {
+    const sp = r.spec || {}, o = sp.options || {}, an = new Set(sp.analyses || []), out = [];
+    let puma = false;
+    if (["thermal", "electrical", "dielectric", "magnetic", "emi", "moisture"].some((k) => an.has(k))) {
+      if (r.backend === "puma_fv") { out.push("conduction NASA PuMA FV"); puma = true; }
+      else if (o.cond_method === "fe" && r.backend !== "builtin") { out.push("conduction NASA PuMA FE"); puma = true; }
+      else out.push("conduction built-in periodic FV");
+    }
+    if (["cte", "mechtest"].some((k) => an.has(k))) {
+      const em = o.elastic_method || "fans";
+      out.push("elasticity " + ({ fans: "FANS", puma: "NASA PuMA FE", fft: "FFT (Moulinec–Suquet)" }[em] || em));
+      if (em === "puma") puma = true;
+    }
+    if (["permeability", "filtration", "acoustics"].some((k) => an.has(k))) { out.push("flow NASA PuMA Stokes FE"); puma = true; }
+    if (an.has("tortuosity")) { out.push("diffusion NASA PuMA FV"); puma = true; }
+    if (an.has("radiation")) { out.push("rays NASA PuMA"); puma = true; }
+    if (an.has("viscosity")) out.push("viscosity particle dynamics" + (r.dem_direct ? "" : " and FANS"));
+    return { text: out.join(" · ") || (BACKEND[r.backend] || ""), puma };
+  }
+  const backendTxt = (r) => runMethods(r).text + (r.plan && r.plan.film ? " · thin film" : "");
   // Default region colours, as mpsim/visual.py region_colors: the matrix light
   // grey; a filler its material's colour where it has one (metals, carbons,
   // SiC, ferrites), otherwise the next vivid colour of the jet scale; a colour
   // too close to one already given yields to the next vivid one.
   const MATRIX_COLOR = "#d9dde3", VOID_COLOR = "#7fd3f7";
+  // further matrices (matrix regions), as visual.MATRIX_REGION_COLORS
+  const MATRIX_REGION_COLORS = ["#a9b8cc", "#e2cfa8", "#bcd5b8", "#d6bcd2"];
+  const matrixRegionColor = (k, voidm) => (voidm ? VOID_COLOR : MATRIX_REGION_COLORS[k % MATRIX_REGION_COLORS.length]);
   const VIVID = ["#1e50ff", "#ff3a1c", "#14c2e6", "#ffa600", "#20c75a", "#a23cff", "#ff3a9c", "#00a99d", "#ffd400", "#6f5cff"];
   const PHASE_COLORS = [MATRIX_COLOR, ...VIVID];
   function colorsAlike(a, b, tol = 90) {
@@ -101,7 +126,7 @@
     // two passes: material colours first, so copper stays copper whatever its place;
     // a vivid colour then keeps a wider distance from those (copper and the vivid
     // red-orange pass the plain test but read alike) - the same as visual.region_colors
-    const out = regions.map((r) => r.kind === "matrix" ? (r.void ? VOID_COLOR : MATRIX_COLOR)
+    const out = regions.map((r) => r.kind === "matrix" ? (r.region !== undefined && r.region !== null ? matrixRegionColor(r.region, r.void) : r.void ? VOID_COLOR : MATRIX_COLOR)
       : r.kind === "interphase" ? "#9a9a9a" : r.void ? VOID_COLOR : null);
     const own = [];
     regions.forEach((r, i) => {
@@ -271,16 +296,19 @@
       dist: { type: "mono", cv: 0.25 }, fraction: { value: 20, basis: "vol" },
       orientation: { mode: "iso", spread_deg: 0 }, overlap: false, gap_frac: 0,
       shell: { enabled: false, thickness: 0.5, material_id: "sio2", name: "shell", props: clone(mat("sio2").props) },
-      r_int: 0, r_contact: 0,
+      r_int: 0, r_contact: 0, section: { mode: "whole", axis: "z", from: 0, to: 50 },
     };
   }
+  // the defaults a form was made with: 55 = z only, the resolution check and
+  // the RVE enlargement only when ticked, particles touching (version 5.5)
+  const FORM_DEFAULTS = 55;
   function defaultForm() {
     return {
-      name: "New case", matrix: matEntry("epoxy"), phases: [phaseEntry("al2o3", "sphere")],
-      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: true, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, dispersion: { mode: "uniform" } },
+      name: "New case", defaults: FORM_DEFAULTS, matrix: matEntry("epoxy"), phases: [phaseEntry("al2o3", "sphere")],
+      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
-        directions: "xyz", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: "auto", reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
+        directions: "z", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: false, reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
         emi: { thickness_mm: 1, f_min_hz: 1e6, f_max_hz: 1e10, method: "complex", n_freq: 10, fullwave: true },
         acoustics: { thickness_mm: 20, f_min_hz: 100, f_max_hz: 10000 },
         radiation: { temperature_K: 1000, refractive_index: 1, sources: 200, rays: 500 },
@@ -304,19 +332,37 @@
     if (!rv.voxel_um) rv.voxel_um = +pl.h_um.toPrecision(6);
     rv.N = null;
   }
-  function completeForm(f, record = false) {
+  // kind: "record" - an input file or the input of a run, which keeps what it
+  // says; "draft" - the form left in the browser; "preset"
+  function completeForm(f, kind = "preset") {
     const base = defaultForm();
     const out = deepMerge(base, clone(f));
     out.analyses = clone(f.analyses || base.analyses);
     // the contact handling of 5.3.1 and earlier ("apart", the default then, kept
-    // particles 2 voxels apart). A record of what was run (an input file, the
-    // input of a run) keeps that gap; a form left in the browser carried the old
-    // default in every case, so it takes the new one: particles touch
+    // particles 2 voxels apart). A record of what was run keeps that gap; a form
+    // left in the browser carried the old default in every case, so it takes
+    // the new one: particles touch
     if (out.options) {
       const c = (f.options || {}).contacts, g = (f.options || {}).particle_gap_vox;
-      if (record && c && (g === undefined || g === null || g === "")) out.options.particle_gap_vox = c === "apart" ? 2 : 0;
+      if (kind === "record" && c && (g === undefined || g === null || g === "")) out.options.particle_gap_vox = c === "apart" ? 2 : 0;
       delete out.options.contacts;
+      // the resolution check is ticked or not ("auto" of 5.4 and earlier ran it
+      // whenever particles touched; now it runs only when asked for)
+      const rc = (f.options || {}).resolution_check;
+      out.options.resolution_check = rc === true || rc === "on";
     }
+    // a draft made with older defaults takes the present ones where it only
+    // carried a default: the load directions and the RVE enlargement
+    if (kind === "draft" && !((+f.defaults || 0) >= FORM_DEFAULTS)) {
+      out.options.directions = base.options.directions;
+      out.rve.auto_enlarge = base.rve.auto_enlarge;
+    }
+    out.defaults = FORM_DEFAULTS;
+    (out.matrix_regions || []).forEach((mr) => {
+      if (!mr.props && mat(mr.material_id)) mr.props = clone(mat(mr.material_id).props);
+      if (!mr.name) mr.name = (mat(mr.material_id) || {}).name || "Matrix";
+      mr.section = mr.section || { axis: "z", from: 50, to: 100 };
+    });
     if (out.matrix && out.matrix.material_id && !(f.matrix && f.matrix.props) && mat(out.matrix.material_id)) {
       out.matrix.props = clone(mat(out.matrix.material_id).props);
       if (!f.matrix.name) out.matrix.name = mat(out.matrix.material_id).name;
@@ -504,6 +550,16 @@
         if (p && mat("air")) { p.material_id = "air"; p.props = clone(mat("air").props); if (!/pore/i.test(p.name)) p.name = "Pores (" + SHAPES[p.shape].label.toLowerCase() + ")"; p.r_int = 0; p.r_contact = 0; renderLeft(); renderRibbon(); schedulePlan(0); saveForm(); toast("This phase is now pore space; its geometry is the pore shape."); }
         break;
       }
+      case "addMR": {
+        f.matrix_regions = f.matrix_regions || [];
+        const m0 = mat(f.matrix.material_id);
+        f.matrix_regions.push({ name: m0 ? `${m0.name} · section` : `Matrix ${f.matrix_regions.length + 2}`, material_id: f.matrix.material_id, props: clone(m0 ? m0.props : f.matrix.props),
+          section: { axis: (f.matrix_regions[0] || {}).section ? f.matrix_regions[0].section.axis : "z", from: 50, to: 100 } });
+        state.sel = -1 - f.matrix_regions.length; renderLeft(); renderRibbon(); schedulePlan(0); saveForm(); break;
+      }
+      case "delMR": if (state.sel <= -2 && (f.matrix_regions || [])[-2 - state.sel]) {
+        f.matrix_regions.splice(-2 - state.sel, 1); state.sel = -1; renderLeft(); renderRibbon(); schedulePlan(0); saveForm();
+      } break;
       case "dup": if (f.phases.length && state.sel >= 0) { f.phases.splice(state.sel + 1, 0, clone(f.phases[state.sel])); state.sel++; renderLeft(); renderRibbon(); schedulePlan(0); saveForm(); } break;
       case "del": if (f.phases.length && state.sel >= 0) {
         const gone = state.sel, rc = {};
@@ -619,7 +675,7 @@
       return `<div class="preset" data-preset="${p.id}"><div class="pn">${esc(p.name)}</div><div class="pd">${esc(p.description)}</div><div class="chips">${p.doe ? `<span class="chip" style="--ic:#8250df">${I("preset")}DOE study</span>` : ""}${chips}</div></div>`;
     }).join("");
     return `<div class="sec"><div class="sh">${I("home")}Workflow</div><div class="sb"><ol class="flow">${steps.map(([k, t, s], i) => `<li data-go="${k}"><b>${i + 1}</b><span>${t}<small>${s}</small></span></li>`).join("")}</ol>
-        <div class="hint">Every analysis uses validated open-source codes: NASA PuMA, PoreSpy, OpenPNM, scikit-rf and PyVista. The report lists the method and version behind each number.</div></div></div>
+        <div class="hint">Conduction, permittivity and permeability are solved with the built-in periodic finite volume (PuMA's finite-volume operator with periodic faces; NASA PuMA's finite elements on request), elasticity with FANS (PuMA's voxel elements, FFT-preconditioned), flow and diffusion with NASA PuMA; structure analyses use PoreSpy and OpenPNM, EMI scikit-rf and openEMS, figures PyVista. The report lists the method and version behind each number.</div></div></div>
       ${workAreaHTML()}
       ${machineHTML()}
       <div class="sec" id="presetSec"><div class="sh">${I("preset")}Presets<small>typical semiconductor material problems</small></div><div class="sb">${presets}</div></div>`;
@@ -736,12 +792,12 @@
         <div class="g2">
           <div><label class="f">Analyses at once <span class="u">parallel</span></label>
             <input type="number" min="1" max="${Math.max(cores, 1)}" step="1" data-set="concurrency" value="${conc}"></div>
-          <div><label class="f">Cores each <span class="u">0 = auto (¼)</span></label>
+          <div><label class="f">Cores each <span class="u">0 = auto</span></label>
             <input type="number" min="0" max="${4 * cores}" step="1" data-set="threads" value="${s.auto_threads ? 0 : th}"></div>
         </div>
 
         <div class="hint" style="margin-top:6px">Now: <b>${conc}</b> at a time × <b>${th}</b> core${th === 1 ? "" : "s"} = ${used} of ${cores}${used > cores ? " — oversubscribed, which slows every run down" : ""}.
-          ${s.auto_threads ? "Automatic: a quarter of the PC per analysis, and never more than an equal share when several run at once." : "A fixed number of cores per analysis."}</div>
+          ${s.auto_threads ? "Automatic: all cores, shared equally by the analyses set to run at once; a run that goes alone takes them all." : "A fixed number of cores per analysis."} Inside a run the cores go to its independent solves, and the cores of a finished solve to those still running, so that none stays idle.</div>
         <div class="g2" style="margin-top:6px">
           <div><label class="f">Memory for parallel runs <span class="u">GB</span></label>
             <input type="number" min="0" step="any" data-set="mem_budget_gb" value="${s.mem_budget_auto ? "" : (s.mem_budget_gb ?? "")}" placeholder="${s.mem_budget_gb ? fmt(s.mem_budget_gb) + " (70 %)" : "70 % of RAM"}"></div>
@@ -869,8 +925,10 @@
       <div class="row wrap" style="gap:6px;margin-top:4px">${vd ? `<span class="chip" style="--ic:var(--c-flow)">${I("pores")}Pore phase — its geometry is the pore shape</span>` : `<button class="btn sm" data-act="makePore" title="Set the material of this phase to Air: its geometry becomes pore space">${I("pores")}Make it pore space (Air)</button>`}</div>
       <label class="f">Shape</label><div class="shapes">${Object.entries(SHAPES).map(([k, s]) => `<button class="shape ${ph.shape === k ? "on" : ""}" data-shape="${k}" title="${s.hint}">${I(s.icon)}<span>${s.label}</span></button>`).join("")}</div>
       <div class="hint" style="margin-top:3px">${SHAPES[ph.shape].hint}</div>
+      ${!isNet ? `<div class="subh">Placement</div><select data-k="phases.${i}.section.mode"><option value="whole">Whole RVE (default)</option><option value="section">A section of the RVE</option></select>
+        ${(ph.section || {}).mode === "section" ? secFields(`phases.${i}.section`) + `<div class="hint">The filler lies only in ${secTxt(ph.section)} of the RVE's edge (every particle wholly inside), and its content is the <b>vol % of that section</b>. Fillers in sections and fillers over the whole RVE are not mixed: place every filler in a section, or none; fillers that share a slab share the section.</div>` : ""}` : ""}
       <div class="g2">
-        <div><label class="f">Content</label><div class="row uin"><input type="number" step="any" data-k="phases.${i}.fraction.value" data-num><select data-k="phases.${i}.fraction.basis"><option value="vol">vol %</option><option value="wt">wt %</option></select></div></div>
+        <div><label class="f">Content${(ph.section || {}).mode === "section" ? ' <span class="u">of its section</span>' : ""}</label><div class="row uin"><input type="number" step="any" data-k="phases.${i}.fraction.value" data-num><select data-k="phases.${i}.fraction.basis"><option value="vol">vol %</option><option value="wt">wt %</option></select></div></div>
         <div><label class="f">Length unit</label><select data-k="phases.${i}.size.unit"><option value="nm">nm</option><option value="um">µm</option><option value="mm">mm</option></select></div>
         <div><label class="f">${sizeLabel(ph.shape)} <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.d" data-num></div>
         ${ph.shape === "spheroid" ? `<div><label class="f">Aspect ratio c/a</label><input type="number" step="any" data-k="phases.${i}.size.aspect" data-num></div>` : ""}
@@ -1006,21 +1064,49 @@
       <label class="f">Name</label><input data-k="matrix.name">
       <label class="f">Material ${vd ? '<span class="u">gas: the phases form a packed bed or a porous solid</span>' : ""}</label><select data-mat="matrix">${materialOptions(mx.material_id)}</select>
       ${m && m.note ? `<div class="hint" style="margin-top:4px">${esc(m.note)}</div>` : ""}
-      <div class="hint" style="margin-top:4px">The matrix fills everything the phases leave free.</div>
+      <div class="hint" style="margin-top:4px">The matrix fills everything the phases ${(state.form.matrix_regions || []).length ? "and the further matrices " : ""}leave free.</div>
       <details class="more" open><summary>Properties · ${esc(m ? m.name : "")}</summary>${matSummary("matrix", mx)}</details>
+      <div class="subh">Further matrices in sections</div>
+      <button class="btn sm" data-act="addMR">${I("plus")}Add a matrix in a section</button>
+      <div class="hint">A second resin, an adhesive layer, a substrate: another matrix material fills a slab of the RVE (a section along x, y or z), e.g. epoxy A in the lower half and epoxy B with a filler in the upper half. Fillers are placed in the same sections on their own cards.</div>
+    </div></div>`;
+  }
+  // a section as text: "z 50–100 %"
+  function secTxt(sec) {
+    if (!sec || sec.mode === "whole") return "whole RVE";
+    return `${sec.axis || "z"} ${fmt(+sec.from || 0)}–${fmt(+(sec.to ?? 100))} %`;
+  }
+  // the fields of a section: axis, from, to (% of the edge)
+  function secFields(path) {
+    return `<div class="g3"><div><label class="f">Axis</label><select data-k="${path}.axis"><option value="z">z</option><option value="x">x</option><option value="y">y</option></select></div>
+        <div><label class="f">From <span class="u">% of edge</span></label><input type="number" min="0" max="100" step="any" data-k="${path}.from" data-num></div>
+        <div><label class="f">To <span class="u">% of edge</span></label><input type="number" min="0" max="100" step="any" data-k="${path}.to" data-num></div></div>`;
+  }
+  function matrixRegionEditor(k) {
+    const mr = state.form.matrix_regions[k], m = mat(mr.material_id);
+    mr.section = mr.section || { axis: "z", from: 50, to: 100 };
+    return `<div class="sec"><div class="sh" style="--ic:${matrixRegionColor(k, isVoid(mr))}">${I("matrix")}<span>${esc(mr.name)}</span><div class="grow"></div><span class="chip">matrix region</span>
+        <button class="btn sm danger" data-act="delMR" title="Delete">${I("delete")}</button></div><div class="sb">
+      <label class="f">Name</label><input data-k="matrix_regions.${k}.name">
+      <label class="f">Material</label><select data-mat="matrix_regions.${k}">${materialOptions(mr.material_id)}</select>
+      <div class="subh">Section</div>
+      ${secFields(`matrix_regions.${k}.section`)}
+      <div class="hint">This material takes the place of the main matrix from ${secTxt(mr.section)} of the RVE's edge; fillers inside the slab stay where they are (place a filler in the same section on its card to load only this part). All sections of a structure lie along one axis; matrix regions do not overlap.</div>
+      <details class="more"><summary>Properties · ${esc(m ? m.name : "")}</summary>${matSummary(`matrix_regions.${k}`, mr)}</details>
     </div></div>`;
   }
   function leftStructure() {
     const f = state.form, cols = phaseColors();
     if (state.sel >= f.phases.length) state.sel = Math.max(0, f.phases.length - 1);
     const rows = [`<div class="prow ${state.sel < 0 ? "on" : ""}" data-sel="-1"><i class="sw2" style="background:${isVoid(f.matrix) ? "#7fd3f7" : PHASE_COLORS[0]}"></i>${I("matrix")}<div class="nm">${esc(f.matrix.name)}<small>matrix${(mat(f.matrix.material_id) || {}).name && mat(f.matrix.material_id).name !== f.matrix.name ? " · " + esc(mat(f.matrix.material_id).name) : ""}${isVoid(f.matrix) ? " · gas" : ""}</small></div><span class="vf" id="vfMatrix"></span></div>`]
-      .concat(f.phases.map((p, i) => `<div class="prow ${i === state.sel ? "on" : ""}" data-sel="${i}"><i class="sw2" style="background:${cols[i]}"></i>${I(SHAPES[p.shape].icon)}<div class="nm">${esc(p.name)}<small>${SHAPES[p.shape].label.toLowerCase()} · ${p.shape === "network" ? "width" : "d"} ${p.size.d} ${u(p.size.unit)}${isVoid(p) ? " · void" : ""}</small></div><span class="vf">${fmt(p.fraction.value)} ${p.fraction.basis === "wt" ? "wt%" : "vol%"}</span></div>`));
+      .concat((f.matrix_regions || []).map((mr, k) => `<div class="prow ${state.sel === -2 - k ? "on" : ""}" data-sel="${-2 - k}"><i class="sw2" style="background:${matrixRegionColor(k, isVoid(mr))}"></i>${I("matrix")}<div class="nm">${esc(mr.name)}<small>matrix · ${secTxt(mr.section)}</small></div><span class="vf" id="vfMr${k}"></span></div>`))
+      .concat(f.phases.map((p, i) => `<div class="prow ${i === state.sel ? "on" : ""}" data-sel="${i}"><i class="sw2" style="background:${cols[i]}"></i>${I(SHAPES[p.shape].icon)}<div class="nm">${esc(p.name)}<small>${SHAPES[p.shape].label.toLowerCase()} · ${p.shape === "network" ? "width" : "d"} ${p.size.d} ${u(p.size.unit)}${isVoid(p) ? " · void" : ""}</small></div><span class="vf">${fmt(p.fraction.value)} ${p.fraction.basis === "wt" ? "wt%" : "vol%"}${(p.section || {}).mode === "section" ? ` <small>of ${secTxt(p.section)}</small>` : ""}</span></div>`));
     const add = PARTICLE_SHAPES.map((s) => `<button class="btn sm" data-add="${s}" title="Add ${SHAPES[s].label.toLowerCase()} phase">${I(SHAPES[s].icon)}</button>`).join("") +
       `<button class="btn sm" data-add="network" title="Add a bicontinuous network (any material)">${I("network")}</button>`;
     return `<div class="row wrap" style="margin-bottom:8px"><span class="hint">Add</span>${add}</div>
       <div class="hint" style="margin:-4px 0 8px">A phase is pore space when its material is a gas (Air) — any shape can be a pore. The matrix can be Air too: the phases then form a packed bed or a porous solid.</div>
       <div class="plist">${rows.join("")}</div>
-      ${state.sel < 0 ? matrixEditor() : f.phases.length ? phaseEditor(state.sel) : '<div class="note">No phases are defined; only the matrix is analysed. Phases are added with the buttons above or in the ribbon.</div>'}
+      ${state.sel <= -2 && (f.matrix_regions || [])[-2 - state.sel] ? matrixRegionEditor(-2 - state.sel) : state.sel < 0 ? matrixEditor() : f.phases.length ? phaseEditor(state.sel) : '<div class="note">No phases are defined; only the matrix is analysed. Phases are added with the buttons above or in the ribbon.</div>'}
       ${contactTableHTML()}
       <div class="sec"><div class="sh">${I("grains")}Gap between particles</div><div class="sb">
         <label class="f">Gap between particles <span class="u">voxels · 0 = they may touch</span></label>
@@ -1060,6 +1146,10 @@
     const vm = $("#vfMatrix"); if (vm) vm.textContent = `${fmt(100 * c.vf_matrix)} vol%`;
     let h = `<table class="grid"><tr><th>Region</th><th class="n">vol %</th><th class="n">wt %</th></tr>
       <tr><td>${esc(state.form.matrix.name)}</td><td class="n">${fmt(100 * c.vf_matrix)}</td><td class="n">${fmt(100 * c.wt_matrix)}</td></tr>`;
+    (c.matrix_regions || []).forEach((r, k) => {
+      h += `<tr><td>${esc(r.name)}</td><td class="n">${fmt(100 * r.vf)}</td><td class="n">${fmt(100 * r.wt)}</td></tr>`;
+      const el2 = $("#vfMr" + k); if (el2) el2.textContent = `${fmt(100 * r.vf)} vol%`;
+    });
     state.form.phases.forEach((p, i) => { h += `<tr><td>${esc(p.name)}</td><td class="n">${fmt(100 * c.vf[i])}</td><td class="n">${fmt(100 * c.wt[i])}</td></tr>`; });
     h += `</table><div class="hint" style="margin-top:5px">Density ${fmt(c.density)} g/cm³ · specific heat ${fmt(c.cp)} J/kg·K</div>`;
     el.innerHTML = h;
@@ -1098,6 +1188,7 @@
             <div class="hint" style="margin-top:4px">Grid size (computed): <b>${pl ? gridTxt(pl) : "—"}</b>${pl ? ` · ${fmt(nVox(pl) / 1e6)} M voxels · ${fmt(pl.h_um / LEN_UNITS[f.rve.h_unit || "um"])} ${LEN_LABEL[f.rve.h_unit || "um"]}/voxel` : ""}</div>
           <div class="hint">The grid size follows from the two: edge length ÷ voxel size, rounded to an even number of voxels. A grid-size variable remains in the DOE tab for convergence studies.</div>` : ""}
         <label class="chk"><input type="checkbox" data-k="rve.auto_enlarge"> Enlarge the RVE when the criteria are not met</label>
+        <div class="hint">Off by default: the RVE is used as entered, and the criteria below report whether it meets them.</div>
         <div class="g2"><div><label class="f">Realisations <span class="u">0 = level default</span></label><input type="number" min="0" max="10" data-k="rve.n_seeds" data-num></div><div><label class="f">Random seed</label><input type="number" min="0" data-k="rve.seed" data-num></div></div>
         <div class="hint">With two or more realisations, results carry a 95 % confidence interval.</div></div></div>
       <div class="sec"><div class="sh">${I("cube")}Recommended RVE</div><div class="sb">${tiles}${notes}${mem}</div></div>
@@ -1199,22 +1290,23 @@
   }
   function leftSimulation() {
     const o = state.form.options;
-    const dirs = o.directions || "xyz";
-    const general = `<div class="sec"><div class="sh">${I("solver")}Solver settings</div><div class="sb">
+    const dirs = o.directions || "z";
+    const pw = (state.planWarnings || []).length ? `<div class="note warn">${state.planWarnings.map(esc).join("<br>")}<br>These analyses cannot run with the present structure; untick them, or change the structure. The plan of the structure is shown on the Domain tab regardless.</div>` : "";
+    const general = `${pw}<div class="sec"><div class="sh">${I("solver")}Solver settings</div><div class="sb">
         <label class="f">Load directions</label><div class="row">${["z", "x", "y"].map((d) => `<label class="chk inline"><input type="checkbox" data-dir="${d}" ${dirs.includes(d) ? "checked" : ""}> ${d}${d === "z" ? " (through-thickness)" : ""}</label>`).join("")}</div>
-        <div class="hint">z is solved first; its fields, arrows and field lines are the ones kept for the 3D and 2D views.</div>
-        <label class="f">Solver</label><select data-k="options.backend"><option value="puma">NASA PuMA (default)</option><option value="puma_fv">NASA PuMA · FV with fixed faces (fast)</option><option value="builtin">Built-in periodic FV only</option></select>
+        <div class="hint">z only by default: one solve per property. x and y add the in-plane values and the anisotropy; z is solved first, and its fields, arrows and field lines are the ones kept for the 3D and 2D views. EMI uses an in-plane direction (x when only z is set), the direction of the field in a shielding layer.</div>
+        <label class="f">Solvers</label><select data-k="options.backend"><option value="puma">Built-in periodic FV and FANS, NASA PuMA for flow and diffusion (default)</option><option value="puma_fv">Conduction with NASA PuMA's FV (fixed end faces, comparison)</option><option value="builtin">Built-in solvers only (without NASA PuMA)</option></select>
         ${o.backend === "puma" || !o.backend ? `<label class="f">Conduction (k, σ, Dk, μ<sub>r</sub>)</label><select data-k="options.cond_method"><option value="fv">Periodic finite volume (default, more accurate)</option><option value="fe">PuMA periodic finite elements</option></select>
         <label class="chk"><span class="switch"><input type="checkbox" data-k="options.crosscheck"><span></span></span> Also solve with the other method and compare</label>
         <div class="hint">Each problem is solved once. On voxel grids the finite-volume result came 2–3× closer to converged reference values than the finite-element one, which conducts through voxels that touch only at an edge or corner (guide 7.2). The comparison doubles the conduction time and shows the discretisation error. Flow uses PuMA's finite elements.</div>` : ""}
         <label class="f">Elasticity and CTE</label><select data-k="options.elastic_method"><option value="fans">Voxel FE, FFT-preconditioned (FANS, default)</option><option value="puma">NASA PuMA FE (MINRES)</option><option value="fft">FFT, Moulinec–Suquet</option></select>
         <div class="hint">FANS solves the same voxel finite elements as PuMA (identical results) with conjugate gradients preconditioned by the exact inverse of a homogeneous reference medium. Its iteration count does not grow with the grid (about 60 for 10<sup>-6</sup>), where PuMA's MINRES needs more iterations the larger the grid.</div>
-        <label class="f">Resolution check</label><select data-k="options.resolution_check"><option value="auto">When particles touch at voxel level (default)</option><option value="on">Always</option><option value="off">Off</option></select>
-        <div class="hint">The same particles are drawn on a 1.5× finer grid and the conduction-type properties solved once more in the first direction; the result shows the change and a value extrapolated to fine voxels.</div>
+        <label class="chk"><span class="switch"><input type="checkbox" data-k="options.resolution_check"><span></span></span> Resolution check: solve again on a 1.5× finer grid</label>
+        <div class="hint">Off by default. When ticked, the same particles are drawn on a 1.5× finer grid and the conduction-type properties solved once more in the first direction (about 3.4× the cells); the result shows the change and a value extrapolated to fine voxels. Worth ticking when particles touch: a contact's area is set by the voxel size.</div>
         <label class="chk"><span class="switch"><input type="checkbox" data-k="options.reuse_runs"><span></span></span> Reuse the structure of a matching run</label>
         <div class="hint">A run keeps the structure it generated. Another run with the same geometry, grid and seed uses it instead of generating it again, and when nothing but the choice of analyses differs it continues that run: the analyses already there are kept and only the new ones are computed.</div>
         <label class="f">Independent solves</label><select data-k="options.parallel_solves"><option value="auto">Side by side on the run's cores (default)</option><option value="off">One after another</option></select>
-        <div class="hint">Each property, each load direction and each elastic load case is its own problem. A run splits its ${((state.settings || {}).threads) || 4} cores between these problems and the threads inside each one, whichever finishes first (13 problems on 16 cores: 8 side by side × 2 threads), within the free memory and longest first.</div>
+        <div class="hint">Each property, each load direction and each elastic load case is its own problem. A run splits its ${((state.settings || {}).threads) || 4} cores between these problems and the threads inside each one, whichever finishes first (13 problems on 16 cores: 8 side by side × 2 threads), within the free memory and longest first; when no problem is left waiting, the cores of each finished one go to those still running.</div>
         ${state.form.rve.film ? `${num("options.tol", "Tolerance", "")}<div class="hint">Area-specific resistance, sheet resistance and capacitance refer to the film thickness set on the Domain tab (${fmt(state.form.rve.T_um)} µm).</div></div></div>`
           : `<div class="g2">${num("options.tol", "Tolerance", "")}${num("options.thickness_mm", "Layer thickness", "mm")}</div>
         <div class="hint">The layer thickness converts effective properties into area-specific resistance, sheet resistance and capacitance.</div></div></div>`}`;
@@ -1312,7 +1404,7 @@
       }
     });
   }
-  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox)$/;
+  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|fraction\.value|size\.d|section\.(?:from|to))$/;
   function onField(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
@@ -1324,10 +1416,17 @@
     // the grid size follows from the edge length and the voxel size; an old
     // form's fixed grid size would otherwise override them silently
     if (/^rve\.(L_um|voxel_um)$/.test(el.dataset.k)) state.form.rve.N = null;
+    if (/\.section\.mode$/.test(el.dataset.k) && v === "section") {
+      const sec = getPath(state.form, el.dataset.k.replace(/\.mode$/, ""));
+      if (sec && (+sec.from || 0) <= 0 && (+(sec.to ?? 100)) >= 100) { sec.from = 0; sec.to = 50; }
+    }
     if (el.dataset.k === "rve.auto" && !v) manualFromPlan();
     if (el.dataset.ref !== undefined && el.dataset.ref !== "") el.classList.toggle("mod", Number(el.value) !== Number(el.dataset.ref));
     saveForm();
-    if (e.type === "change" && RERENDER.test(el.dataset.k)) { renderLeft(); renderRibbon(); }
+    // a choice (a select or a checkbox) can change what the panel shows - the
+    // polyhedron kind, a distribution, an option's own fields - so it redraws
+    // the panel at once; typed numbers redraw only for the keys in RERENDER
+    if (e.type === "change" && (RERENDER.test(el.dataset.k) || el.tagName === "SELECT" || el.type === "checkbox")) { renderLeft(); renderRibbon(); }
     if (el.id === "caseName") $("#cTitle").textContent = state.form.name;
     schedulePlan();
   }
@@ -1399,7 +1498,10 @@
     const prevMat = mat(entry.material_id);
     const prevName = entry.name;
     entry.material_id = id; entry.props = clone(m.props);
-    if (!prevName || (prevMat && prevName === prevMat.name) || path === "matrix") entry.name = m.name;
+    if (path.startsWith("matrix_regions")) {
+      // a matrix region keeps "· section" after its material's name
+      if (!prevName || (prevMat && (prevName === prevMat.name || prevName === `${prevMat.name} · section`))) entry.name = `${m.name} · section`;
+    } else if (!prevName || (prevMat && prevName === prevMat.name) || path === "matrix") entry.name = m.name;
     saveForm(); renderLeft(); renderRibbon(); schedulePlan(0);
   }
 
@@ -1411,7 +1513,9 @@
       try {
         const res = await api("POST", "/api/plan", state.form);
         if (my !== planSeq) return;
-        if (res.ok) { state.plan = res; state.lastPlan = res.plan; state.planErrors = []; } else { state.plan = null; state.planErrors = res.errors || ["Input error"]; }
+        const before = JSON.stringify(state.planWarnings || []);
+        if (res.ok) { state.plan = res; state.lastPlan = res.plan; state.planErrors = []; state.planWarnings = res.warnings || []; } else { state.plan = null; state.planErrors = res.errors || ["Input error"]; state.planWarnings = []; }
+        if (state.tab === "simulation" && JSON.stringify(state.planWarnings) !== before && !document.activeElement.closest("#lbody")) renderLeft();
       } catch (err) { state.plan = null; state.planErrors = [String(err.message || err)]; }
       renderComposition();
       if (state.tab === "domain" && !document.activeElement.closest("#lbody")) renderLeft();
@@ -1422,8 +1526,9 @@
   }
   function renderPlanInfo() {
     const pl = state.plan && state.plan.plan;
-    $("#sbGrid").textContent = pl ? `Grid ${gridTxt(pl)} · voxel ${fmt(pl.h_um)} µm · ${pl.film ? `film ${fmt(pl.L_um)} × ${fmt(pl.L_um)} × ${fmt(pl.T_um)} µm` : `RVE ${fmt(pl.L_um)} µm`} · ${pl.quality_label}` : (state.planErrors.length ? "Input error: " + state.planErrors[0] : "");
-    $("#sbGrid").style.color = state.planErrors.length ? "var(--red)" : "";
+    const warn = (state.planWarnings || []).length ? ` · ${state.planWarnings[0]}` : "";
+    $("#sbGrid").textContent = pl ? `Grid ${gridTxt(pl)} · voxel ${fmt(pl.h_um)} µm · ${pl.film ? `film ${fmt(pl.L_um)} × ${fmt(pl.L_um)} × ${fmt(pl.T_um)} µm` : `RVE ${fmt(pl.L_um)} µm`} · ${pl.quality_label}${warn}` : (state.planErrors.length ? "Input error: " + state.planErrors[0] : "");
+    $("#sbGrid").style.color = state.planErrors.length ? "var(--red)" : warn ? "var(--orange, #bc4c00)" : "";
     if (!pl) { $("#rveChecks").innerHTML = ""; $("#chkBadge").innerHTML = ""; return; }
     $("#rveChecks").innerHTML = checksRows(pl.checks);
     const bad = pl.checks.filter((c) => c.status !== "pass").length;
@@ -1846,7 +1951,7 @@
       lastGroup = s.group;
       return `${cap}<button data-sec="${s.id}" style="--ic:${s.color}">${I(s.icon)}<span>${esc(s.title)}</span></button>`;
     }).join("");
-    body.innerHTML = `<div class="rvhead">${I("logo")}<div class="grow"><h2>${esc(r.name)}</h2><div class="hint">${esc(r.created)} · ${secs(r.elapsed_s)} · ${r.dem_direct ? "particle dynamics, no voxel RVE" : `${backendTxt(r)} · PuMA ${esc((r.versions || {}).puma || "—")}`}</div></div>
+    body.innerHTML = `<div class="rvhead">${I("logo")}<div class="grow"><h2>${esc(r.name)}</h2><div class="hint">${esc(r.created)} · ${secs(r.elapsed_s)} · ${r.dem_direct ? "particle dynamics, no voxel RVE" : `${backendTxt(r)}${runMethods(r).puma ? ` · PuMA ${esc((r.versions || {}).puma || "—")}` : ""}`}</div></div>
         <div class="row wrap">${r.view === false ? "" : `<button class="btn sm" data-center="vis">${I("view3d")}3D view</button>`}<a class="btn sm primary" href="${jobUrl("report")}" target="_blank">${I("report")}Report</a><a class="btn sm" href="${jobUrl("download/bundle")}">${I("zip")}ZIP</a></div></div>` +
       secs_.map((s) => `<section class="rsec" id="sec-${s.id}"><h3 style="--ic:${s.color}">${I(s.icon)}${esc(s.title)}</h3>${s.html}</section>`).join("");
     requestAnimationFrame(() => { draws.forEach((d) => { try { d(); } catch (e) { console.warn(e); } }); });
@@ -1957,7 +2062,7 @@
     const statsTbl = stats ? tbl(["Region", key === "dielectric" || key === "magnetic" ? "Mean enhancement" : "Mean", "99th percentile", "Maximum"], stats.map((s) => [esc(s.label), fmt(s.mean), fmt(s.p99), fmt(s.max)])) : "";
     const labels = r.spec.labels.map((l) => l.name);
     const d0 = Object.keys(p.energy_frac || {})[0];
-    const colors = regionColors(r.spec.labels.map((l) => ({ kind: l.kind, material_id: l.material_id, void: +((l.props || {}).E ?? 1) <= 0 })));
+    const colors = regionColors(r.spec.labels.map((l) => ({ kind: l.kind, material_id: l.material_id, region: l.region, void: +((l.props || {}).E ?? 1) <= 0 })));
     const pol = polarFromTensor(p.tensor);
     if (d0) draws.push(() => CH.bars($("#" + id + "_e"), { labels, values: p.energy_frac[d0].map((v) => 100 * v), unit: " %", max: 100, colors }));
     if (pol.length) draws.push(() => CH.polar($("#" + id + "_p"), { series: pol, unit: p.unit }));
@@ -3440,6 +3545,15 @@
     // a large RVE whose particles are drawn in a corner region says so
     const rn = $("#vRegionNote");
     if (rn) { const t = V.regionNote ? V.regionNote() : ""; rn.textContent = t; rn.hidden = !t; }
+    // the same, on the 3D view itself: a smooth view of a corner region is
+    // otherwise easily taken for the whole RVE
+    const rb = $("#vRegionBanner");
+    if (rb) {
+      const sr = S.meta && S.meta.surface_region;
+      const on = !!sr && S.surfStyle !== "voxels" && S.particles;
+      rb.hidden = !on;
+      if (on) rb.textContent = `Smooth surfaces of a corner region only (${Number(sr.n_particles).toLocaleString("en-US")} of ${Number(sr.n_total).toLocaleString("en-US")} particles, outlined in orange) - Voxels shows the whole RVE. Results use the whole RVE.`;
+    }
     $("#vVolume").checked = S.volume;
     $("#vNetwork").checked = S.networkOn;
     $("#vShowX").checked = S.show.x; $("#vShowY").checked = S.show.y; $("#vShowZ").checked = S.show.z;
@@ -3811,7 +3925,7 @@
     $("#rbar").addEventListener("change", async (e) => {
       if (!e.target.matches("[data-rbfile]")) return;
       const f = e.target.files[0]; if (!f) return;
-      try { state.form = completeForm(JSON.parse(await f.text()), true); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); toast("The input has been opened."); }
+      try { state.form = completeForm(JSON.parse(await f.text()), "record"); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); toast("The input has been opened."); }
       catch (err) { toast("The JSON file could not be read: " + err.message); }
       e.target.value = "";
     });
@@ -4079,7 +4193,7 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
         const s = $("#sec-" + b.dataset.sec); if (s) s.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       else if (b.dataset.editspec !== undefined) {
-        try { const f = await api("GET", `/api/jobs/${state.resultJob}/download/spec`); delete f._limits; delete f.preview; state.form = completeForm(f, true); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); setTab("structure"); toast("The input of this run has been loaded."); }
+        try { const f = await api("GET", `/api/jobs/${state.resultJob}/download/spec`); delete f._limits; delete f.preview; state.form = completeForm(f, "record"); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); setTab("structure"); toast("The input of this run has been loaded."); }
         catch (err) { toast(err.message); }
       }
       else if (b.dataset.libmatrix) { state.form.matrix = matEntry(b.dataset.libmatrix); state.sel = -1; $("#modal").hidden = true; setTab("structure"); schedulePlan(0); saveForm(); toast("The matrix material has been changed."); }
@@ -4123,7 +4237,10 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
         localStorage.setItem("mpsim.fullwave_on", "1");
       }
     } catch (e) { }
-    try { state.form = saved ? completeForm(saved) :completeForm(state.presets.find((p) => p.id === "porous_filter").form); }
+    // without a form of its own the browser starts from a new case (epoxy with
+    // alumina spheres, thermal conductivity), not from a preset whose
+    // analyses would follow the user into a structure of their own
+    try { state.form = saved ? completeForm(saved, "draft") : defaultForm(); }
     catch (e) { state.form = completeForm(state.presets[0].form); }
     // the dock starts collapsed so the viewport gets the height; a run opens it
     try { toggleDock(localStorage.getItem("mpsim.dock") !== "0"); } catch (e) { toggleDock(true); }

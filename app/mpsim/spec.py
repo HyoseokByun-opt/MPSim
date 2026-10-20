@@ -284,6 +284,8 @@ def normalize(form):
     lib = M.library_by_id()
     try:
         _fill_from_library(form.get("matrix"), lib)
+        for mr in form.get("matrix_regions") or []:
+            _fill_from_library(mr, lib)
         for ph in form.get("phases") or []:
             _fill_from_library(ph, lib)
             if (ph.get("shell") or {}).get("enabled"):
@@ -372,6 +374,9 @@ def normalize(form):
             if layers > 1 and shape not in ("spheroid", "cylinder", "cuboid", "superellipsoid"):
                 raise ValueError(f"{where}: stacked layers need a platelet shape (spheroid, cylinder, cuboid or "
                                  f"superellipsoid - the stack lies along the particle's z axis)")
+            section = _section(ph.get("section"), where)
+            if section is not None and fraction["basis"] != "vol":
+                raise ValueError(f"{where}: a filler placed in a section is given in vol % of its section")
             phases.append({
                 "name": ph.get("name") or ph.get("material_name") or f"Phase {i+1}",
                 "material_id": ph.get("material_id"),
@@ -381,10 +386,29 @@ def normalize(form):
                 "overlap": bool(ph.get("overlap")) and shape != G.NETWORK,
                 "gap_frac": _num(ph.get("gap_frac", 0.0) or 0.0, f"minimum gap of {where}", 0.0, 1.0),
                 "shell": shell, "r_int": r_int, "r_contact": r_contact, "stack_layers": layers,
+                # a slab of the RVE the filler is confined to (None: the whole RVE);
+                # its content is then the vol % of that slab
+                "section": section,
             })
         except ValueError as e:
             errors.append(str(e))
     out["phases"] = phases
+
+    # ---- further matrices, each in a slab of the RVE ------------------------
+    mregs = []
+    for k, mr in enumerate(form.get("matrix_regions") or []):
+        where = f"Matrix region {k + 1} ({mr.get('name') or ''})"
+        try:
+            props = M.clean_props(mr.get("props") or {}, where=where)
+            sec = _section(mr.get("section") or {"axis": "z", "from": 50, "to": 100}, where)
+            if sec is None:
+                raise ValueError(f"{where}: a matrix region needs a section (the main matrix fills the rest)")
+            mregs.append({"name": mr.get("name") or f"Matrix {k + 2}", "material_id": mr.get("material_id"),
+                          "props": props, "void": props["E"] <= 0, "section": sec})
+        except ValueError as e:
+            errors.append(str(e))
+    out["matrix_regions"] = mregs
+    errors += _section_rules(phases, mregs)
 
     # ---- contact resistance between two different fillers ----------------
     # {"i-j": R} for phase indices i < j. A pair not listed takes the mean of
@@ -407,9 +431,17 @@ def normalize(form):
     # ---- fractions --------------------------------------------------------
     if mprops is not None and len(phases) == len(form.get("phases") or []):
         try:
-            fr = M.resolve_fractions(mprops, phases)
+            if mregs and any(ph["fraction"]["basis"] == "wt" for ph in phases):
+                raise ValueError("With matrix regions the contents are given in vol % (a wt % would need one "
+                                 "matrix density)")
+            # a filler in a section: its vol % of the section, as a share of the RVE
+            as_box = [dict(ph, fraction={"value": ph["fraction"]["value"] * _span(ph["section"]), "basis": "vol"})
+                      if ph["section"] else ph for ph in phases]
+            fr = M.resolve_fractions(mprops, as_box)
             for ph, v in zip(phases, fr["vf"]):
                 ph["vf"] = v
+            if mregs:
+                fr = _matrix_region_shares(fr, mprops, phases, mregs)
             out["composition"] = fr
         except ValueError as e:
             errors.append(str(e))
@@ -422,7 +454,8 @@ def normalize(form):
         "L_um": _num(rv.get("L_um"), "RVE edge length", lo=1e-9, allow_none=True) if not rv.get("auto", True) else None,
         "voxel_um": _num(rv.get("voxel_um"), "voxel size", lo=1e-9, allow_none=True) if not rv.get("auto", True) else None,
         "N": int(_num(rv.get("N"), "grid size", 8, 2048, allow_none=True) or 0) or None if not rv.get("auto", True) else None,
-        "auto_enlarge": bool(rv.get("auto_enlarge", True)),
+        # an RVE entered by hand is used as entered unless enlarging it is asked for
+        "auto_enlarge": bool(rv.get("auto_enlarge", False)),
         "n_seeds": int(_num(rv.get("n_seeds", 0) or 0, "number of realisations", 0, 10)),
         "seed": int(_num(rv.get("seed", 1) or 1, "random seed", 0, 2**31 - 1)),
         "stat_enlarge": bool(rv.get("stat_enlarge", False)),
@@ -471,7 +504,8 @@ def normalize(form):
         # z first: the fields, arrows, field lines and the resolution check
         # use the first direction, and through-thickness (z) is what a film or
         # a layer is most often asked for
-        "directions": [d for d in "zxy" if d in (opts.get("directions") or "xyz")] or ["z", "x", "y"],
+        # z only unless more are asked for: one solve per property
+        "directions": [d for d in "zxy" if d in (opts.get("directions") or "z")] or ["z"],
         # a run with the same geometry reuses the structure an earlier run
         # generated, and more analyses on the same inputs continue that run
         "reuse_runs": bool(opts.get("reuse_runs", True)),
@@ -506,9 +540,9 @@ def normalize(form):
         # report the difference (a discretisation check; doubles the cost)
         "crosscheck": bool(opts.get("crosscheck")) and opts.get("crosscheck") != "off",
         # re-solve the conduction-type properties (first direction) on the same
-        # particles drawn 1.5x finer: "auto" only when particles touch at voxel
-        # level (a gap the grid does not resolve), "on" always, "off" never
-        "resolution_check": opts.get("resolution_check") if opts.get("resolution_check") in ("on", "off") else "auto",
+        # particles drawn 1.5x finer - only when asked for ("on" or true); the
+        # "auto" of 5.4 and earlier (whenever particles touched) is "off"
+        "resolution_check": "on" if opts.get("resolution_check") in ("on", True) else "off",
         "delta_T": _num(opts.get("delta_T", 100.0), "temperature change ΔT", -1000.0, 1000.0),
         # thermal-stress maps: "constrained" holds the RVE at zero mean strain,
         # "free" lets it expand by alpha* dT so only the phase mismatch remains
@@ -654,6 +688,18 @@ def normalize(form):
         if not any(t.get("E_r") and t.get("alpha2") for t in [out["matrix"]["props"]] + [p["props"] for p in phases]):
             errors.append("Elasticity above Tg needs E above Tg and the CTE above Tg of at least one material "
                           "(Material tab, optional properties)")
+    if any(ph["section"] for ph in phases) or mregs:
+        if out["rve"]["film"]:
+            errors.append("Sections are slabs of a periodic cube; a thin film is not divided into sections in this "
+                          "version")
+        if out["rve"]["arrangement"] == "sheared":
+            errors.append("Sections are not combined with the arrangement after shear flow")
+        if (out["rve"].get("dispersion") or {}).get("mode", "uniform") != "uniform":
+            errors.append("Sections place the fillers themselves; they are not combined with an uneven dispersion "
+                          "(Domain tab)")
+        if "viscosity" in chosen:
+            errors.append("Viscosity takes one resin with an even suspension; it is not computed for sections or "
+                          "matrix regions")
     if out["rve"]["arrangement"] == "sheared":
         parts_ = [p for p in phases if p["shape"] != G.NETWORK and p["vf"] > 0]
         if out["rve"]["film"]:
@@ -695,8 +741,107 @@ def label_table(spec):
         if ph["shell"]:
             table.append({"kind": "shell", "phase": i, "name": f"{ph['name']} · {ph['shell']['name']}",
                           "material_id": ph["shell"].get("material_id"), "props": dict(ph["shell"]["props"])})
+    for k, mr in enumerate(spec.get("matrix_regions") or []):
+        table.append({"kind": "matrix", "phase": None, "region": k, "name": mr["name"],
+                      "material_id": mr.get("material_id"), "props": dict(mr["props"]), "section": mr["section"]})
     return table
 
 
 def label_values(table, key):
     return [float(t["props"][key]) for t in table]
+
+
+# ---- sections: a slab of the RVE ---------------------------------------------
+def _section(sec, where):
+    """{"axis", "from", "to"} in % of the edge -> {"axis", "from", "to"} as
+    fractions of it, or None for the whole RVE."""
+    if not sec or sec.get("mode", "section") == "whole":
+        return None
+    ax = sec.get("axis", "z")
+    if ax not in ("x", "y", "z"):
+        raise ValueError(f"{where}: the section's axis is x, y or z")
+    a = _num(sec.get("from", 0.0), f"start of the section of {where}", 0.0, 100.0) / 100.0
+    b = _num(sec.get("to", 100.0), f"end of the section of {where}", 0.0, 100.0) / 100.0
+    if b - a < 0.02:
+        raise ValueError(f"{where}: the section must end after it starts (at least 2 % of the edge)")
+    if a <= 0.0 and b >= 1.0:
+        return None
+    return {"axis": ax, "from": a, "to": b}
+
+
+def _span(sec):
+    return 1.0 if not sec else float(sec["to"]) - float(sec["from"])
+
+
+def _overlap(a, b):
+    return max(0.0, min(a["to"], b["to"]) - max(a["from"], b["from"]))
+
+
+def _section_rules(phases, mregs):
+    """What sections can do in this version: slabs along one axis; fillers in
+    sections or none of them in one, the sections of different fillers
+    either equal or apart; matrix regions apart."""
+    errs = []
+    secs = [ph["section"] for ph in phases if ph["section"]] + [m["section"] for m in mregs]
+    if not secs:
+        return errs
+    if len({s_["axis"] for s_ in secs}) > 1:
+        errs.append("Sections are slabs along one axis: every filler section and matrix region of a structure "
+                    "uses the same axis")
+    parts = [ph for ph in phases if ph["shape"] != G.NETWORK]
+    if any(ph["section"] for ph in phases if ph["shape"] == G.NETWORK):
+        errs.append("A network phase fills the whole RVE; it cannot be placed in a section")
+    elif any(ph["section"] for ph in parts) and any(ph["shape"] == G.NETWORK and float(ph["fraction"]["value"]) > 0
+                                                    for ph in phases):
+        errs.append("A network phase is not combined with fillers in sections in this version")
+    placed = [ph for ph in parts if float(ph["fraction"]["value"]) > 0]
+    if any(ph["section"] for ph in placed) and not all(ph["section"] for ph in placed):
+        errs.append("Place every filler in a section, or none: fillers over the whole RVE and fillers in "
+                    "sections are not packed together in this version (a section from 0 to 100 % is the "
+                    "whole RVE)")
+    groups = []
+    for ph in placed:
+        sec = ph["section"]
+        if sec and not any(sec == g for g in groups):
+            groups.append(sec)
+    for i in range(len(groups)):
+        for j in range(i + 1, len(groups)):
+            if _overlap(groups[i], groups[j]) > 1e-9:
+                errs.append("The sections of different fillers overlap; fillers that share a slab are given the "
+                            "same section")
+    for i in range(len(mregs)):
+        for j in range(i + 1, len(mregs)):
+            if _overlap(mregs[i]["section"], mregs[j]["section"]) > 1e-9:
+                errs.append(f"The matrix regions {mregs[i]['name']} and {mregs[j]['name']} overlap")
+    return errs
+
+
+def _matrix_region_shares(fr, mprops, phases, mregs):
+    """The composition with matrix regions: each region holds the matrix
+    voxels of its slab - its share of the RVE less the fillers inside it."""
+    out = dict(fr)
+    regs = []
+    for m in mregs:
+        sec = m["section"]
+        filler = 0.0
+        for ph, v in zip(phases, fr["vf"]):
+            if ph["section"]:
+                filler += v * _overlap(ph["section"], sec) / _span(ph["section"])
+            else:
+                filler += v * _span(sec)
+        regs.append(max(_span(sec) - filler, 0.0))
+    vf_main = fr["vf_matrix"] - sum(regs)
+    if vf_main < -1e-9:
+        raise ValueError("The matrix regions hold more matrix than the RVE has")
+    vf_main = max(vf_main, 0.0)
+    mass = [v * ph["props"]["rho"] for ph, v in zip(phases, fr["vf"])]
+    m_main = vf_main * mprops["rho"]
+    m_reg = [v * m["props"]["rho"] for v, m in zip(regs, mregs)]
+    density = m_main + sum(mass) + sum(m_reg)
+    cp = ((m_main * mprops["cp"] + sum(mm * ph["props"]["cp"] for mm, ph in zip(mass, phases))
+           + sum(mm * m["props"]["cp"] for mm, m in zip(m_reg, mregs))) / density if density > 0 else 0.0)
+    out.update(vf_matrix=vf_main, wt_matrix=(m_main / density if density > 0 else 0.0),
+               wt=[mm / density if density > 0 else 0.0 for mm in mass], density=density, cp=cp,
+               matrix_regions=[{"name": m["name"], "vf": v, "wt": (mm / density if density > 0 else 0.0)}
+                               for m, v, mm in zip(mregs, regs, m_reg)])
+    return out

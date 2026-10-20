@@ -171,7 +171,6 @@ def _table(head, rows):
 SHAPES = {"sphere": "sphere", "spheroid": "spheroid", "cylinder": "cylinder", "spherocylinder": "spherocylinder",
           "cube": "cube", "cuboid": "cuboid", "superellipsoid": "rounded box (superellipsoid)", "polyhedron": "polyhedron",
           "helix": "helix", "network": "bicontinuous network"}
-BACKENDS = {"puma": "NASA PuMA (periodic finite elements)", "puma_fv": "NASA PuMA (finite volumes)"}
 
 
 def write(out_dir, r):
@@ -181,7 +180,7 @@ def write(out_dir, r):
     P.append(f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{e(r['name'])} — analysis report</title>"
              f"<style>{CSS}</style></head><body><div class='wrap'>")
     P.append(f"<h1>{e(r['name'])}</h1><div class='sub'>MPSim {e(r['version'])} · {e(r['created'])} · "
-             f"elapsed {r['elapsed_s']:.0f} s · solver {e(BACKENDS.get(r['backend'], 'built-in verification solver'))}</div>")
+             f"elapsed {r['elapsed_s']:.0f} s · methods {e(_methods_short(r))}</div>")
     cc = r["check_counts"]
     P.append(f"<div class='note'>Verification: <span class='pass'>{cc['pass']} passed</span> · "
              f"<span class='warn'>{cc['warn']} warnings</span> · <span class='fail'>{cc['fail']} failed</span></div>")
@@ -197,6 +196,14 @@ def write(out_dir, r):
     mp = spec["matrix"]["props"]
     P.append(f"<tr><td>Matrix</td><td>{e(spec['matrix']['name'])}</td><td>—</td><td class='n'>{_fmt(100*r['composition']['labels'][0]['vf'])} vol%</td>"
              f"<td>k {_fmt(mp['k'])} W/m·K, σ {_fmt(mp['sigma'])} S/m, εr {_fmt(mp['eps_r'])}, E {_fmt(mp['E'])} GPa, α {_fmt(mp['alpha'])} ppm/K</td></tr>")
+    labs = r["composition"]["labels"]
+    for li, t in enumerate(spec["labels"]):
+        if t["kind"] == "matrix" and t.get("section"):
+            sec, mp_ = t["section"], t["props"]
+            P.append(f"<tr><td>Matrix region</td><td>{e(t['name'])}</td><td>{sec['axis']} {_fmt(100 * sec['from'])}–"
+                     f"{_fmt(100 * sec['to'])} % of the edge</td><td class='n'>{_fmt(100 * labs[li]['vf'])} vol%</td>"
+                     f"<td>k {_fmt(mp_['k'])} W/m·K, σ {_fmt(mp_['sigma'])} S/m, εr {_fmt(mp_['eps_r'])}, "
+                     f"E {_fmt(mp_['E'])} GPa, α {_fmt(mp_['alpha'])} ppm/K</td></tr>")
     for ph in spec["phases"]:
         sz = ph["size_um"]
         desc = f"{SHAPES[ph['shape']]}, d {_fmt(sz['d'])} µm" + (f", aspect ratio {_fmt(sz.get('aspect'))}" if "aspect" in sz else "") + \
@@ -204,7 +211,8 @@ def write(out_dir, r):
                _dist_text(ph["dist"], sz.get("d")) + \
                (f", orientation {ph['orientation']['mode']}" if ph["shape"] not in ("sphere", "network") else "") + \
                (f", shell {_fmt(ph['shell']['thickness_um'])} µm" if ph.get("shell") else "") + \
-               (f" × {_fmt(sz['ly'])} × {_fmt(sz['lz'])} µm" if "ly" in sz else "") +                (f", n {_fmt(sz['n'])}" if ph["shape"] == "superellipsoid" else "") +                (f", {sz.get('poly')}" if ph["shape"] == "polyhedron" else "") +                (f", coil {_fmt(sz['coil_d'])} µm, pitch {_fmt(sz['pitch'])} µm, {_fmt(sz['turns'])} turns" if ph["shape"] == "helix" else "") +                (f", R<sub>int</sub> {_fmt(ph['r_int'])} m²K/W" if ph.get("r_int") else "") +                (f", R<sub>c</sub> {_fmt(ph['r_contact'])} m²K/W" if ph.get("r_contact") else "")
+               (f" × {_fmt(sz['ly'])} × {_fmt(sz['lz'])} µm" if "ly" in sz else "") +                (f", n {_fmt(sz['n'])}" if ph["shape"] == "superellipsoid" else "") +                (f", {sz.get('poly')}" if ph["shape"] == "polyhedron" else "") +                (f", coil {_fmt(sz['coil_d'])} µm, pitch {_fmt(sz['pitch'])} µm, {_fmt(sz['turns'])} turns" if ph["shape"] == "helix" else "") +                (f", R<sub>int</sub> {_fmt(ph['r_int'])} m²K/W" if ph.get("r_int") else "") +                (f", R<sub>c</sub> {_fmt(ph['r_contact'])} m²K/W" if ph.get("r_contact") else "") +                (f", in {ph['section']['axis']} {_fmt(100 * ph['section']['from'])}–{_fmt(100 * ph['section']['to'])} % "
+                f"of the edge" if ph.get("section") else "")
         p = ph["props"]
         P.append(f"<tr><td>{'Pore phase' if ph['void'] else ('Network' if ph['shape'] == 'network' else 'Filler')}</td><td>{e(ph['name'])}</td><td>{desc}</td>"
                  f"<td class='n'>{_fmt(100*ph['vf'])} vol%</td><td>k {_fmt(p['k'])} W/m·K, σ {_fmt(p['sigma'])} S/m, εr {_fmt(p['eps_r'])}, "
@@ -631,30 +639,112 @@ def write(out_dir, r):
 
     # -------------------------------------------------------------- methods
     v = r["versions"]
-    P.append("<h2>6. Methods and open-source software</h2><ul>"
-             "<li>Microstructure: periodic voxel RVE. Non-overlapping spheres are packed by a force-biased algorithm followed by Monte-Carlo equilibration; "
-             "other shapes are placed by voxel random sequential addition; connected networks are thresholded band-limited Gaussian random fields.</li>"
-             "<li>Thermal and electrical conductivity, permittivity and magnetic permeability: NASA PuMA periodic Q1 finite elements (fully periodic boundaries). "
-             "The same RVE is additionally solved with an independent periodic finite-volume discretisation for cross-checking.</li>"
-             "<li>Elasticity and thermal expansion: NASA PuMA periodic Q1 finite-element elasticity with six unit strains and an isotropic thermal eigenstrain "
-             "load assembled from PuMA's element matrices.</li>"
-             "<li>Permeability: NASA PuMA Stokes finite elements on the open porosity. Diffusion: PuMA continuum tortuosity. Surface areas: PuMA marching-cubes isosurface. "
-             "Mean intercept length and structure-tensor orientation: PuMA.</li>"
-             "<li>Acoustic absorption: Johnson–Champoux–Allard model with parameters obtained from the RVE fields (flow resistivity from the permeability, "
-             "tortuosity from the formation factor, viscous length from the field-weighted surface integral, thermal length from the pore volume and surface).</li>"
-             "<li>Radiative extinction: NASA PuMA ray casting in the pore space; Rosseland diffusion approximation for the radiative conductivity.</li>"
-             "<li>Pore- and particle-size distributions, chord lengths, two-point correlation: PoreSpy (periodicity by wrap padding). "
-             "Porosimetry and capillary pressure: PoreSpy morphological drainage with Washburn pressures. Pore network: PoreSpy SNOW2.</li>"
-             "<li>EMI shielding: homogenised σ, εr and μr in a scikit-rf transmission-line model, cross-checked with an independent transfer-matrix solution.</li>"
-             "<li>3D rendering: PyVista (VTK) SurfaceNets surfaces and voxel-cell face contours; vtk.js in the browser viewer.</li></ul>")
+    P.append("<h2>6. Methods and open-source software</h2><ul>" + "".join(f"<li>{m}</li>" for m in _methods(r)) + "</ul>")
     P.append(_table(["Package", "Version"], [[e(k), e(str(val))] for k, val in v.items()]))
     P.append("<h3>References</h3><ul>" + "".join(f"<li><b>{e(a)}</b> — {e(b)}</li>" for a, b in REFS) + "</ul>")
-    P.append("<h3>Scope and limitations</h3><ul><li>Interfaces are perfectly bonded (with an optional interfacial thermal resistance for conduction). "
-             "Contact resistance, tunnelling and debonding are not modelled.</li>"
-             "<li>Properties are linear room-temperature representative values; temperature and frequency dependence and anisotropic crystal properties are not included.</li>"
-             "<li>EMI results assume quasi-static homogenisation and an infinite slab under normal incidence. Enclosures with apertures and seams require a full electromagnetic analysis.</li>"
-             "<li>Acoustic results assume a rigid frame; porosimetry assumes quasi-static invasion from the sample faces; ray casting assumes an opaque, diffusely absorbing solid.</li></ul>")
+    P.append("<h3>Scope and limitations</h3><ul><li>Interfaces are perfectly bonded, with an optional interfacial resistance "
+             "R<sub>int</sub> between a filler and the matrix and a contact resistance R<sub>c</sub> where particles touch "
+             "(thermal conduction); tunnelling and debonding are not modelled.</li>"
+             "<li>Properties are linear representative values; a temperature dependence is not included (the rubbery state "
+             "above Tg is an option of elasticity and thermal expansion). A filler's conductivity may be anisotropic in "
+             "its own axes (thermal conduction).</li>"
+             "<li>Touching particles meet on whole voxel faces, so the conductance of a contact depends on the voxel size; "
+             "the resolution check or a gap between particles bounds it.</li>"
+             "<li>EMI: the RVE is homogenised with complex admittivities frequency by frequency and the slab of the given "
+             "thickness evaluated under normal incidence; enclosures with apertures and seams need an analysis of their "
+             "own.</li>"
+             "<li>Acoustic results assume a rigid frame; porosimetry assumes quasi-static invasion from the sample faces; "
+             "ray casting assumes an opaque, diffusely absorbing solid.</li></ul>")
     P.append("<h3>Layer card (input for multilayer analyses)</h3><pre>" + e(json.dumps(r["layer_card"], ensure_ascii=False, indent=1)) + "</pre>")
     P.append("</div></body></html>")
     with open(os.path.join(out_dir, "report.html"), "w", encoding="utf-8") as fh:
         fh.write("".join(P))
+
+
+
+def _methods(r):
+    """The methods behind this run's numbers, from its own analyses and options."""
+    spec = r["spec"]
+    o = spec.get("options") or {}
+    an = set(spec.get("analyses") or [])
+    be = r.get("backend") or o.get("backend", "puma")
+    out = []
+    rz = (r.get("realisations") or [{}])[0]
+    gap = o.get("particle_gap_vox") or 0
+    out.append("Microstructure: periodic voxel RVE. Spheres are packed by growth with overlap relaxation followed by "
+               "Monte-Carlo equilibration, other shapes by voxel random sequential addition or rigid clump relaxation, "
+               "networks are thresholded Gaussian random fields. Particles never overlap; "
+               + (f"they are kept {gap:g} voxels apart where the loading allows." if gap else
+                  "they may touch, as in a filled compound.")
+               + (" Fillers or further matrices fill sections (slabs) of the RVE." if rz.get("sections")
+                  or spec.get("matrix_regions") else ""))
+    cond = an & {"thermal", "electrical", "dielectric", "magnetic", "emi", "moisture"}
+    if cond:
+        if be == "puma_fv":
+            m = "NASA PuMA finite volumes (the two faces normal to the gradient held at fixed potentials)"
+        elif o.get("cond_method") == "fe" and be != "builtin":
+            m = "NASA PuMA periodic Q1 finite elements (MINRES on all cores, relative-residual stop)"
+        else:
+            m = ("the built-in periodic finite volume: one value per voxel, harmonic-mean face conductances - PuMA's "
+                 "finite-volume operator with periodic instead of fixed faces - solved by conjugate gradients "
+                 "preconditioned with the exact inverse of a homogeneous periodic Laplacian (FFT), on all cores; "
+                 "interface and contact resistances act on the voxel faces")
+        out.append("Thermal and electrical conductivity, permittivity and magnetic permeability"
+                   + (", moisture diffusion" if "moisture" in an else "") + f": {m}."
+                   + (" Each problem is also solved with the other method for comparison." if o.get("crosscheck") else "")
+                   + (" The first direction is solved again on a 1.5x finer grid (resolution check)."
+                      if o.get("resolution_check") == "on" else ""))
+    if an & {"cte", "mechtest"}:
+        em = o.get("elastic_method", "fans")
+        m = {"fans": "FANS - PuMA's periodic Q1 voxel elements solved by conjugate gradients preconditioned with a "
+                     "homogeneous reference medium (FFT)",
+             "puma": "NASA PuMA periodic Q1 finite elements with a thermal eigenstrain load from PuMA's element matrices",
+             "fft": "the Moulinec-Suquet spectral scheme"}.get(em, em)
+        out.append(f"Elasticity and thermal expansion: {m}; six unit strains and an isotropic thermal load"
+                   + ("; the mechanical test from the same stiffness" if "mechtest" in an else "") + ".")
+    if "viscosity" in an:
+        out.append("Viscosity: lubrication particle dynamics of the fillers in the resin (Taichi); Krieger-Dougherty with "
+                   "the maximum packing fraction of the size distribution; the resin flow through the RVE with FANS "
+                   "where it applies.")
+    if an & {"permeability", "filtration", "acoustics"}:
+        out.append("Permeability: NASA PuMA Stokes finite elements on the open porosity (matrix-free product and MINRES "
+                   "on all cores, PuMA's own stopping test).")
+    if "tortuosity" in an:
+        out.append("Diffusion: NASA PuMA continuum tortuosity (finite volumes, CG on all cores).")
+    if "acoustics" in an:
+        out.append("Acoustic absorption: Johnson-Champoux-Allard model with parameters from the RVE fields.")
+    if "radiation" in an:
+        out.append("Radiative extinction: NASA PuMA ray casting in the pore space; Rosseland approximation for the "
+                   "radiative conductivity.")
+    if an & {"morphology", "porosimetry", "pore_network", "percolation", "grains"}:
+        out.append("Structure analyses: PoreSpy (size distributions, chords, porosimetry by morphological drainage, "
+                   "SNOW2 pore network), PuMA surface areas and mean intercept lengths.")
+    if "emi" in an:
+        out.append("EMI shielding: the RVE solved with complex admittivities σ + jωε at each frequency (COCG), the slab "
+                   "evaluated with a scikit-rf transmission-line model"
+                   + ("; an openEMS full-wave (FDTD) simulation of the RVE slab as a check" if (o.get("emi") or {}).get(
+                       "fullwave") else "") + ".")
+    out.append("Rendering: PyVista (VTK) for the report figures, vtk.js in the browser viewer.")
+    return out
+
+
+
+def _methods_short(r):
+    """One line: the solvers this run used (as the result page shows them)."""
+    spec = r["spec"]
+    o = spec.get("options") or {}
+    an = set(spec.get("analyses") or [])
+    be = r.get("backend") or o.get("backend", "puma")
+    out = []
+    if an & {"thermal", "electrical", "dielectric", "magnetic", "emi", "moisture"}:
+        out.append("conduction " + ("NASA PuMA FV" if be == "puma_fv" else "NASA PuMA FE"
+                                    if o.get("cond_method") == "fe" and be != "builtin" else "built-in periodic FV"))
+    if an & {"cte", "mechtest"}:
+        out.append("elasticity " + {"fans": "FANS", "puma": "NASA PuMA FE", "fft": "FFT"}.get(o.get("elastic_method", "fans"), ""))
+    if an & {"permeability", "filtration", "acoustics"}:
+        out.append("flow NASA PuMA Stokes FE")
+    if "tortuosity" in an:
+        out.append("diffusion NASA PuMA FV")
+    if "viscosity" in an:
+        out.append("viscosity particle dynamics")
+    return " · ".join(out) or "structure analyses"

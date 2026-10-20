@@ -58,6 +58,7 @@ solved matrix-free by preconditioned conjugate gradients.
 # no "from __future__ import annotations": Taichi reads the kernel argument
 # annotations (ti.template(), ti.f64) as objects
 import math
+import os
 import time
 
 import numpy as np
@@ -113,8 +114,14 @@ def init_backend(prefer="auto", log=None):
     last, why = None, None
     for name in order:
         try:
+            extra = {}
+            # the cores of the run (the queue sets NUMBA_NUM_THREADS); a
+            # flow-curve worker running beside others, its share of them
+            n_ti = os.environ.get("MPSIM_TI_THREADS") or os.environ.get("NUMBA_NUM_THREADS")
+            if name == "cpu" and n_ti and n_ti.strip().isdigit():
+                extra["cpu_max_num_threads"] = max(1, int(n_ti))
             ti.init(arch=getattr(ti, name), default_fp=ti.f64, default_ip=ti.i32, offline_cache=True,
-                    log_level=ti.ERROR, random_seed=0)
+                    log_level=ti.ERROR, random_seed=0, **extra)
             got = str(ti.lang.impl.current_cfg().arch).split(".")[-1]
             if name != "cpu" and got in ("x64", "arm64"):
                 ti.reset()                                     # no GPU: Taichi fell back silently
