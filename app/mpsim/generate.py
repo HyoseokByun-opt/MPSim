@@ -49,7 +49,7 @@ import time
 
 import numpy as np
 from scipy.spatial import cKDTree
-from numba import njit, prange
+from numba import get_num_threads, get_thread_id, njit, prange
 
 from . import geometry as G
 from . import shapes as SH
@@ -149,7 +149,93 @@ def _place(owner, phase_of, overlap_of, net_of, h, code, cx, cy, cz, R, P, plane
 @njit(cache=True)
 def _rsa(owner, phase_of, overlap_of, net_of, sep1_of, h, L, codes, Rs, Ps, planes, nfaces,
          gap_arr, phase_arr, target, count, n_placed, jammed, centers, placed_id,
-         pid, max_attempts, jam_limit, seed, buf, zwall=False, rho=None, rho_max=0.0):
+         pid, max_attempts, jam_limit, seed, buf, zwall=False, rho=None, rho_max=0.0, nb_max=64):
+    """_rsa_serial on all cores, with the same result: the trial positions
+    are drawn in the serial order (one random stream, as before) into a queue,
+    and the next `nb` of them are tested at once in parallel; the first that
+    fits is placed and the rest stay in the queue for the next particle, as
+    the serial loop would have drawn them. nb follows how many trials the
+    last particle needed (1 while the box is empty, up to nb_max: 4 per core)."""
+    np.random.seed(seed)
+    fails = np.zeros(target.shape[0], np.int64)
+    conflict = np.zeros(1, np.int64)
+    Lz = owner.shape[2] * h
+    qmax = 8192
+    q = np.empty((qmax, 3))
+    qh = 0
+    qt = 0
+    nb = 1
+    res = np.empty(nb_max, np.int64)
+    for m in range(codes.shape[0]):
+        ph = phase_arr[m]
+        if jammed[ph] or count[ph] >= target[ph]:
+            continue
+        ok = False
+        tried = 0
+        phase_of[pid] = ph
+        sep1 = sep1_of[ph] == 1
+        while tried < max_attempts and not ok:
+            nt = min(nb, max_attempts - tried)
+            if qh > qmax // 2:                       # keep the queue at the front
+                q[:qt - qh] = q[qh:qt]
+                qt -= qh
+                qh = 0
+            while qt - qh < nt:
+                cx = np.random.random() * L
+                cy = np.random.random() * L
+                cz = np.random.random() * Lz
+                if rho_max > 0.0:
+                    while np.random.random() * rho_max > _rho_at(rho, cx, cy, cz, L, Lz):
+                        cx = np.random.random() * L
+                        cy = np.random.random() * L
+                        cz = np.random.random() * Lz
+                q[qt, 0] = cx
+                q[qt, 1] = cy
+                q[qt, 2] = cz
+                qt += 1
+            if nt == 1:
+                res[0] = _fits(owner, phase_of, overlap_of, net_of, h, codes[m], q[qh, 0], q[qh, 1], q[qh, 2],
+                               Rs[m], Ps[m], planes, nfaces, gap_arr[m], 0.0, ph, pid, sep1, zwall)
+            else:
+                _fits_batch(owner, phase_of, overlap_of, net_of, h, codes[m], Rs[m], Ps[m], planes, nfaces,
+                            gap_arr[m], ph, pid, sep1, zwall, q[qh:qh + nt], nt, res)
+            s = -1
+            for t in range(nt):
+                if res[t] > 0:
+                    s = t
+                    break
+            if s < 0:
+                qh += nt
+                tried += nt
+                continue
+            cx, cy, cz = q[qh + s, 0], q[qh + s, 1], q[qh + s, 2]
+            qh += s + 1
+            tried += s + 1
+            w = _place(owner, phase_of, overlap_of, net_of, h, codes[m], cx, cy, cz, Rs[m], Ps[m],
+                       planes, nfaces, gap_arr[m], 0.0, ph, pid, sep1, True, conflict, buf, zwall)
+            count[ph] += w
+            n_placed[ph] += 1
+            centers[m, 0] = cx
+            centers[m, 1] = cy
+            centers[m, 2] = cz
+            placed_id[m] = pid
+            pid += 1
+            ok = True
+        nb = min(nb_max, max(1, tried))
+        if ok:
+            fails[ph] = 0
+        else:
+            phase_of[pid] = -1
+            fails[ph] += 1
+            if fails[ph] >= jam_limit:
+                jammed[ph] = True
+    return pid
+
+
+@njit(cache=True)
+def _rsa_serial(owner, phase_of, overlap_of, net_of, sep1_of, h, L, codes, Rs, Ps, planes, nfaces,
+                gap_arr, phase_arr, target, count, n_placed, jammed, centers, placed_id,
+                pid, max_attempts, jam_limit, seed, buf, zwall=False, rho=None, rho_max=0.0):
     """rho, rho_max: a relative particle density on a grid over the box (an
     uneven dispersion); a trial position is kept with probability
     rho / rho_max. rho_max = 0: uniform."""
@@ -542,9 +628,10 @@ def sample_positions(n, rho, L, Lz, rng):
 
 
 @njit(cache=True)
-def raster_all(owner, phase_of, overlap_of, net_of, h, codes, centers, Rs, Ps, planes, nfaces,
-               insets, phase_arr, pid0, buf, zwall=False):
-    """Rasterise a particle list without collision checks. Returns (next id, conflicts)."""
+def raster_all_serial(owner, phase_of, overlap_of, net_of, h, codes, centers, Rs, Ps, planes, nfaces,
+                      insets, phase_arr, pid0, buf, zwall=False):
+    """Rasterise a particle list without collision checks. Returns (next id, conflicts).
+    The reference of raster_all (the same on all cores)."""
     pid = pid0
     conflict = np.zeros(1, np.int64)
     for m in range(codes.shape[0]):
@@ -731,6 +818,441 @@ def _touch_track(owner, phase_of, overlap_of, net_of, pid0, n, h, centers, csum,
     return total
 
 
+# =========================================================================
+# parallel rasterisation (5.5.1): the results of the serial loops above to the
+# last bit, on all cores. The owner of a voxel is the particle of the lowest
+# number that covers it - the one that claims it first in the serial loop -
+# found plane by plane in parallel; the conflicts each particle meets are then
+# collected in parallel, in its own voxel order, and added up serially in the
+# order of the serial loop, so that every floating-point sum is formed exactly
+# as before. The serial functions stay as the reference (self-test)
+# =========================================================================
+@njit(cache=True)
+def _bbox(code, R, P, planes, nfaces, gap, h, cx, cy, cz):
+    """The voxel index range a particle's box covers, as _place computes it."""
+    hx, hy, hz = SH.local_half_extents(code, P, planes, nfaces)
+    hx += gap
+    hy += gap
+    hz += gap
+    ex = abs(R[0, 0]) * hx + abs(R[1, 0]) * hy + abs(R[2, 0]) * hz
+    ey = abs(R[0, 1]) * hx + abs(R[1, 1]) * hy + abs(R[2, 1]) * hz
+    ez = abs(R[0, 2]) * hx + abs(R[1, 2]) * hy + abs(R[2, 2]) * hz
+    return (int(math.floor((cx - ex) / h - 0.5)), int(math.ceil((cx + ex) / h - 0.5)),
+            int(math.floor((cy - ey) / h - 0.5)), int(math.ceil((cy + ey) / h - 0.5)),
+            int(math.floor((cz - ez) / h - 0.5)), int(math.ceil((cz + ez) / h - 0.5)))
+
+
+@njit(parallel=True, cache=True)
+def _bboxes(h, codes, centers, Rs, Ps, planes, nfaces, bb):
+    for m in prange(codes.shape[0]):
+        b = _bbox(codes[m], Rs[m], Ps[m], planes, nfaces, 0.0, h, centers[m, 0], centers[m, 1], centers[m, 2])
+        for q in range(6):
+            bb[m, q] = b[q]
+
+
+@njit(parallel=True, cache=True)
+def _owner_min(owner, phase_of, overlap_of, phase_arr, h, codes, centers, Rs, Ps, planes, nfaces, insets, bb,
+               pid0, zwall, wall_events, flag):
+    """Every free voxel a particle covers goes to the particle of the lowest
+    number among those covering it; one x plane of the grid per task, the
+    particles in their order within it. A particle that finds a voxel taken
+    (by a lower number: it is the later one, as in the serial loop) - or, with
+    wall_events, a voxel beyond a film face - is flagged: only those have
+    conflicts to collect."""
+    n0, n1, n2 = owner.shape
+    n = codes.shape[0]
+    for ii in prange(n0):
+        for m in range(n):
+            i0 = bb[m, 0]
+            i1 = bb[m, 1]
+            i = i0 + (ii - i0) % n0
+            if i > i1:
+                continue
+            cx, cy, cz = centers[m, 0], centers[m, 1], centers[m, 2]
+            R = Rs[m]
+            P = Ps[m]
+            code = codes[m]
+            ins = insets[m]
+            pid = pid0 + m
+            phase = phase_arr[m]
+            same_ok = overlap_of[phase] == 1
+            while i <= i1:
+                dx = (i + 0.5) * h - cx
+                for j in range(bb[m, 2], bb[m, 3] + 1):
+                    dy = (j + 0.5) * h - cy
+                    jj = j % n1
+                    for k in range(bb[m, 4], bb[m, 5] + 1):
+                        dz = (k + 0.5) * h - cz
+                        lx = R[0, 0] * dx + R[0, 1] * dy + R[0, 2] * dz
+                        ly = R[1, 0] * dx + R[1, 1] * dy + R[1, 2] * dz
+                        lz = R[2, 0] * dx + R[2, 1] * dy + R[2, 2] * dz
+                        if not SH.inside_local(code, lx, ly, lz, P, planes, nfaces, ins):
+                            continue
+                        if zwall and (k < 0 or k >= n2):
+                            if wall_events:
+                                flag[m] = 1
+                            continue
+                        kk = k % n2
+                        o = owner[ii, jj, kk]
+                        if o == 0:
+                            owner[ii, jj, kk] = pid
+                        elif o != pid and not (same_ok and phase_of[o] == phase):
+                            flag[m] = 1
+                i += n0
+
+
+@njit(parallel=True, cache=True)
+def _owner_rec(owner, phase_of, overlap_of, phase_arr, h, codes, centers, Rs, Ps, planes, nfaces, insets, bb,
+               pid0, zwall, wall_events, rec, nrec):
+    """_owner_min that also writes down the conflicts as it meets them. When a
+    particle finds a voxel of its plane taken, the owner is final - the lower
+    numbers of that plane came first, and no other task writes the plane - so
+    the conflict is the one the serial loop meets. Each thread writes
+    (particle, owner or -1, i, j, k) to its own rows of rec; nrec counts them
+    (beyond the rows: rec was too small, the caller collects them again)."""
+    n0, n1, n2 = owner.shape
+    n = codes.shape[0]
+    cap = rec.shape[1]
+    for ii in prange(n0):
+        tid = get_thread_id()
+        for m in range(n):
+            i0 = bb[m, 0]
+            i1 = bb[m, 1]
+            i = i0 + (ii - i0) % n0
+            if i > i1:
+                continue
+            cx, cy, cz = centers[m, 0], centers[m, 1], centers[m, 2]
+            R = Rs[m]
+            P = Ps[m]
+            code = codes[m]
+            ins = insets[m]
+            pid = pid0 + m
+            phase = phase_arr[m]
+            same_ok = overlap_of[phase] == 1
+            while i <= i1:
+                dx = (i + 0.5) * h - cx
+                for j in range(bb[m, 2], bb[m, 3] + 1):
+                    dy = (j + 0.5) * h - cy
+                    jj = j % n1
+                    for k in range(bb[m, 4], bb[m, 5] + 1):
+                        dz = (k + 0.5) * h - cz
+                        lx = R[0, 0] * dx + R[0, 1] * dy + R[0, 2] * dz
+                        ly = R[1, 0] * dx + R[1, 1] * dy + R[1, 2] * dz
+                        lz = R[2, 0] * dx + R[2, 1] * dy + R[2, 2] * dz
+                        if not SH.inside_local(code, lx, ly, lz, P, planes, nfaces, ins):
+                            continue
+                        o = 0
+                        if zwall and (k < 0 or k >= n2):
+                            if not wall_events:
+                                continue
+                            o = -1
+                        else:
+                            kk = k % n2
+                            o = owner[ii, jj, kk]
+                            if o == 0:
+                                owner[ii, jj, kk] = pid
+                                continue
+                            if o == pid or (same_ok and phase_of[o] == phase):
+                                continue
+                        p = nrec[tid]
+                        if p < cap:
+                            rec[tid, p, 0] = m
+                            rec[tid, p, 1] = o
+                            rec[tid, p, 2] = i
+                            rec[tid, p, 3] = j
+                            rec[tid, p, 4] = k
+                        nrec[tid] = p + 1
+                i += n0
+
+
+@njit(cache=True)
+def _conflicts_of(owner, phase_of, overlap_of, h, code, cx, cy, cz, R, P, planes, nfaces, ins, phase, pid,
+                  b, zwall, wall_events, rec, p):
+    """The conflicts one particle meets, in its voxel order: a voxel another
+    particle owns (owner number, i, j, k) and, with wall_events, a voxel
+    beyond a film face (-1, i, j, k). Written to rec from row p when rec has
+    rows; returns the count."""
+    n0, n1, n2 = owner.shape
+    same_ok = overlap_of[phase] == 1
+    c = 0
+    fill = rec.shape[0] > 0
+    for i in range(b[0], b[1] + 1):
+        dx = (i + 0.5) * h - cx
+        ii = i % n0
+        for j in range(b[2], b[3] + 1):
+            dy = (j + 0.5) * h - cy
+            jj = j % n1
+            for k in range(b[4], b[5] + 1):
+                dz = (k + 0.5) * h - cz
+                lx = R[0, 0] * dx + R[0, 1] * dy + R[0, 2] * dz
+                ly = R[1, 0] * dx + R[1, 1] * dy + R[1, 2] * dz
+                lz = R[2, 0] * dx + R[2, 1] * dy + R[2, 2] * dz
+                if not SH.inside_local(code, lx, ly, lz, P, planes, nfaces, ins):
+                    continue
+                if zwall and (k < 0 or k >= n2):
+                    if wall_events:
+                        if fill:
+                            rec[p + c, 0] = -1
+                            rec[p + c, 1] = i
+                            rec[p + c, 2] = j
+                            rec[p + c, 3] = k
+                        c += 1
+                    continue
+                o = owner[ii, jj, k % n2]
+                if o == pid:
+                    continue
+                if same_ok and phase_of[o] == phase:
+                    continue
+                if fill:
+                    rec[p + c, 0] = o
+                    rec[p + c, 1] = i
+                    rec[p + c, 2] = j
+                    rec[p + c, 3] = k
+                c += 1
+    return c
+
+
+@njit(parallel=True, cache=True)
+def _conflict_count(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces, insets, phase_arr,
+                    bb, pid0, zwall, wall_events, ids, cnt):
+    none = np.zeros((0, 4), np.int64)
+    for t in prange(ids.shape[0]):
+        m = ids[t]
+        cnt[m] = _conflicts_of(owner, phase_of, overlap_of, h, codes[m], centers[m, 0], centers[m, 1],
+                               centers[m, 2], Rs[m], Ps[m], planes, nfaces, insets[m], phase_arr[m], pid0 + m,
+                               bb[m], zwall, wall_events, none, 0)
+
+
+@njit(parallel=True, cache=True)
+def _conflict_fill(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces, insets, phase_arr,
+                   bb, pid0, zwall, ids, start, rec):
+    for t in prange(ids.shape[0]):
+        m = ids[t]
+        _conflicts_of(owner, phase_of, overlap_of, h, codes[m], centers[m, 0], centers[m, 1], centers[m, 2],
+                      Rs[m], Ps[m], planes, nfaces, insets[m], phase_arr[m], pid0 + m, bb[m], zwall, True,
+                      rec, start[t])
+
+
+@njit(cache=True)
+def _track_replay(rec_m, rec, h, centers, pid0, csum, ccnt, fsum, tsum, size, fac, floor, loser, L0, Lz0,
+                  zwall):
+    """The sums of _raster_track from the conflicts, added in its order."""
+    total = 0
+    for r in range(rec.shape[0]):
+        m = rec_m[r]
+        o = rec[r, 0]
+        i, j, k = rec[r, 1], rec[r, 2], rec[r, 3]
+        cx, cy, cz = centers[m, 0], centers[m, 1], centers[m, 2]
+        dx = (i + 0.5) * h - cx
+        dy = (j + 0.5) * h - cy
+        dz = (k + 0.5) * h - cz
+        if o < 0:
+            total += 1
+            csum[m, 0] += dx
+            csum[m, 1] += dy
+            csum[m, 2] += dz
+            ccnt[m] += 1
+            loser[m] += 1
+            wz = 1.0 if k < 0 else -1.0
+            fsum[m, 2] += wz
+            tsum[m, 0] += dy * wz
+            tsum[m, 1] -= dx * wz
+            continue
+        total += 1
+        om = o - pid0
+        csum[m, 0] += dx
+        csum[m, 1] += dy
+        csum[m, 2] += dz
+        ccnt[m] += 1
+        ox = (i + 0.5) * h - centers[om, 0]
+        oy = (j + 0.5) * h - centers[om, 1]
+        oz = (k + 0.5) * h - centers[om, 2]
+        ox -= L0 * math.floor(ox / L0 + 0.5)
+        oy -= L0 * math.floor(oy / L0 + 0.5)
+        if not zwall:
+            oz -= Lz0 * math.floor(oz / Lz0 + 0.5)
+        csum[om, 0] += ox
+        csum[om, 1] += oy
+        csum[om, 2] += oz
+        ccnt[om] += 1
+        can_m = fac[m] * 0.98 >= floor
+        can_o = fac[om] * 0.98 >= floor
+        if can_m != can_o:
+            if can_m:
+                loser[m] += 1
+            else:
+                loser[om] += 1
+        elif not can_m:
+            loser[m] += 1
+            loser[om] += 1
+        elif size[m] < 0.67 * size[om]:
+            loser[m] += 1
+        elif size[om] < 0.67 * size[m]:
+            loser[om] += 1
+        elif m > om:
+            loser[m] += 1
+        else:
+            loser[om] += 1
+        ux = cx - centers[om, 0]
+        uy = cy - centers[om, 1]
+        uz = cz - centers[om, 2]
+        ux -= L0 * math.floor(ux / L0 + 0.5)
+        uy -= L0 * math.floor(uy / L0 + 0.5)
+        if not zwall:
+            uz -= Lz0 * math.floor(uz / Lz0 + 0.5)
+        un = math.sqrt(ux * ux + uy * uy + uz * uz)
+        if un < 1e-12:
+            ux, uy, uz, un = 1.0, 0.0, 0.0, 1.0
+        ux /= un
+        uy /= un
+        uz /= un
+        fsum[m, 0] += ux
+        fsum[m, 1] += uy
+        fsum[m, 2] += uz
+        tsum[m, 0] += dy * uz - dz * uy
+        tsum[m, 1] += dz * ux - dx * uz
+        tsum[m, 2] += dx * uy - dy * ux
+        fsum[om, 0] -= ux
+        fsum[om, 1] -= uy
+        fsum[om, 2] -= uz
+        tsum[om, 0] -= oy * uz - oz * uy
+        tsum[om, 1] -= oz * ux - ox * uz
+        tsum[om, 2] -= ox * uy - oy * ux
+    return total
+
+
+_REC_ROWS = [1 << 16]                # rows per thread for the conflicts (grows with the need)
+
+
+def _conflict_records(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces, insets, ph_arr,
+                      pid0, zwall, wall_events):
+    """Owner map (lowest number first) and every particle's conflicts in the
+    serial order: (particle of each row, rows (owner or -1, i, j, k)).
+    One pass when the conflicts fit the threads' rows (then sorted into the
+    serial order: particle, then i, j, k); otherwise the owner map is kept and
+    the conflicts are counted and collected particle by particle."""
+    n = len(codes)
+    bb = np.empty((n, 6), np.int64)
+    _bboxes(float(h), codes, centers, Rs, Ps, planes, nfaces, bb)
+    nt = get_num_threads()
+    rows = _REC_ROWS[0]
+    rec5 = np.empty((nt, rows, 5), np.int64)
+    nrec = np.zeros(nt, np.int64)
+    _owner_rec(owner, phase_of, overlap_of, ph_arr, float(h), codes, centers, Rs, Ps, planes, nfaces, insets, bb,
+               pid0, zwall, wall_events, rec5, nrec)
+    total = int(nrec.sum())
+    # rows for the next call: room for all of them in one thread, within
+    # about 192 MB for all threads (more conflicts take the second path)
+    _REC_ROWS[0] = int(min(max(1 << 16, 2 * total), max(1 << 16, 192_000_000 // (40 * nt))))
+    if nrec.max() <= rows:
+        allr = np.concatenate([rec5[t, :nrec[t]] for t in range(nt)]) if total else np.zeros((0, 5), np.int64)
+        order = np.lexsort((allr[:, 4], allr[:, 3], allr[:, 2], allr[:, 0]))
+        allr = allr[order]
+        return np.ascontiguousarray(allr[:, 0]), np.ascontiguousarray(allr[:, 1:])
+    del rec5
+    # more than the rows held: the owner map is final, collect particle by particle
+    cnt = np.zeros(n, np.int64)
+    _conflict_count(owner, phase_of, overlap_of, float(h), codes, centers, Rs, Ps, planes, nfaces, insets, ph_arr,
+                    bb, pid0, zwall, wall_events, np.arange(n, dtype=np.int64), cnt)
+    ids = np.flatnonzero(cnt).astype(np.int64)
+    start = np.zeros(len(ids), np.int64)
+    if len(ids):
+        start[1:] = np.cumsum(cnt[ids])[:-1]
+    rec = np.empty((int(cnt.sum()), 4), np.int64)
+    if len(ids):
+        _conflict_fill(owner, phase_of, overlap_of, float(h), codes, centers, Rs, Ps, planes, nfaces, insets,
+                       ph_arr, bb, pid0, zwall, ids, start, rec)
+    return np.repeat(ids, cnt[ids]), rec
+
+
+def raster_track_par(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces,
+                     phase_arr, pid0, csum, ccnt, fsum, tsum, size, fac, floor, loser, buf, zwall=False):
+    """_raster_track on all cores: the same owner map, sums and count."""
+    n = len(codes)
+    phase_of[pid0:pid0 + n] = phase_arr
+    rec_m, rec = _conflict_records(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces,
+                                   np.zeros(n), phase_arr, pid0, zwall, True)
+    return int(_track_replay(rec_m, rec, float(h), centers, pid0, csum, ccnt, fsum, tsum, size, fac, float(floor),
+                             loser, owner.shape[0] * float(h), owner.shape[2] * float(h), zwall))
+
+
+def raster_all_par(owner, phase_of, overlap_of, net_of, h, codes, centers, Rs, Ps, planes, nfaces,
+                   insets, phase_arr, pid0, buf, zwall=False):
+    """raster_all on all cores: (next id, conflicts), the same owner map."""
+    n = len(codes)
+    if n == 0:
+        return pid0, 0
+    phase_of[pid0:pid0 + n] = phase_arr
+    bb = np.empty((n, 6), np.int64)
+    _bboxes(float(h), codes, centers, Rs, Ps, planes, nfaces, bb)
+    ins = np.asarray(insets, float)
+    flag = np.zeros(n, np.int8)
+    _owner_min(owner, phase_of, overlap_of, phase_arr, float(h), codes, centers, Rs, Ps, planes, nfaces, ins, bb,
+               pid0, zwall, False, flag)
+    cnt = np.zeros(n, np.int64)
+    _conflict_count(owner, phase_of, overlap_of, float(h), codes, centers, Rs, Ps, planes, nfaces, ins, phase_arr,
+                    bb, pid0, zwall, False, np.flatnonzero(flag).astype(np.int64), cnt)
+    return pid0 + n, int(cnt.sum())
+
+
+@njit(cache=True)
+def _fits(owner, phase_of, overlap_of, net_of, h, code, cx, cy, cz, R, P, planes, nfaces, gap, inset, phase,
+          pid, sep1, zwall):
+    """_place(check=True) without writing: the free voxels the particle would
+    take (0: none - the serial loop then tries again), or -1 on a collision."""
+    n0, n1, n2 = owner.shape
+    b = _bbox(code, R, P, planes, nfaces, gap, h, cx, cy, cz)
+    n_in = 0
+    same_ok = overlap_of[phase] == 1
+    for i in range(b[0], b[1] + 1):
+        dx = (i + 0.5) * h - cx
+        ii = i % n0
+        for j in range(b[2], b[3] + 1):
+            dy = (j + 0.5) * h - cy
+            jj = j % n1
+            for k in range(b[4], b[5] + 1):
+                dz = (k + 0.5) * h - cz
+                lx = R[0, 0] * dx + R[0, 1] * dy + R[0, 2] * dz
+                ly = R[1, 0] * dx + R[1, 1] * dy + R[1, 2] * dz
+                lz = R[2, 0] * dx + R[2, 1] * dy + R[2, 2] * dz
+                if not SH.inside_local(code, lx, ly, lz, P, planes, nfaces, -gap if gap > 0.0 else inset):
+                    continue
+                if zwall and (k < 0 or k >= n2):
+                    return -1
+                kk = k % n2
+                o = owner[ii, jj, kk]
+                if o != 0 and o != pid:
+                    if not (same_ok and phase_of[o] == phase):
+                        return -1
+                if gap > 0.0:
+                    if not SH.inside_local(code, lx, ly, lz, P, planes, nfaces, inset):
+                        continue
+                if sep1:
+                    for nb in range(26):
+                        ni = (ii + _NB26[nb, 0]) % n0
+                        nj = (jj + _NB26[nb, 1]) % n1
+                        nk = (kk + _NB26[nb, 2]) % n2
+                        o = owner[ni, nj, nk]
+                        if o != 0 and o != pid:
+                            po = phase_of[o]
+                            if net_of[po] == 0 and not (same_ok and po == phase):
+                                return -1
+                if owner[ii, jj, kk] == 0:
+                    n_in += 1
+    return n_in
+
+
+@njit(parallel=True, cache=True)
+def _fits_batch(owner, phase_of, overlap_of, net_of, h, code, R, P, planes, nfaces, gap, phase, pid, sep1, zwall,
+                cand, nc, res):
+    for t in prange(nc):
+        res[t] = _fits(owner, phase_of, overlap_of, net_of, h, code, cand[t, 0], cand[t, 1], cand[t, 2], R, P,
+                       planes, nfaces, gap, 0.0, phase, pid, sep1, zwall)
+
+
+raster_all = raster_all_par
+
+
 def _rotate_rows(Rs, idx, axis, ang):
     """Turn the particles idx by `ang` (radians, per particle) about `axis`
     (world, per particle): every row of Rs[idx] (a local axis in the world) is
@@ -818,8 +1340,8 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
         fs = np.zeros((n, 3))
         ts = np.zeros((n, 3))
         lo = np.zeros(n, np.int64)
-        c_ = int(_raster_track(owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces,
-                               ph_arr, pid0, cs, cc, fs, ts, size, fac, SHRINK_FLOOR, lo, buf, zwall))
+        c_ = raster_track_par(owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces,
+                              ph_arr, pid0, cs, cc, fs, ts, size, fac, SHRINK_FLOOR, lo, buf, zwall)
         lost[0] = lo
         return c_, cs, cc, fs, ts
 
@@ -2077,21 +2599,65 @@ def rasterize(N, h, info, phases, nz=None):
     return lut[owner]
 
 
-def rasterize_owner(N, h, info, phases, nz=None, offset_um=0.0):
+def film_from_particles(N, h, nz, phases, parts, planes, poly_meta, want_contact_faces=False, log=None):
+    """A film of N x N x nz voxels (x, y periodic, z between two walls) drawn
+    from a given particle list. Returns
+    (labels, info) as generate() does: the phases' fractions and surfaces,
+    the contacts, the particle list."""
+    log = log or (lambda *a: None)
+    t0 = time.time()
+    info = {"particles": parts, "planes": planes, "film": True, "T_um": nz * h}
+    owner, phase_of = rasterize_owner(N, h, info, phases, nz)
+    overlap_of, net_of, _ = _phase_arrays(phases, "keep")
+    shape = owner.shape
+    nvox = int(np.prod(shape))
+    cf = np.zeros(shape, np.uint8)
+    n_contact = int(contact_faces(owner, phase_of, net_of, cf, False))
+    n_touch = touching_pairs(owner, phase_of, net_of, False)
+    lut = np.zeros(len(phase_of), np.uint8)
+    valid = phase_of >= 0
+    lut[valid] = (phase_of[valid] + 1).astype(np.uint8)
+    lut[0] = 0
+    labels = lut[owner]
+    del owner
+    counts = np.bincount(labels.ravel(), minlength=len(phases) + 1)
+    pinfo = []
+    for i, ph in enumerate(phases):
+        sel = parts["phase"] == i
+        m = labels == (i + 1)
+        faces = sum(int(np.count_nonzero(m != np.roll(m, -1, axis=ax))) for ax in range(3))
+        pinfo.append({"name": ph.get("name", f"phase {i+1}"), "vf_target": float(ph["vf"]),
+                      "vf_voxel": float(counts[i + 1] / nvox), "n_particles": int(sel.sum()), "jammed": False,
+                      "surface_true_um2": (float(sum(SH.surface(int(c), P, poly_meta)
+                                                     for c, P in zip(parts["codes"][sel], parts["P"][sel])))
+                                           if sel.any() else None),
+                      "surface_voxel_um2": faces * h * h, "octant_cov": 0.0})
+    info.update({"phases": pinfo, "contact_faces": n_contact, "touching_pairs": n_touch,
+                 "contact_mask": cf if want_contact_faces else None, "contacts_mode": "keep", "contacts_removed": 0,
+                 "voxel_conflicts": 0, "N": N, "h_um": h, "L_um": N * h, "nz": nz, "poly_meta": poly_meta,
+                 "seconds": time.time() - t0})
+    if n_touch:
+        log(f"  particles touch at {n_touch:,} voxel neighbour pairs, {n_contact:,} of them across a face")
+    return labels, info
+
+
+def rasterize_owner(N, h, info, phases, nz=None, offset_um=0.0, shape=None):
     """The particle each voxel belongs to (0 where none is), and the phase of
     every particle number, on a grid of N x N x nz voxels of size h. Network
     phases have no particle list and stay 0 here. The viewer draws a separate
     surface per particle from this, so that touching particles of one phase
     are not merged into one skin.
     offset_um: the particles are drawn this much towards the origin, so that
-    a coarse grid samples the points another grid's pick does."""
+    a coarse grid samples the points another grid's pick does.
+    shape: a periodic box of these voxels (a compressed structure) in place
+    of N x N x nz."""
     parts = info["particles"]
     planes, nfaces = info["planes"]
     n = len(parts["codes"])
     film = bool(info.get("film"))
     if nz is None:
         nz = N if not film else int(round(info["T_um"] / h))
-    owner = np.zeros((N, N, nz), np.int32)
+    owner = np.zeros(tuple(int(v) for v in shape) if shape is not None else (N, N, nz), np.int32)
     phase_of = np.full(n + 2, -1, np.int32)
     if n:
         overlap_of, net_of, _ = _phase_arrays(phases, "keep")
@@ -2526,7 +3092,8 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             placed_id = np.zeros(len(codes), np.int64)
             pid = _rsa(owner, phase_of, overlap_of, net_of, sep1_of, float(h), float(L), codes, Rs, Ps,
                        planes, nfaces, gap, ph_arr, target, count, n_placed, jammed, centers, placed_id,
-                       pid, 400, 25, int(rng.integers(1 << 30)), buf, film, rho_arr, rho_max)
+                       pid, 400, 25, int(rng.integers(1 << 30)), buf, film, rho_arr, rho_max,
+                       4 * get_num_threads())
             ok = placed_id > 0
             for key, arr in (("codes", codes), ("P", Ps), ("R", Rs), ("centers", centers), ("phase", ph_arr)):
                 rsa_parts[key].append(arr[ok])

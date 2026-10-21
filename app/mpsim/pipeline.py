@@ -227,7 +227,7 @@ def contacts_key(opts):
     return c
 
 
-def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispersion=None):
+def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispersion=None, pressed=None):
     """What identifies one generated realisation: the generator's own inputs
     (phase names aside), the grid, the contact handling and the seed - and,
     for the arrangement after shear flow, what it depends on (shear_key), and
@@ -244,6 +244,8 @@ def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispe
         key["psd"] = 2
     if sheared:
         key["sheared"] = sheared                 # only a sheared one: random packings keep their keys
+    if pressed:
+        key["pressed"] = pressed
     if dispersion and dispersion.get("mode", "uniform") != "uniform":
         key["dispersion"] = {k: v for k, v in dispersion.items() if k != "peak_vf"}
     blob = json.dumps(key, sort_keys=True, default=float)
@@ -272,6 +274,185 @@ def shear_key(spec):
     return {"strain": int(rv["shear_strain"]), "stress": float(f"{mu * vo['gd_ref']:.10g}"),
             "dem": {k: do[k] for k in ("roughness_nm", "hmin_nm", "mu_f", "bound_nm", "adhesion_mJ_m2")},
             "A": [float(f"{a:.10g}") for a in hks]}
+
+
+def press_key(spec):
+    """What the arrangement after compression depends on (None for any
+    other): the compression, its rate and lateral condition, and the resins'
+    viscosities."""
+    rv = spec["rve"]
+    if rv.get("arrangement") != "pressed":
+        return None
+    vo = spec["options"]["viscosity"]
+    return {"v": 3, "compression": float(rv["press_compression"]), "rate": float(rv["press_rate"]),
+            "lateral": rv.get("press_lateral", "xy"), "steps": rv.get("press_steps"),
+            "model": vo["model"], "mu_regions": [m.get("mu_pas") for m in spec.get("matrix_regions") or []]}
+
+
+def press_viscosities(spec, rate):
+    """Viscosity per label of the table for the compression (None where the
+    label is no resin): the main resin by its flow model, a matrix region by
+    its viscosity before cure (else the main resin's), both at the equivalent
+    shear rate of the compression, sqrt(3) times its strain rate."""
+    vo = spec["options"]["viscosity"]
+    gd = math.sqrt(3.0) * float(rate)
+    mu_main = float(VI.matrix_flow(vo["model"], [gd])[0])
+    mregs = spec.get("matrix_regions") or []
+    out = []
+    for t in spec["labels"]:
+        if t["kind"] != "matrix":
+            out.append(None)
+        elif t.get("region") is None:
+            out.append(mu_main)
+        else:
+            m_ = mregs[t["region"]].get("mu_pas") if t["region"] < len(mregs) else None
+            out.append(float(m_) if m_ else mu_main)
+    return out, gd
+
+
+def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop):
+    """The RVE compressed along z while its resin flows (solvers/compress.py):
+    a periodic three-dimensional creeping-flow solve per step on the structure
+    as it deforms - the resins with their viscosities, the spheres rigid, the
+    pores compressible - and the sides free to expand or held. Returns
+    (labels, info) of the compressed periodic box (nx x ny x nz voxels of the
+    same size), the resin of every voxel (info['region_map']) and the
+    compression's record (info['pressed'])."""
+    from .solvers import compress as CP
+    rv = spec["rve"]
+    table = spec["labels"]
+    N, h = int(plan["N"]), float(plan["h_um"])
+    phases = spec["phases"]
+    gph = ginfo_phases_spec(spec)
+    # the resin of every voxel at the start: the main matrix, the matrix
+    # regions in their slabs (also under the particles); the pores as they
+    # were generated (they flow with the resin and close)
+    base = np.zeros((N, N, N), np.uint8)
+    for li, t in enumerate(table):
+        if t["kind"] == "matrix" and t.get("section"):
+            sec = t["section"]
+            ax = "xyz".index(sec["axis"])
+            k0, k1 = int(round(sec["from"] * N)), int(round(sec["to"] * N))
+            sl = [slice(None)] * 3
+            sl[ax] = slice(k0, k1)
+            base[tuple(sl)] = li
+    pore = np.zeros(len(table), bool)
+    for i, ph in enumerate(phases):
+        if ph["void"]:
+            pore[i + 1] = True
+            base[gen_labels == i + 1] = i + 1
+    parts = ginfo["particles"]
+    solid = np.array([not phases[int(p)]["void"] for p in parts["phase"]], bool)
+    sub = {k: np.asarray(v)[solid] for k, v in parts.items() if k in ("codes", "P", "R", "phase", "axes", "centers")}
+    rad = np.asarray(sub["P"], float)[:, 0] if len(sub["codes"]) else np.zeros(0)
+    planes, nfaces = ginfo["planes"]
+    overlap_of, net_of, _ = GEN._phase_arrays(gph, "keep")
+    n_sp = len(rad)
+    ext = (2.0 * float(rad.max()) if n_sp else h)
+    buf = np.empty(int(math.ceil(ext / h) + 6) ** 3, np.int64)
+    sph_label = (np.asarray(sub["phase"], np.int64) + 1) if n_sp else np.zeros(0, np.int64)
+    slab_of = np.zeros(n_sp + 2, np.int64)
+    slab_of[1:n_sp + 1] = sph_label
+
+    def raster(shape, centres):
+        owner = np.zeros(shape, np.int32)
+        if n_sp:
+            phase_of = np.full(n_sp + 2, -1, np.int32)
+            GEN.raster_all(owner, phase_of, overlap_of, net_of, float(h), sub["codes"].astype(np.int64),
+                           np.ascontiguousarray(centres), np.ascontiguousarray(sub["R"]),
+                           np.ascontiguousarray(sub["P"]), planes, nfaces, np.zeros(n_sp),
+                           sub["phase"].astype(np.int64), 1, buf, False)
+        return owner, slab_of
+    rate = float(rv["press_rate"])
+    comp = float(rv["press_compression"]) / 100.0
+    lateral = rv.get("press_lateral", "xy")
+    mu, gd = press_viscosities(spec, rate)
+    name = "Structure generation · compression"
+    side = {"xy": "x and y free", "x": "x free, y held", "none": "x and y held"}[lateral]
+    detail = f"{n_sp} spheres, compressed {100 * comp:.0f} % along z ({side}), 3D periodic flow"
+    event("stage", name=name, detail=detail, progress=prog.sub(0.2))
+    resins = [(table[li]["name"], m) for li, m in enumerate(mu) if m is not None and (base == li).any()]
+    log(f"  compression: the RVE ({N * h:.4g} µm) shortened by {100 * comp:.0f} % along z at {rate:g} 1/s, {side}; "
+        f"{n_sp} rigid spheres; resins " + ", ".join(f"{n} {m:.4g} Pa·s" for n, m in resins)
+        + f" (at the equivalent shear rate {gd:.3g} 1/s)"
+        + (f"; pores {100 * float(np.mean(pore[base])):.1f} vol%" if pore.any() else ""))
+
+    def cb(step, n, c, szz):
+        event("stage", name=name, detail=f"{detail} · step {step} of {n}, compression {100 * c:.1f} %",
+              progress=prog.sub(0.2 + 0.8 * min(step / max(n, 1), 0.999)))
+    cpr = CP.Compress(base, h, mu, pore, np.ascontiguousarray(sub["centers"], float) if n_sp else np.zeros((0, 3)),
+                      rad, sph_label, raster, lateral=lateral, compression=comp, rate=rate,
+                      steps=rv.get("press_steps"), log=log, should_stop=should_stop, progress=cb)
+    out = cpr.run()
+    shape = tuple(out["shape"])
+    owner, fld = out["owner"], out["field"]
+    # the generator's labels of the compressed box: the spheres, the pores
+    lab = np.zeros(shape, np.uint8)
+    for i, ph in enumerate(phases):
+        if ph["void"]:
+            lab[fld == i + 1] = i + 1
+    inside = owner > 0
+    lab[inside] = slab_of[owner[inside]].astype(np.uint8)
+    region_map = np.where(np.isin(fld, [li for li, m in enumerate(mu) if m is not None]), fld, 0).astype(np.uint8)
+    newp = {k: v.copy() for k, v in sub.items()}
+    newp["centers"] = np.ascontiguousarray(out["centres_grid"]) if n_sp else np.zeros((0, 3))
+    want_cf = ginfo.get("contact_mask") is not None
+    cf = np.zeros(shape, np.uint8)
+    phase_of = np.full(n_sp + 2, -1, np.int32)
+    phase_of[1:n_sp + 1] = sub["phase"].astype(np.int32) if n_sp else phase_of[1:1]
+    n_contact = int(GEN.contact_faces(owner, phase_of, net_of, cf, True)) if n_sp else 0
+    n_touch = GEN.touching_pairs(owner, phase_of, net_of, True) if n_sp else 0
+    nvox = int(np.prod(shape))
+    counts = np.bincount(lab.ravel(), minlength=len(phases) + 1)
+    pinfo = []
+    for i, ph in enumerate(phases):
+        m = lab == (i + 1)
+        faces = sum(int(np.count_nonzero(m != np.roll(m, -1, axis=ax))) for ax in range(3))
+        old = dict(ginfo["phases"][i])
+        old.update({"vf_voxel": float(counts[i + 1] / nvox), "surface_voxel_um2": faces * h * h,
+                    "n_particles": int(np.count_nonzero(newp["phase"] == i)) if n_sp else 0})
+        if ph["void"]:
+            old["surface_true_um2"] = None
+        pinfo.append(old)
+    shares = {}
+    for li, rr in out["regions"].items():
+        shares[table[li]["name"]] = {"volume0_um3": rr["volume0_um3"], "volume_um3": rr["volume_um3"][-1],
+                                     "share0": rr["volume0_um3"] / float(N * h) ** 3,
+                                     "share": rr["volume_um3"][-1] / float(np.prod(out["L_um"])),
+                                     "strain": rr["strain"], "strain_all": rr["strain_all"],
+                                     "share_all": rr["volume_all_um3"][-1] / float(np.prod(out["L_um"])),
+                                     "vm_Pa": rr["vm_Pa"]}
+    s = out["series"]
+    eta_c = -s["sigma_zz_Pa"][-1] / rate
+    info = {"particles": newp, "planes": ginfo["planes"], "poly_meta": ginfo.get("poly_meta"), "film": False,
+            "shape": list(shape), "N": shape[0], "h_um": h, "L_um": shape[0] * h, "region_map": region_map,
+            "phases": pinfo, "contact_faces": n_contact, "touching_pairs": n_touch,
+            "contact_mask": cf if want_cf else None, "contacts_mode": "keep", "contacts_removed": 0,
+            "voxel_conflicts": 0, "route": ginfo["route"] + f", then compressed {100 * comp:.0f} % along z ({side}; "
+                                                            f"3D periodic resin flow, {out['steps']} steps)",
+            "seconds": float(ginfo.get("seconds", 0.0)) + out["seconds"]}
+    info["pressed"] = {
+        "compression": comp, "rate_1_s": rate, "lateral": lateral, "steps": out["steps"], "seconds": out["seconds"],
+        "box0_um": [N * h] * 3, "box_um": [n * h for n in shape], "shape": list(shape), "gd_eq": gd,
+        "series": s, "regions": shares, "pore_fraction": out["pore_fraction"],
+        "n_spheres": n_sp, "crossed_resin": out["crossed"], "max_overlap": out["max_overlap"],
+        "eta_compression_Pa_s": eta_c, "resins": {n: m for n, m in resins},
+        "frames": out["frames"], "von_mises": out["von_mises"], "pressure": out["pressure"]}
+    log("  compression done: box " + " × ".join(f"{v:.4g}" for v in info["pressed"]["box_um"]) + " µm "
+        f"({' × '.join(str(n) for n in shape)} voxels); axial stress {-s['sigma_zz_Pa'][-1]:.4g} Pa at the end "
+        f"(compression viscosity {eta_c:.4g} Pa·s); "
+        + "; ".join(f"{k}: {100 * v['share0']:.1f} -> {100 * v['share']:.1f} % of the box, strain with its particles "
+                    f"z {v['strain_all'][2]:+.3f}, x {v['strain_all'][0]:+.3f}, y {v['strain_all'][1]:+.3f} (the resin "
+                    f"alone z {v['strain'][2]:+.3f}), von Mises in the resin {v['vm_Pa'][-1]:.3g} Pa"
+                    for k, v in shares.items())
+        + (f"; pores {100 * out['pore_fraction'][0]:.1f} -> {100 * out['pore_fraction'][1]:.1f} vol%" if pore.any() else "")
+        + f"; {out['crossed']} of {n_sp} spheres now surrounded by another resin ({out['seconds']:.0f} s)")
+    return lab, info
+
+
+def ginfo_phases_spec(spec):
+    """The generator's phase dicts of a spec (the press redraws its film with them)."""
+    return [dict(ph) for ph in _generator_phases(spec)]
 
 
 def shear_packing(spec, log, event, prog, should_stop):
@@ -843,7 +1024,7 @@ def _dem_from_rve(spec, solid, ginfo, max_spheres=256):
     packing is quick and validated), a film, shells, or a box shorter than
     1.9 times the longest particle."""
     from . import shapes as SH
-    if not ginfo or ginfo.get("film") or not ginfo.get("particles"):
+    if not ginfo or ginfo.get("film") or ginfo.get("shape") or not ginfo.get("particles"):
         return None
     phs = [spec["phases"][i] for i in solid]
     if all(p["shape"] == "sphere" for p in phs) or any(p.get("shell") for p in phs):
@@ -1672,6 +1853,15 @@ def surface_owner(viewer, N, Nz, h, ginfo, gen_phases):
     surface. A grid that does not divide the box is drawn on the solver's
     grid and picked."""
     ss = viewer.surf_stride
+    shape = ginfo.get("shape")
+    if shape:
+        # a compressed box: its own shape, periodic in all three directions
+        if ss == 1 or any(n % ss for n in shape):
+            own, _ = GEN.rasterize_owner(N, h, ginfo, gen_phases, shape=shape)
+            return own
+        own, _ = GEN.rasterize_owner(N, h * ss, ginfo, gen_phases, shape=[n // ss for n in shape],
+                                     offset_um=V.pick_offset_um(ss, h))
+        return own
     if ss == 1 or N % ss or (Nz and Nz % ss):
         own, _ = GEN.rasterize_owner(N, h, ginfo, gen_phases, Nz)
         return own
@@ -1730,8 +1920,14 @@ def build_labels(spec, gen_labels, info, h_um):
     parts = info["particles"]
     planes, nfaces = info["planes"]
     notes = []
+    rmap = info.get("region_map")
+    if rmap is not None:
+        # compressed: each matrix voxel takes the resin that flowed there
+        free = lab == 0
+        lab[free] = rmap[free]
+        notes.append("the matrix regions are where the resins flowed in the compression")
     # further matrices: the matrix voxels of their slabs (sections)
-    for li, t in enumerate(table):
+    for li, t in enumerate(table if rmap is None else []):
         if t["kind"] == "matrix" and t.get("section"):
             sec = t["section"]
             ax = "xyz".index(sec["axis"])
@@ -2119,6 +2315,8 @@ EXTRAP_MAX = 0.10          # largest change on the finer grid that is extrapolat
 def _fine_grid(spec, ginfo, gen_phases, N, h, n_max):
     """The same particles drawn on a 1.5x finer grid: {labels, N, h, nz}, or
     the reason it cannot be drawn."""
+    if ginfo.get("shape"):
+        return "the compressed structure is not redrawn on another grid (its resins and pores flowed there)"
     Nf = int(round(1.5 * N / 2.0)) * 2
     if n_max and Nf > n_max:
         return f"the finer grid ({Nf}³) would exceed the grid limit {n_max}³"
@@ -3521,15 +3719,17 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         first = r == 0
         seed = spec["rve"]["seed"] + 1000 * r
         sheared = shear_key(spec)
+        pressed = press_key(spec)
         prog.stage("Structure generation", f"realisation {r+1}/{seeds} · {_grid(N, Nz)} voxels"
-                   + (f" · sheared to a strain of {sheared['strain']}" if sheared else ""),
-                   units=5.0 if sheared else 1.0)
+                   + (f" · sheared to a strain of {sheared['strain']}" if sheared else "")
+                   + (f" · pressed by {pressed['compression']:g} %" if pressed else ""),
+                   units=5.0 if (sheared or pressed) else 1.0)
         # the contact faces are kept whenever a contact resistance is set, not
         # only when this run solves heat: the structure stays the same one for
         # every selection of analyses
         want_cf = wants_contact_faces(spec)
         skey = structure_key(gen_phases, plan, contacts_key(opts), seed, want_cf, sheared=sheared,
-                             dispersion=spec["rve"].get("dispersion"))
+                             dispersion=spec["rve"].get("dispersion"), pressed=pressed)
         got = load_structure([out_dir] + list(reuse.get("from") or []), skey) if opts.get("reuse_runs", True) else None
         if got is not None:
             gen_labels, ginfo, src = got
@@ -3544,10 +3744,17 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                              want_contact_faces=want_cf, nz=Nz,
                                              skin=skin, shear=shear_packing(spec, log, event, prog, should_stop),
                                              dispersion=spec["rve"].get("dispersion"))
+            if pressed:
+                gen_labels, ginfo = press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop)
             try:
                 save_structure(out_dir, skey, gen_labels, ginfo, ginfo.get("contact_mask"))
             except Exception as e:                                   # noqa: BLE001
                 log(f"   (the structure could not be kept for later runs: {e})")
+        if pressed:
+            # the compressed structure is a periodic box of nx x ny x nz
+            # voxels of the same size: every solve from here takes its shape
+            shp = [int(v) for v in ginfo["shape"]]
+            plan.update(N=shp[0], shape=shp, L_um=shp[0] * h, box_um=[v * h for v in shp])
         labels, area_ratio, notes = build_labels(spec, gen_labels, ginfo, h)
         contact_mask = ginfo.pop("contact_mask", None)
         aniso_th = (thermal_aniso(spec, labels, ginfo, gen_phases, h, log if first else None)
@@ -3567,6 +3774,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "shrunk": ginfo.get("shrunk"),
                  "pack_scale": ginfo.get("pack_scale"),
                  "sheared": ginfo.get("sheared"),
+                 "pressed": ({k: v for k, v in ginfo["pressed"].items() if k not in ("frames", "von_mises", "pressure")}
+                             if ginfo.get("pressed") else None),
                  "dispersion": ginfo.get("dispersion"),
                  "sections": ginfo.get("sections"),
                  "phases": ginfo["phases"], "vf_labels": vf_labels.tolist(),
@@ -3586,6 +3795,17 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             if prev is not None:
                 # the fields of the kept analyses stay in the view
                 viewer.adopt(keep=lambda key: True)
+            if (ginfo.get("pressed") or {}).get("frames"):
+                try:
+                    viewer.add_press_anim(ginfo["pressed"], table)
+                    pr_ = ginfo["pressed"]
+                    viewer.add_field("press_vm", pr_["von_mises"], "von Mises stress in the resins at the end of the compression",
+                                     "Pa", "Compression", in_matrix=True,
+                                     note=f"viscous stress at {pr_['rate_1_s']:g} 1/s; spheres and pores are left out")
+                    viewer.add_field("press_p", pr_["pressure"], "Pressure at the end of the compression", "Pa",
+                                     "Compression", diverging=True)
+                except Exception as e:                               # noqa: BLE001
+                    log(f"   (the compression could not be written for the viewer: {e})")
             # The surfaces are built before any solve, so that every field is
             # read onto them from the solver's grid when it is added (at the
             # end only the browser volume's block means were left).

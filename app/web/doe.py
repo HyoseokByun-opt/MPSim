@@ -124,36 +124,29 @@ class DOEStore:
 
     # -------------------------------------------------------------- create
     def create(self, owner, payload, queue, runs_dir, normalize, folder=None, case_name="",
-               estimate=None):
-        """Expand the design, validate every case and queue the runs."""
+               estimate=None, plan=None):
+        """Expand the design, validate every case and queue the runs.
+
+        The cases take the Domain tab of the base as it is - thin film and
+        thickness, accuracy level, arrangement, dispersion, realisations. The
+        grid: the voxel size is the Domain's (a manual grid as entered, an
+        automatic one as planned for the base) unless it is a parameter of the
+        study; the RVE edge is the Domain's for every case ('fixed') or each
+        case's own, planned for its particles at the Domain's level
+        ('adaptive'), on that voxel size."""
         base = copy.deepcopy(payload.get("form") or {})
         base.pop("_limits", None)
-        # the grid of the cases: adaptive (each case planned for its own
-        # particles, as a single run) or one fixed grid for every case, so
-        # that only the varied parameters differ between them
-        grid = payload.get("grid") or {}
-        if grid.get("mode") == "fixed":
-            try:
-                L_um, h_um = float(grid["L_um"]), float(grid["voxel_um"])
-            except (KeyError, TypeError, ValueError):
-                raise ValueError("A fixed grid needs the RVE edge length and the voxel size")
-            if not (L_um > 0 and h_um > 0 and L_um / h_um >= 8):
-                raise ValueError("A fixed grid needs an RVE edge of at least 8 voxels")
-            rv = base.setdefault("rve", {})
-            rv.update(auto=False, L_um=L_um, voxel_um=h_um, auto_enlarge=False, N=None)
-            if grid.get("seeds"):
-                rv["n_seeds"] = int(grid["seeds"])
-            grid = {"mode": "fixed", "L_um": L_um, "voxel_um": h_um, "N": int(round(L_um / h_um))}
-        else:
-            # adaptive: every case planned for its own particles at an accuracy
-            # level - the one set in Domain, or Fast / Standard / Accurate for the
-            # whole study (the automatic grid then decides voxel and RVE size)
-            q = grid.get("quality")
-            grid = {"mode": "adaptive"}
-            if q in ("fast", "standard", "accurate"):
-                rv = base.setdefault("rve", {})
-                rv.update(auto=True, quality=q, N=None)
-                grid["quality"] = q
+        g = payload.get("grid") or {}
+        edge = g.get("edge") or ("adaptive" if g.get("mode") == "adaptive" else "fixed")
+        if plan is None:
+            raise ValueError("The study needs the plan of its base case")
+        try:
+            bp = plan(base)
+        except ValueError as e:
+            raise ValueError(f"The base case cannot be planned: {e}") from None
+        L0, h0 = float(bp["L_um"]), float(bp["h_um"])
+        grid = {"edge": edge, "L_um": L0, "voxel_um": h0, "film": bool(bp.get("film")),
+                "T_um": float(bp["T_um"]) if bp.get("film") else None, "quality": bp.get("quality")}
         parameters = [p for p in (payload.get("parameters") or []) if p.get("path")]
         # links: a parameter that also sets other entries (the same value or a
         # function of the parameters); checked once here, applied per case
@@ -167,10 +160,30 @@ class DOEStore:
         cases = DOE.expand(parameters, design, int(payload.get("samples", 12)), int(payload.get("seed", 1)))
         if not cases:
             raise ValueError("No parameter with a range was given")
+        varied = set()
+        for p in parameters:
+            varied.add(p["path"])
+            varied.update(ln["path"] for ln in p.get("links") or [])
         forms = []
         for i, c in enumerate(cases):
             try:
                 form = DOE.apply_case(base, c, i, parameters=parameters)
+                rv = form.setdefault("rve", {})
+                h = float(rv["voxel_um"]) if "rve.voxel_um" in varied else h0
+                if "rve.N" in varied and rv.get("N"):
+                    L = float(rv["N"]) * h                 # a grid-size study: the edge follows the count
+                elif "rve.L_um" in varied:
+                    L = float(rv["L_um"])
+                elif edge == "adaptive":
+                    # the case's own edge at the Domain's level (its particles may differ)
+                    auto = copy.deepcopy(form)
+                    auto["rve"] = dict(auto.get("rve") or {}, auto=True, N=None, L_um=None, voxel_um=None)
+                    L = float(plan(auto)["L_um"])
+                else:
+                    L = L0
+                n = max(8, int(round(L / h)))
+                n += n % 2
+                rv.update(auto=False, voxel_um=h, L_um=n * h, N=None, auto_enlarge=False, L_unit="um", h_unit="um")
             except ValueError as e:
                 raise ValueError(f"Case {i + 1} ({c['label']}): {e}") from None
             normalize(copy.deepcopy(form))          # raises ValueError on a bad case

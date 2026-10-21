@@ -374,12 +374,14 @@ class FANS:
         return b
 
     def solve(self, E_voigt, dT=0.0, tol=1e-5, maxiter=5000, callback=None, should_stop=None,
-              keep_stress=False, keep_strain=False, keep_disp=False):
+              keep_stress=False, keep_strain=False, keep_disp=False, x0=None):
         """Mean stress (Voigt) for a macroscopic strain and a temperature
         change; the per-voxel stress (6, nx, ny, nz) when keep_stress, the
         per-voxel total strain in self.last_strain when keep_strain, and the
         nodal displacement fluctuation (3, nx, ny, nz; node i,j,k at the lower
-        corner of voxel i,j,k, unit voxel) in self.last_disp when keep_disp."""
+        corner of voxel i,j,k, unit voxel) in self.last_disp when keep_disp.
+        x0: a first guess of that fluctuation (the solution of a nearby
+        problem, such as the previous step of a deforming structure)."""
         t0 = time.time()
         b = self.rhs(E_voigt, dT)
         bn = math.sqrt(_dot(b, b))
@@ -388,6 +390,9 @@ class FANS:
         snap = getattr(callback, "snapshot", None)      # the live view (mpsim/live.py)
         if bn > 0:
             r = b
+            if x0 is not None and np.shape(x0) == b.shape:
+                x[...] = x0
+                r = b - self.K(x)
             z = self.P(r)
             p = z.copy()
             rz = _dot(r, z)

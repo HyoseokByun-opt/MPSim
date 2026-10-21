@@ -509,6 +509,13 @@ def post_checks(plan_, gen_info, quality="standard"):
         if tgt <= 0:
             continue
         err = abs(p["vf_voxel"] - tgt) / tgt
+        if gen_info.get("pressed"):
+            # the compression changes the content on purpose: the box loses
+            # volume where pores close (the spheres keep theirs)
+            checks.append({"id": f"vf_{i}", "group": "Generated structure", "label": f"{p['name']}: content after compression",
+                           "value": p["vf_voxel"], "target": tgt, "unit": "frac", "status": "pass",
+                           "note": f"{100*tgt:.2f} % before the compression → {100*p['vf_voxel']:.2f} % in the compressed box"})
+            continue
         checks.append({"id": f"vf_{i}", "group": "Generated structure", "label": f"{p['name']}: volume fraction error",
                        "value": err, "target": q["vf_tol"], "unit": "rel",
                        "status": "pass" if err <= q["vf_tol"] else ("warn" if err <= 3 * q["vf_tol"] else "fail"),

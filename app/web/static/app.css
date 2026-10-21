@@ -146,6 +146,8 @@ label.f .u{color:var(--muted);font-weight:400;margin-left:4px}
 .seg button{border:0;background:#fff;padding:0 11px;height:26px;cursor:pointer;color:var(--ink2);border-right:1px solid var(--line2);font-weight:600;font-size:12px}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--accent);color:#fff}
+.seg.seg-wrap{display:flex;width:100%}
+.seg.seg-wrap button{flex:1 1 0;padding:0 6px;white-space:nowrap;font-size:11.5px}
 .switch{position:relative;display:inline-block;width:32px;height:18px;flex:0 0 auto}
 .switch input{opacity:0;width:0;height:0}
 .switch span{position:absolute;inset:0;background:#d0d7de;border-radius:18px;transition:.15s;cursor:pointer}
@@ -433,6 +435,11 @@ canvas.chart{display:block;width:100%}
 .tile.cal-none{border-left:3px solid #8c959f}
 .calchip{display:inline-block;padding:0 6px;border-radius:9px;font-size:10.5px;font-weight:600;border:1px solid currentColor}
 .calchip.ok{color:#1a7f37}.calchip.bound{color:#9a6700}.calchip.none{color:#6e7781}
+.tile.cal-far{border-left:3px solid #cf222e}.calchip.far{color:#cf222e}
+table.grid .bad{color:#cf222e;font-weight:600}table.grid .good{color:#1a7f37}
+table.grid tr.calbest td{background:#fff8c5}table.grid tr.calchk td{background:#ddf4ff}
+table.grid th.nh{text-align:right}
+.calspan{margin:2px 0 8px 18px;padding:0;font-size:12px}.calspan .bad{color:#cf222e}
 .calbody .note{margin:4px 0}
 .calbody hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .btn.xs{padding:0 6px;font-size:10.5px;height:18px;line-height:16px}

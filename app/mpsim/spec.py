@@ -192,8 +192,9 @@ def _dispersion(dp, phases, rve, errors):
                           f"densest; no random packing exceeds about 64 vol%. Lower the contrast or widen the region")
     except ValueError as e:
         errors.append(str(e))
-    if rve.get("arrangement") == "sheared":
-        errors.append("The arrangement after shear flow starts from an even dispersion; set the dispersion to even")
+    if rve.get("arrangement") in ("sheared", "pressed"):
+        errors.append(f"The arrangement after {'shear flow' if rve.get('arrangement') == 'sheared' else 'compression'} "
+                      f"starts from an even dispersion; set the dispersion to even")
     return out
 
 
@@ -403,8 +404,13 @@ def normalize(form):
             sec = _section(mr.get("section") or {"axis": "z", "from": 50, "to": 100}, where)
             if sec is None:
                 raise ValueError(f"{where}: a matrix region needs a section (the main matrix fills the rest)")
+            # the viscosity before cure (Pa s) for the arrangement after
+            # compression; None: that of the main resin
+            mu_pas = mr.get("mu_pas")
+            mu_pas = (None if mu_pas in (None, "") else
+                      _num(mu_pas, f"{where}: viscosity before cure", 1e-6, 1e8))
             mregs.append({"name": mr.get("name") or f"Matrix {k + 2}", "material_id": mr.get("material_id"),
-                          "props": props, "void": props["E"] <= 0, "section": sec})
+                          "props": props, "void": props["E"] <= 0, "section": sec, "mu_pas": mu_pas})
         except ValueError as e:
             errors.append(str(e))
     out["matrix_regions"] = mregs
@@ -470,8 +476,18 @@ def normalize(form):
         # sheared in the resin by the particle dynamics (the arrangement a
         # dispensed or moulded compound keeps when it cures); a whole-number
         # strain, so that the sheared box is periodic again
-        "arrangement": "sheared" if rv.get("arrangement") == "sheared" else "random",
+        "arrangement": rv.get("arrangement") if rv.get("arrangement") in ("sheared", "pressed") else "random",
         "shear_strain": int(round(_num(rv.get("shear_strain", 10) or 10, "strain of the shear flow", 1, 100))),
+        # or compressed while the resin flows (solvers/compress.py): the
+        # periodic RVE shortened along z by this share at a constant strain
+        # rate (1/s), its sides free to expand ("xy"), x free and y held
+        # ("x") or both held ("none": the pores take the volume); the steps
+        # of the flow solve (empty: one per 3 % of strain)
+        "press_compression": _num(rv.get("press_compression", 30) or 30, "compression", 1, 80),
+        "press_rate": _num(rv.get("press_rate", 1.0) or 1.0, "rate of the compression", 1e-6, 1e6),
+        "press_lateral": rv.get("press_lateral") if rv.get("press_lateral") in ("xy", "x", "none") else "xy",
+        "press_steps": (int(round(_num(rv.get("press_steps"), "steps of the compression", 2, 200)))
+                        if rv.get("press_steps") not in (None, "", 0) else None),
     }
     out["rve"]["dispersion"] = _dispersion(rv.get("dispersion") or {}, phases, out["rve"], errors)
 
@@ -700,6 +716,31 @@ def normalize(form):
         if "viscosity" in chosen:
             errors.append("Viscosity takes one resin with an even suspension; it is not computed for sections or "
                           "matrix regions")
+    if out["rve"]["arrangement"] == "pressed":
+        solid_ = [p for p in phases if p["shape"] != G.NETWORK and p["vf"] > 0 and not p["void"]]
+        what = "The arrangement after compression"
+        if out["rve"]["film"]:
+            errors.append(f"{what} compresses a periodic cube into a periodic box; leave the thin film off")
+        if out["matrix"]["void"]:
+            errors.append(f"{what} needs a liquid matrix (the resin); the matrix here is a gas")
+        if any(p["shape"] != "sphere" for p in solid_):
+            errors.append(f"{what} moves solid fillers as rigid spheres; "
+                          + ", ".join(p["name"] for p in solid_ if p["shape"] != "sphere") + " are not spheres "
+                          "(pores of any shape flow with the resin)")
+        if any(p["shape"] == G.NETWORK and p["vf"] > 0 for p in phases):
+            errors.append(f"{what} is made of particles and pores; a network phase cannot flow")
+        if any(p.get("shell") or p.get("overlap") for p in solid_):
+            errors.append(f"{what} needs solid spheres apart from each other (no shells or permitted overlap)")
+        pore_vf = sum(p["vf"] for p in phases if p["void"] and p["vf"] > 0)
+        if out["rve"]["press_lateral"] == "none" and pore_vf <= out["rve"]["press_compression"] / 100.0:
+            errors.append(f"{what} with both sides held needs room: the volume lost "
+                          f"({out['rve']['press_compression']:g} % of the RVE) must come from pores, and the structure "
+                          f"has {100 * pore_vf:.3g} vol% - add pores (Structure tab) or let a side expand")
+        if out["rve"]["n_seeds"] > 1:
+            errors.append(f"{what} makes one realisation (set the realisations to 1)")
+        if "viscosity" in chosen:
+            errors.append("Viscosity is that of the uncured compound: run it with the random arrangement, not on "
+                          "the pressed film")
     if out["rve"]["arrangement"] == "sheared":
         parts_ = [p for p in phases if p["shape"] != G.NETWORK and p["vf"] > 0]
         if out["rve"]["film"]:

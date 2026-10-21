@@ -655,7 +655,7 @@ def t_jamming():
     return f"φm {phi:.4f} (raw {info['phi_m_raw']:.4f}, {info['n_particles']} spheres, {info['seconds']:.0f} s)"
 
 
-@check("Calibration theory: mismatch models for identical materials (full transmission, DMM twice AMM)")
+@check("Calibration theory: mismatch models for identical materials (full transmission, DMM twice AMM) and detailed balance across a mismatch")
 def t_cal_kapitza():
     from mpsim import calibrate as CA
     p = {"E": 70.0, "nu": 0.22, "rho": 2.2, "cp": 740.0}
@@ -665,7 +665,13 @@ def t_cal_kapitza():
     r_amm = 12.0 / (C * (vl + 2.0 * vt))
     expect(abs(r["amm"] / r_amm - 1) < 2e-3, f"AMM {r['amm']:.4g} vs {r_amm:.4g}")
     expect(abs(r["dmm"] / (2.0 * r_amm) - 1) < 1e-9, f"DMM {r['dmm']:.4g} vs {2 * r_amm:.4g}")
-    return f"AMM {r['amm']:.3e}, DMM {r['dmm']:.3e} m²K/W (vL {vl:.0f}, vT {vt:.0f} m/s)"
+    # epoxy into alumina and back: equal energy fluxes at one temperature
+    # need Gamma_12 / v1^2 = Gamma_21 / v2^2 (acoustic reciprocity)
+    z1, z2, v1, v2 = 2.4e6, 4.1e7, 2003.0, 10480.0
+    g12, g21 = CA._amm_gamma(z1, z2, v1, v2, n=4000), CA._amm_gamma(z2, z1, v2, v1, n=4000)
+    expect(abs(g12 / v1 ** 2 / (g21 / v2 ** 2) - 1) < 1e-3, f"AMM balance {g12 / v1 ** 2:.4g} vs {g21 / v2 ** 2:.4g}")
+    return (f"AMM {r['amm']:.3e}, DMM {r['dmm']:.3e} m²K/W (vL {vl:.0f}, vT {vt:.0f} m/s); "
+            f"epoxy→alumina transmission {g12:.4f}, back {g21:.4f}")
 
 
 def _cal_base(d_um, r_int, k_p):
@@ -750,6 +756,59 @@ def t_cal_rve():
                    f"suggestion {sg['label']}: RVE {st.get('rve.L_um')} µm, voxel {st.get('rve.voxel_um')} µm for d {dd} µm")
     return (f"R {R_['map']:.3g} (95 % {R_['ci95'][0]:.2g}–{R_['ci95'][1]:.2g}), k_p {K_['map']:.3g} "
             f"({K_['ci95'][0]:.2g}–{K_['ci95'][1]:.2g}); true 2e-7, 2.0; γ {r['identifiability']['collinearity']:.1f}")
+
+
+@check("Calibration with touching particles: R_c = 2·R_int recovers R_int; R_int alone is flagged when no value reaches "
+       "the measurement; R_int with R_c from one sample is a combination; every parameter set is recorded", quick=False)
+def t_cal_contacts():
+    import json
+    from mpsim import calibrate as CA
+    from mpsim import parallel as PAR
+    base = _cal_base(0.5, 0.0, 30.0)
+    base["phases"][0]["fraction"]["value"] = 50
+    link = [{"path": "phases.0.r_contact", "expr": "2*x"}]
+    U_L = {"path": "phases.0.r_int", "label": "R", "lo": 1e-10, "hi": 1e-6, "links": link}
+    with tempfile.TemporaryDirectory() as d:
+        # the 'measurement': R_int 5e-9 with R_c 1e-8 on the contact faces
+        unk = [CA._Unknown(U_L)]
+        samples = CA._prepare({"measurements": [{"property": "k", "set": {}}]}, base, unk, d, {}, lambda *a: None, None)
+        pool = PAR.SolvePool(2, 2)
+        try:
+            samples[0]["lab_path"] = pool.share(samples[0]["labels"], name="lab0")
+            if samples[0]["cmask"] is not None:
+                samples[0]["cm_path"] = os.path.join(pool.tmp, "cm0.npy")
+                np.save(samples[0]["cm_path"], samples[0]["cmask"])
+            y_true = float(CA._evaluate(samples, lambda s_: s_["form"], np.array([[float(unk[0].unit_of(5e-9))]]), unk,
+                                        1e-7, pool, None, lambda *a: None, lambda *a, **k: None, "truth")[0][0])
+        finally:
+            pool.close()
+        meas = [{"label": "m", "property": "k", "direction": "iso", "value": y_true, "rel_unc": 0.03}]
+
+        def run(tag, unknowns, m=meas):
+            CA.run({"name": tag, "base": base, "measurements": m, "_structure_dirs": [d], "unknowns": unknowns},
+                   os.path.join(d, tag), log=lambda *a: None)
+            with open(os.path.join(d, tag, "result.json"), encoding="utf-8") as fh:
+                return json.load(fh)
+        a = run("linked", [U_L])
+        ra = a["unknowns"][0]
+        expect(ra["ci95"][0] < 5e-9 < ra["ci95"][1], f"linked: R {ra['map']:.3g} {ra['ci95']}")
+        ev = a["design"]["evaluations"]
+        expect(len(ev) == len(a["design"]["points"]) + 1 and ev[-1]["stage"] == "check", f"{len(ev)} evaluations")
+        expect(all(abs(e["linked"][0] / (2 * e["values"][0]) - 1) < 1e-9 and e["results"][0] > 0 for e in ev),
+               "every set records R_c = 2 R_int and its value")
+        # R_int alone with free contacts, against a value below the matrix
+        b = run("alone", [{"path": "phases.0.r_int", "label": "R", "lo": 1e-10, "hi": 1e-6}],
+                [dict(meas[0], value=0.05)])
+        expect(b["unknowns"][0].get("unreached") and b["contact_bypass"] == ["F"], "R_int alone: not flagged as unreached")
+        expect(any("lies below every value" in n and "touch" in n for n in b["notes"]), "R_int alone: no reason given")
+        # R_int and R_c from one sample: a combination, said in one note
+        c = run("both", [{"path": "phases.0.r_int", "label": "R", "lo": 1e-10, "hi": 1e-6},
+                         {"path": "phases.0.r_contact", "label": "Rc", "lo": 1e-10, "hi": 1e-6}])
+        expect(any(n.startswith("R_int and R_c of F act together") for n in c["notes"]), "R_int + R_c: no combination note")
+    lo_b = min(e["results"][0] for e in b["design"]["evaluations"])
+    return (f"k {y_true:.3f} at R_int 5e-9, R_c 1e-8; linked: R_int {ra['map']:.3g} (95 % {ra['ci95'][0]:.2g}–"
+            f"{ra['ci95'][1]:.2g}); R_int alone: lowest k {lo_b:.3f}, flagged; both: R_c {c['unknowns'][1]['map']:.3g}, "
+            f"γ {c['identifiability']['collinearity']:.3g}")
 
 
 @check("Calibration from a viscosity: the bound resin layer of 1 µm silica from a particle-dynamics measurement (synthetic data)", quick=False)
@@ -1424,7 +1483,7 @@ def t_cond_aniso():
             f"{kz:.2f} W/m·K through its thickness; a laminate film with rods = the parallel mean")
 
 
-@check("DOE: a filler's share with the total kept, a fixed grid for every case")
+@check("DOE: a filler's share with the total kept; the Domain's grid on every case, or each case's own edge on its voxel size")
 def t_doe_mix_grid():
     from mpsim import doe as DOE
     from web.doe import DOEStore
@@ -1455,16 +1514,36 @@ def t_doe_mix_grid():
         def submit(self, owner, form, runs_dir, meta, folder=None, case=""):
             self.forms.append(form)
             return _Job(len(self.forms))
+    def plan(f):
+        # a stand-in for the Domain's planner: a manual grid as entered; an
+        # automatic one with an edge that grows with the BN share
+        rv = f.get("rve") or {}
+        if rv.get("auto") is False:
+            return {"L_um": float(rv["L_um"]), "h_um": float(rv["voxel_um"]), "film": False}
+        a_, b_ = f["phases"][0]["fraction"]["value"], f["phases"][1]["fraction"]["value"]
+        return {"L_um": 3.0 + 0.04 * 100 * b_ / (a_ + b_), "h_um": 0.03, "film": False}
     with tempfile.TemporaryDirectory() as d:
         st, q = DOEStore(d), _Queue()
-        study = st.create(None, {"form": base, "parameters": [{"path": "mix.1", "min": 5, "max": 50, "steps": 3}],
-                                 "grid": {"mode": "fixed", "L_um": 4.0, "voxel_um": 0.025}}, q, d, lambda f: f)
+        man = dict(base, rve={"auto": False, "L_um": 4.0, "voxel_um": 0.025})
+        study = st.create(None, {"form": man, "parameters": [{"path": "mix.1", "min": 5, "max": 50, "steps": 3}],
+                                 "grid": {"edge": "fixed"}}, q, d, lambda f: f, plan=plan)
         rv = [f["rve"] for f in q.forms]
-        expect(all(r_["auto"] is False and r_["L_um"] == 4.0 and r_["voxel_um"] == 0.025 for r_ in rv), f"grids {rv}")
-        expect(study["grid"]["N"] == 160, f"grid {study['grid']}")
+        expect(all(r_["auto"] is False and abs(r_["L_um"] - 4.0) < 1e-9 and r_["voxel_um"] == 0.025 for r_ in rv),
+               f"fixed: the Domain's grid on every case {rv}")
+        expect(abs(study["grid"]["L_um"] - 4.0) < 1e-9 and study["grid"]["edge"] == "fixed", f"grid {study['grid']}")
+        # adaptive: each case its own edge, on the Domain's (automatic) voxel size
         q2 = _Queue()
-        st.create(None, {"form": base, "parameters": [{"path": "mix.1", "min": 5, "max": 50, "steps": 2}]}, q2, d, lambda f: f)
-        expect(all(f["rve"].get("auto") is True for f in q2.forms), "adaptive: the cases' own plan")
+        st.create(None, {"form": base, "parameters": [{"path": "mix.1", "min": 5, "max": 50, "steps": 2}],
+                         "grid": {"edge": "adaptive"}}, q2, d, lambda f: f, plan=plan)
+        Ls = [f["rve"]["L_um"] for f in q2.forms]
+        hs = {f["rve"]["voxel_um"] for f in q2.forms}
+        expect(hs == {0.03} and Ls[0] < Ls[-1] and all(abs(L / 0.03 - round(L / 0.03)) < 1e-9 and round(L / 0.03) % 2 == 0
+                                                      for L in Ls), f"adaptive edges {Ls}, voxels {hs}")
+        # the voxel size as a parameter: its values; otherwise the Domain's
+        q3 = _Queue()
+        st.create(None, {"form": man, "parameters": [{"path": "rve.voxel_um", "min": 0.02, "max": 0.04, "steps": 3}],
+                         "grid": {"edge": "fixed"}}, q3, d, lambda f: f, plan=plan)
+        expect([f["rve"]["voxel_um"] for f in q3.forms] == [0.02, 0.03, 0.04], f"voxel parameter {[f['rve'] for f in q3.forms]}")
     # what a finished case really holds: 51.1 of 55 vol%, a BN share of 48 of 50 %
     from web.doe import realised
     res = {"spec": {"labels": [{"kind": "matrix", "phase": None}, {"kind": "core", "phase": 0}, {"kind": "core", "phase": 1}],
@@ -1473,7 +1552,8 @@ def t_doe_mix_grid():
     rz = realised({"base_form": base, "parameters": [{"path": "mix.1"}]}, res)
     expect(abs(rz["real_filler"][2] - 51.1) < 1e-9 and abs(rz["real_filler"][3] - 55.0) < 1e-9, f"filler {rz['real_filler']}")
     expect(abs(rz["real_mix.1"][2] - 100 * 0.245 / 0.511) < 1e-9 and abs(rz["real_mix.1"][3] - 50.0) < 1e-9, f"share {rz['real_mix.1']}")
-    return (f"shares {shares[0]:g}-{shares[-1]:g} % of 55 vol% with the total kept; fixed grid 160³ on every case; "
+    return (f"shares {shares[0]:g}-{shares[-1]:g} % of 55 vol% with the total kept; the Domain's grid on every case, "
+            f"edges {Ls[0]:.3g}-{Ls[-1]:.3g} µm adapted on its voxel size; "
             f"realised 51.1 vol%, share {rz['real_mix.1'][2]:.1f} %")
 
 
@@ -1654,6 +1734,95 @@ def t_stop_now():
         back = q2.get(job.id)
         expect(back is not None and back.state == "stopped", f"after a restart the run is {back and back.state}")
         return f"stopped in {dt:.1f} s during '{stage or 'start-up'}', {len(kids)} child process(es) ended with it"
+
+
+@check("Compression of a periodic RVE: a resin alone gives Trouton's 3 eta (sides free) and 4 eta (plane strain) with "
+       "their von Mises stress, and keeps its volume")
+def t_compress_resin():
+    from mpsim.solvers import compress as CP
+    base = np.zeros((16, 16, 16), np.uint8)
+    no = (lambda shape, c: (np.zeros(shape, np.int32), np.zeros(2, np.int64)))
+    out = []
+    for lat, s_zz, s_l, vm in (("xy", -3.0, (0.0, 0.0), 3.0), ("x", -4.0, (0.0, -2.0), 2.0 * math.sqrt(3.0))):
+        cp = CP.Compress(base, 1.0, [2.0], [False], np.zeros((0, 3)), np.zeros(0), np.zeros(0, np.int64), no,
+                         lateral=lat, compression=0.2, rate=0.5, steps=2, frames=False)
+        o = cp.run()
+        s = o["series"]
+        eta, rate = 2.0, 0.5
+        expect(abs(s["sigma_zz_Pa"][-1] / (s_zz * eta * rate) - 1) < 1e-6, f"{lat}: σzz {s['sigma_zz_Pa'][-1]:.6g}")
+        expect(abs(s["sigma_xx_Pa"][-1] - s_l[0] * eta * rate) < 1e-6 and abs(s["sigma_yy_Pa"][-1] - s_l[1] * eta * rate) < 1e-6,
+               f"{lat}: lateral stresses {s['sigma_xx_Pa'][-1]:.4g}, {s['sigma_yy_Pa'][-1]:.4g}")
+        expect(abs(float(o["von_mises"].mean()) / (vm * eta * rate) - 1) < 1e-5, f"{lat}: von Mises {o['von_mises'].mean():.6g}")
+        r0 = o["regions"][0]
+        expect(abs(r0["volume_um3"][-1] / r0["volume0_um3"] - 1) < 2e-3, f"{lat}: resin volume {r0['volume_um3'][-1]:.1f} of {r0['volume0_um3']:.1f}")
+        expect(abs(s["strain_z"][-1] - math.log(0.8)) < 1e-9, f"{lat}: final strain {s['strain_z'][-1]}")
+        out.append(f"{lat}: σzz {s['sigma_zz_Pa'][-1] / (eta * rate):.4f} η ε̇, von Mises {o['von_mises'].mean() / (eta * rate):.4f}")
+    return "; ".join(out) + " (exact 3, 3 and 4, 2√3)"
+
+
+@check("Compression with both sides held: the pores close by the volume lost, the resin keeps its own (markers)",
+       quick=False)
+def t_compress_pores():
+    from mpsim.solvers import compress as CP
+    N = 24
+    base = np.zeros((N, N, N), np.uint8)
+    idx = np.indices(base.shape).reshape(3, -1).T + 0.5
+    d = idx - N / 2.0
+    R = (0.3 * N ** 3 * 3 / (4 * np.pi)) ** (1 / 3)
+    base.reshape(-1)[np.sum(d * d, axis=1) <= R * R] = 1
+    no = (lambda shape, c: (np.zeros(shape, np.int32), np.zeros(2, np.int64)))
+    cp = CP.Compress(base, 1.0, [1.0, None], [False, True], np.zeros((0, 3)), np.zeros(0), np.zeros(0, np.int64), no,
+                     lateral="none", compression=0.2, rate=1.0, steps=8, frames=False)
+    o = cp.run()
+    p0, p1 = o["pore_fraction"]
+    r0 = o["regions"][0]
+    expected = (p0 - 0.2) / 0.8
+    expect(abs(p1 - expected) < 0.01, f"pores {100 * p0:.2f} -> {100 * p1:.2f} vol%, expected {100 * expected:.2f}")
+    expect(abs(r0["volume_um3"][-1] / r0["volume0_um3"] - 1) < 0.005,
+           f"resin volume {r0['volume_um3'][-1]:.1f} of {r0['volume0_um3']:.1f}")
+    s = o["series"]
+    expect(s["sigma_zz_Pa"][-1] < s["sigma_zz_Pa"][0] < 0, "the axial stress does not rise as the pores close")
+    return (f"pores {100 * p0:.1f} -> {100 * p1:.2f} vol% (expected {100 * expected:.2f}), resin volume "
+            f"{100 * (r0['volume_um3'][-1] / r0['volume0_um3'] - 1):+.2f} %, axial stress {-s['sigma_zz_Pa'][0]:.2f} -> "
+            f"{-s['sigma_zz_Pa'][-1]:.2f} Pa")
+
+
+@check("Arrangement after compression: resin A | resin B with silica compressed 30 % in 3D, sides free; each resin keeps "
+       "its volume, the filled one widens less, the box is solved as it is, the 3D record written", quick=False)
+def t_pressed():
+    import json
+    from mpsim import pipeline as PL
+    f = {"name": "pressed", "matrix": {"material_id": "epoxy", "name": "Resin A"},
+         "matrix_regions": [{"name": "Resin B", "material_id": "epoxy", "mu_pas": 2.0,
+                             "section": {"mode": "section", "axis": "x", "from": 50, "to": 100}}],
+         "phases": [{"material_id": "sio2", "name": "Silica", "shape": "sphere", "size": {"d": 5, "unit": "um"},
+                     "fraction": {"value": 40, "basis": "vol"}, "section": {"mode": "section", "axis": "x", "from": 50, "to": 100}}],
+         "rve": {"auto": False, "L_um": 25, "voxel_um": 0.625, "quality": "fast", "arrangement": "pressed",
+                 "press_compression": 30, "press_rate": 1.0, "press_lateral": "xy"},
+         "analyses": {"thermal": True}, "options": {"directions": "z"}}
+    with tempfile.TemporaryDirectory() as d:
+        PL.run(f, d, log=lambda *a: None)
+        with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
+            r = json.load(fh)
+        with open(os.path.join(d, "view", "meta.json"), encoding="utf-8") as fh:
+            meta = json.load(fh)
+        files = os.listdir(os.path.join(d, "view"))
+    pr = r["realisations"][0].get("pressed") or {}
+    expect(pr, "no compression record")
+    shp = pr["shape"]
+    expect(abs(shp[2] / 40 - 0.7) < 0.03 and shp[0] > 40 and shp[1] > 40, f"box {shp} voxels from 40³")
+    expect(r["plan"].get("shape") == shp, f"the analyses ran on {r['plan'].get('shape')}, not the compressed box {shp}")
+    A, B = pr["regions"]["Resin A"], pr["regions"]["Resin B"]
+    expect(abs(A["share"] - A["share0"]) < 0.01 and abs(B["share"] - B["share0"]) < 0.01,
+           f"volume shares A {A['share0']:.3f} -> {A['share']:.3f}, B {B['share0']:.3f} -> {B['share']:.3f}")
+    expect(A["strain_all"][0] > B["strain_all"][0], f"x strain A {A['strain_all'][0]:.3f}, B {B['strain_all'][0]:.3f}")
+    expect(B["strain"][2] < B["strain_all"][2], "the resin between the rigid spheres does not strain more than its region")
+    kz = r["properties"]["thermal"]["diag"][2]
+    expect(0.2 < kz < 1.5, f"k_z {kz}")
+    expect("press" in meta and "press_lab.u8" in files and "field_press_vm.f32" in files, "the 3D record was not written")
+    return (f"box 40³ -> {' × '.join(str(v) for v in shp)}; strain x of A {A['strain_all'][0]:+.3f}, of B with its "
+            f"spheres {B['strain_all'][0]:+.3f}; resin B alone z {B['strain'][2]:+.3f} (region {B['strain_all'][2]:+.3f}); "
+            f"{pr['crossed_resin']} of {pr['n_spheres']} spheres in another resin; k_z {kz:.3f} W/m·K; {pr['seconds']:.0f} s")
 
 
 @check("Arrangement after shear flow: contents kept, periodic, close pairs tilted by the flow; spheres only", quick=False)
@@ -2140,6 +2309,76 @@ def t_thread_invariance():
         numba.set_num_threads(n0)
     expect(out[1] == out[n0], f"1 thread {out[1]} against {n0} threads {out[n0]}")
     return f"k {out[1][0]:.8f}, film {out[1][1]:.8f}, κ {out[1][2]:.6e}: identical on 1 and {n0} threads"
+
+
+@check("Structure generation on all cores: random placement, overlap repair and rasterisation give the serial "
+       "loops' voxels and sums to the last bit")
+def t_parallel_structure():
+    from mpsim import generate as GEN, shapes as SH
+    tab = SH.PolyTable()
+    tab.add("octahedron")
+    planes, nfaces = tab.arrays()
+    h, N = 0.3, 48
+    L = N * h
+    rng = np.random.default_rng(21)
+    n = 260
+    codes = rng.choice(np.array([0, 1, 4, 6]), n).astype(np.int64)
+    Ps = np.zeros((n, 6))
+    Ps[:, 0] = rng.uniform(0.8, 2.0, n)
+    Ps[:, 1] = np.where(codes == 1, 0.5 * Ps[:, 0], 0.0)
+    Ps[codes == 4, 1] = Ps[codes == 4, 0]
+    Ps[codes == 4, 2] = Ps[codes == 4, 0]
+    Ps[codes == 6, 1] = 0.0
+    Rs = np.ascontiguousarray(SH.sample_rotations(n, "iso", 0.0, rng))
+    ph = rng.integers(0, 2, n).astype(np.int64)
+    ov = np.array([1, 0], np.int32)
+    notes = []
+    # overlap repair: one round on overlapping particles, a film and a box
+    C = rng.random((n, 3)) * L
+    for zwall in (False, True):
+        res = []
+        for fn in (GEN._raster_track, GEN.raster_track_par):
+            own = np.zeros((N, N, N - 6 if zwall else N), np.int32)
+            pof = np.full(n + 8, -1, np.int32)
+            arr = [np.zeros((n, 3)), np.zeros(n, np.int64), np.zeros((n, 3)), np.zeros((n, 3)), np.zeros(n, np.int64)]
+            size = Ps[:, 0] ** 3
+            fac = np.where(np.arange(n) % 5 == 0, 0.93, 1.0)
+            tot = fn(own, pof, ov, h, codes, C, Rs, Ps, planes, nfaces, ph, 2, arr[0], arr[1], arr[2], arr[3], size,
+                     fac, GEN.SHRINK_FLOOR, arr[4], np.empty(100000, np.int64), zwall)
+            res.append((int(tot), own, *arr))
+        same = res[0][0] == res[1][0] and all(np.array_equal(a.view(np.uint8), b.view(np.uint8))
+                                              for a, b in zip(res[0][1:], res[1][1:]))
+        expect(same, f"overlap repair (film {zwall}): the parallel sums differ from the serial loop's")
+        notes.append(f"repair {res[0][0]:,} shared voxels")
+    # rasterisation onto a grid that already holds voxels
+    res = []
+    for fn in (GEN.raster_all_serial, GEN.raster_all_par):
+        own = np.zeros((N, N, N), np.int32)
+        own[:N // 4] = 1
+        pof = np.full(n + 8, -1, np.int32)
+        pof[1] = 1
+        r = fn(own, pof, ov, np.zeros(2, np.int32), h, codes, C, Rs, Ps, planes, nfaces, np.zeros(n), ph, 2,
+               np.empty(100000, np.int64), False)
+        res.append((r, own))
+    expect(res[0][0] == res[1][0] and np.array_equal(res[0][1], res[1][1]),
+           f"rasterisation: {res[0][0]} against {res[1][0]}")
+    notes.append(f"rasterisation {res[0][0][1]:,} conflicts")
+    # random sequential addition with a gap and the voxel-neighbour rule
+    res = []
+    for fn in (GEN._rsa_serial, GEN._rsa):
+        own = np.zeros((N, N, N), np.int32)
+        pof = np.full(n + 8, -1, np.int32)
+        cnt, npl = np.zeros(2), np.zeros(2, np.int64)
+        jam, cen, pid_ = np.zeros(2, np.bool_), np.zeros((n, 3)), np.zeros(n, np.int64)
+        last = fn(own, pof, np.zeros(2, np.int32), np.zeros(2, np.int32), np.array([1, 0], np.int32), h, L, codes, Rs,
+                  Ps, planes, nfaces, np.full(n, 0.15), ph, np.array([0.2, 0.15]) * N ** 3, cnt, npl, jam, cen, pid_,
+                  1, 400, 25, 77, np.empty(100000, np.int64), False, np.ones((1, 1, 1)), 0.0)
+        res.append((last, own, cen, cnt))
+    expect(res[0][0] == res[1][0] and np.array_equal(res[0][1], res[1][1]) and np.array_equal(res[0][2], res[1][2])
+           and np.array_equal(res[0][3], res[1][3]), f"placement: {res[0][0] - 1} against {res[1][0] - 1} particles")
+    import numba
+    return (f"{', '.join(notes)}, placement of {res[0][0] - 1} particles: identical to the serial loops on "
+            f"{numba.get_num_threads()} threads")
 
 
 @check("Sections: a second matrix and a filler in one half; the slabs, the contents and the layered conduction")

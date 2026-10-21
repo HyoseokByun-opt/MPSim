@@ -536,6 +536,30 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
 
     app.queue.estimator = est_mem_gb
 
+    def plan_form(form):
+        """The plan of a form as the Domain tab shows it: (plan, spec,
+        warnings); raises ValueError when the structure itself is invalid."""
+        form = copy.deepcopy(form)
+        an = form.get("analyses") or {}
+        if not any(an.values()):
+            form["analyses"] = {"thermal": True}
+        warnings = []
+        try:
+            spec = S.normalize(form)
+        except ValueError as e:
+            errs = str(e).split("\n")
+            alone = copy.deepcopy(form)
+            alone["analyses"] = {"thermal": True}
+            spec = S.normalize(alone)
+            warnings = errs
+        from mpsim.pipeline import _plan_phases
+        pph = _plan_phases(spec)
+        rv = dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"),
+                  elastic_method=spec["options"]["elastic_method"])
+        return R.plan(pph, rv, needed_analyses(spec), app.config["LIMITS"]), spec, warnings
+
+    app.plan_form = plan_form
+
     @app.post("/api/plan")
     def api_plan():
         form = copy.deepcopy(request.get_json(force=True, silent=True) or {})
@@ -1074,7 +1098,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         try:
             study = app.doe.create(owner_or_none(), payload, app.queue, case_dir(), S.normalize,
                                    folder=app.config["RUNS_DIR"], case_name=app.config.get("CASE") or "",
-                                   estimate=est_mem_gb)
+                                   estimate=est_mem_gb, plan=lambda f: plan_form(f)[0])
         except ValueError as e:
             return jsonify({"ok": False, "errors": str(e).split("\n")}), 400
         return jsonify({"ok": True, "id": study["id"], "n_cases": len(study["cases"])})

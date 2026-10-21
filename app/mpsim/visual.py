@@ -241,6 +241,84 @@ def _touch_groups(ids):
     return groups
 
 
+# The smooth surfaces of a large grid on several processes. VTK holds Python's
+# lock while it extracts and reduces a mesh, so threads do not help; the passes
+# (groups of particles that do not touch) go to worker processes that read the
+# particle grid from shared memory. Each pass gives the mesh it gives here, and
+# the passes are put together in their order: the surfaces are the same.
+SKIN_PROC_MIN_VOX = 120 ** 3     # smaller grids stay here (a worker takes ~2 s to start)
+
+
+def _skin_job(name, shape, lut, s, hi, target):
+    """One pass on a worker: its label grid from the shared particle grid."""
+    from multiprocessing import shared_memory
+    import pyvista as pv
+    shm = shared_memory.SharedMemory(name=name)
+    try:
+        base = np.ndarray(shape, np.int32, buffer=shm.buf)
+        scal = base.copy() if lut is None else lut[base]
+        del base
+    finally:
+        shm.close()
+    img = pv.ImageData(dimensions=shape, spacing=(s, s, s), origin=(0.5 * s,) * 3)
+    got = ViewWriter._skin(img, scal, s, np.asarray(hi), target)
+    if got is None:
+        return None
+    pts, nrm, faces = got
+    return pts, nrm, faces.astype(np.int32)          # half the bytes back
+
+
+def _skin_workers(n_jobs, nvox):
+    """How many worker processes the passes get: the cores of the run, the
+    passes, and the free memory (a pass holds about five copies of the grid)."""
+    if n_jobs < 2 or nvox < SKIN_PROC_MIN_VOX:
+        return 1
+    try:
+        cores = int(os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 1)
+    except ValueError:
+        cores = os.cpu_count() or 1
+    try:
+        import psutil
+        free = 0.7 * psutil.virtual_memory().available
+    except Exception:                                                  # noqa: BLE001
+        free = 4e9
+    by_mem = int(free // (5 * 4 * nvox + 150e6))
+    return max(1, min(n_jobs, cores, by_mem, 12))
+
+
+def _run_skins(jobs, img, s, hi, log=None):
+    """The skins of the passes (base, lut, target), in their order - here, or
+    on worker processes for a large grid."""
+    nvox = int(np.prod(jobs[0][0].shape)) if jobs else 0
+    nw = _skin_workers(len(jobs), nvox)
+    if nw <= 1:
+        for base, lut, target in jobs:
+            yield ViewWriter._skin(img, base if lut is None else lut[base], s, hi, target)
+        return
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    from multiprocessing import shared_memory
+    shms = {}
+    try:
+        for base, _, _ in jobs:
+            if id(base) not in shms:
+                shm = shared_memory.SharedMemory(create=True, size=base.nbytes)
+                np.ndarray(base.shape, np.int32, buffer=shm.buf)[...] = base
+                shms[id(base)] = shm
+        if log:
+            log(f"    surfaces: {len(jobs)} passes on {nw} processes")
+        with ProcessPoolExecutor(nw, mp_context=mp.get_context("spawn")) as ex:
+            futs = [ex.submit(_skin_job, shms[id(base)].name, base.shape, lut, s, tuple(int(v) for v in hi), target)
+                    for base, lut, target in jobs]
+            for f in futs:
+                got = f.result()
+                yield None if got is None else (got[0], got[1], got[2].astype(np.int64))
+    finally:
+        for shm in shms.values():
+            shm.close()
+            shm.unlink()
+
+
 def write_surface(path, pts, nrm, faces):
     """Compact surface file: points as uint16 on a grid of `step` from
     `origin`, normals as int8, triangles as uint32. A third of the float32
@@ -526,6 +604,41 @@ class ViewWriter:
                             "colors": list(colors), "speed_p99": float(np.percentile(sp, 99)) if sp.size else 1.0,
                             "mu_r": mu_r, "n_total": n_total, "slab_um": slab}
 
+    def add_press_anim(self, pressed, table):
+        """The compression for the Result Viewer's player: per step the three
+        visible faces of the box (top z, front y = 0, side x = end) and the
+        three middle sections, their labels (press_lab.u8) and von Mises
+        stress (press_vm.f32) one after the other; meta['press'] with the
+        offsets and sizes, the box of every step and the colours of the
+        labels (as the 3D view draws them)."""
+        keys = ("top", "front", "side", "mxz", "mxy", "myz")
+        lab_parts, vm_parts, frames = [], [], []
+        o_l = 0
+        vmax = 0.0
+        for f in pressed["frames"]:
+            d = {"shape": f["shape"], "L_um": [float(v) for v in f["L_um"]], "parts": {}}
+            for k in keys:
+                a = np.ascontiguousarray(f[k], np.uint8)
+                v = np.ascontiguousarray(f[k + "_vm"], np.float32)
+                d["parts"][k] = [o_l, int(a.shape[0]), int(a.shape[1])]
+                lab_parts.append(a.ravel())
+                vm_parts.append(v.ravel())
+                o_l += a.size
+                fin = v[np.isfinite(v)]
+                vmax = max(vmax, float(np.percentile(fin, 99)) if fin.size else 0.0)
+            frames.append(d)
+        np.concatenate(lab_parts).tofile(os.path.join(self.dir, "press_lab.u8"))
+        np.concatenate(vm_parts).astype(np.float32).tofile(os.path.join(self.dir, "press_vm.f32"))
+        labs = self.meta["labels"]
+        colors = {str(l["value"]): l["color"] for l in labs}
+        present = sorted({int(v) for p in lab_parts for v in np.unique(p)})
+        legend = [{"name": table[i]["name"], "color": colors.get(str(i), "#999"),
+                   "kind": "resin" if table[i]["kind"] == "matrix" else "particle"} for i in present]
+        s_ = pressed["series"]
+        self.meta["press"] = {"frames": frames, "lab": "press_lab.u8", "vm": "press_vm.f32", "colors": colors,
+                              "legend": legend, "vm_max": vmax, "compression": [float(c) for c in s_["compression"]],
+                              "sigma_zz_Pa": [float(c) for c in s_["sigma_zz_Pa"]], "box0_um": pressed["box0_um"]}
+
     def add_network(self, view):
         if not view:
             return
@@ -704,7 +817,9 @@ class ViewWriter:
             # graph): extracted together, touching particles shared their rim
             # vertices and the smoothing pulled them into fins and necks, so
             # two spheres in contact looked fused.
-            passes = []                           # (label grid, number of particles, network)
+            # (base grid, look-up of its values or None, number of particles,
+            # network): a pass's label grid is lut[base], made where it is skinned
+            passes = []
             n_ids = 0
             if own is not None:
                 ids = np.where(mask, own, 0)
@@ -712,27 +827,27 @@ class ViewWriter:
                 n_stray = int(np.count_nonzero(stray))
                 network = n_stray > 0.5 * int(np.count_nonzero(mask))
                 if network:
-                    passes.append((mask.astype(np.int32), 1, True))
+                    passes.append((mask.astype(np.int32), None, 1, True))
                     n_ids = 1
                 else:
                     groups = _touch_groups(ids)
                     present = np.flatnonzero(np.bincount(ids.ravel()))[1:]
                     n_ids = len(present)
+                    ids32 = ids.astype(np.int32, copy=False)
                     for gk in range(int(groups[present].max()) + 1 if n_ids else 0):
                         members = present[groups[present] == gk]
                         lut = np.zeros(int(present[-1]) + 1, np.int32)
                         lut[members] = np.arange(1, len(members) + 1, dtype=np.int32)
-                        passes.append((lut[ids], len(members), False))
+                        passes.append((ids32, lut, len(members), False))
                     if n_stray:
-                        passes.append((stray.astype(np.int32), 1, True))
+                        passes.append((stray.astype(np.int32), None, 1, True))
                 del ids, stray
             else:
-                passes.append((mask.astype(np.int32), 1, True))
+                passes.append((mask.astype(np.int32), None, 1, True))
                 n_ids = 1
             P, Nn, F, off = [], [], [], 0
-            for scal, k, net in passes:
-                target = TRI_NETWORK if net else int(allow * k)
-                got = self._skin(img, scal, s, hi, target)
+            jobs = [(base, lut, TRI_NETWORK if net else int(allow * k)) for base, lut, k, net in passes]
+            for got in _run_skins(jobs, img, s, hi, log):
                 if got is None:
                     continue
                 pts, nrm, faces = got
@@ -740,7 +855,7 @@ class ViewWriter:
                 Nn.append(nrm)
                 F.append(faces + off)
                 off += len(pts)
-            del passes
+            del passes, jobs
             if not P:
                 continue
             pts, nrm, faces = np.concatenate(P), np.concatenate(Nn), np.concatenate(F).astype(np.uint32)

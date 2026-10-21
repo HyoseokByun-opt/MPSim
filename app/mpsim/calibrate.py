@@ -155,7 +155,7 @@ def _amm_gamma(z1, z2, v1, v2, n=400):
     ok = s2 < 1.0
     c1 = np.cos(th)
     c2 = np.sqrt(np.clip(1.0 - s2 * s2, 0.0, 1.0))
-    a = np.where(ok, 4.0 * z1 * z2 * c1 * c2 / (z1 * c1 + z2 * c2) ** 2, 0.0)
+    a = np.where(ok, 4.0 * z1 * z2 * c1 * c2 / (z2 * c1 + z1 * c2) ** 2, 0.0)
     return float(np.sum(a * 2.0 * np.sin(th) * c1) * (0.5 * math.pi / n))
 
 
@@ -628,6 +628,16 @@ def _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event,
             acc.setdefault((a, i), []).append(float(col["xyz".index(d)]))
         for (a, i), v in acc.items():
             Y[a, i] = float(np.mean(v))
+    # what each parameter set gave (the particle-dynamics runs log their own)
+    rve = [s for s in samples if not s.get("dem")]
+    if rve:
+        names = {u.path: u.label for u in unknowns}
+        for a, uu in enumerate(U):
+            vals = theta_values(unknowns, [float(u.value(x)) for u, x in zip(unknowns, uu)])
+            log(f"   {tag} {a + 1}: " + ", ".join(f"{names.get(k, k)} {float(v):.4g}" for k, v in vals.items())
+                + " -> " + ", ".join(f"sample {s['i'] + 1} {s['m']['property']} {Y[a, s['i']]:.4g}"
+                                     + (f" (measured {float(s['m']['value']):.4g})" if s["m"].get("value") else "")
+                                     for s in rve))
     return Y
 
 
@@ -796,6 +806,8 @@ def _notes(summ, ident):
     """What the posterior and the sensitivities say in words."""
     notes = []
     for r in summ:
+        if r.get("unreached"):
+            continue            # the measurement lies outside everything computed: said once, above
         if r["edge"] in ("low", "high"):
             side, kind = ("lower", "an upper") if r["edge"] == "low" else ("upper", "a lower")
             lim = r["ci95"][1] if r["edge"] == "low" else r["ci95"][0]
@@ -901,6 +913,69 @@ def _suggest(samples, unknowns, theta, sig_model, F0):
     return out[:5], None
 
 
+def contact_bypass(base, unknowns):
+    """Fillers whose R_int is calibrated while their particles touch with no
+    contact resistance. Heat then crosses the contact faces, which R_int
+    does not cover, so R_int alone cannot lower k below what the chains of
+    touching particles conduct (a dense filling can stay far above the
+    measured value at any R_int). The usual remedy is the link
+    R_c = 2 R_int: in a compound the resin film between two particles is
+    thinner than a voxel, and the heat crosses two filler-resin interfaces
+    in series there."""
+    spec = S.normalize(copy.deepcopy(base))
+    if spec["options"].get("contacts") != "keep":
+        return []
+    paths = {u.path for u in unknowns} | {ln["path"] for u in unknowns for ln in u.links}
+    rc = spec.get("contact_rc") or {}
+    out = []
+    for i, ph in enumerate(spec["phases"]):
+        if f"phases.{i}.r_int" not in paths or ph.get("void") or ph.get("shape") == "network":
+            continue
+        if f"phases.{i}.r_contact" in paths or (ph.get("r_contact") or 0) > 0:
+            continue
+        if any(str(i) in k.split("-") and (v > 0 or f"contact_rc.{k}" in paths) for k, v in rc.items()):
+            continue
+        out.append(ph.get("name") or f"phase {i + 1}")
+    return out
+
+
+def _bracket_notes(samples, U, Y, unknowns, bypass):
+    """A measurement outside every value computed over the ranges: which way,
+    the closest parameter set, and what would reach it."""
+    notes, out_of = [], set()
+    for s in samples:
+        y = Y[:, s["i"]]
+        ok = np.isfinite(y) & (y > 0)
+        if ok.sum() < 2:
+            continue
+        meas, unc = float(s["m"]["value"]), float(s["m"].get("rel_unc") or 0.05)
+        lo, hi = float(y[ok].min()), float(y[ok].max())
+        if lo <= meas * (1.0 + unc) and meas / (1.0 + unc) <= hi:
+            continue
+        side = "below" if meas < lo else "above"
+        idx = np.flatnonzero(ok)
+        j = idx[np.argmin(np.abs(np.log(y[ok]) - math.log(meas)))]
+        at = ", ".join(f"{u.label} = {float(u.value(U[j, k])):.3g}" for k, u in enumerate(unknowns))
+        ends = [f"{u.label} beyond its {'lower' if U[j, k] < 0.5 else 'upper'} end"
+                for k, u in enumerate(unknowns) if U[j, k] <= 1e-6 or U[j, k] >= 1.0 - 1e-6]
+        unit = PROPERTIES[s["m"]["property"]]["unit"]
+        txt = (f"{s['m'].get('label') or 'Measurement ' + str(s['i'] + 1)}: measured {meas:.4g} {unit} lies {side} "
+               f"every value computed over the ranges ({lo:.4g} … {hi:.4g} {unit}, {int(ok.sum())} parameter sets); "
+               f"the closest, {float(y[j]):.4g}, came at {at}.")
+        if side == "below" and s["m"]["property"] == "k" and bypass:
+            txt += (f" The particles of {', '.join(bypass)} touch and their contact faces carry no resistance, so "
+                    f"R_int alone cannot lower k past what the contacts conduct: link the contact resistance to it "
+                    f"(R_c = 2·R_int, two filler-resin interfaces across a resin film thinner than a voxel) or "
+                    f"calibrate R_c as well.")
+        elif ends:
+            txt += " Widen the range of " + " and ".join(ends) + "."
+        else:
+            txt += " No value in the ranges reaches it: a mechanism is missing from the model."
+        notes.append(txt)
+        out_of.add(s["i"])
+    return notes, out_of
+
+
 def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
     """Calibrate the unknowns of `job` against its measurements; writes
     result.json (kind "calibration") and returns a short summary."""
@@ -920,6 +995,10 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
         json.dump(job, fh, ensure_ascii=False, indent=1)
     log(f"== Calibration: {job.get('name') or 'unnamed'}")
     log(f"   {len(job['measurements'])} measurement(s), {p} unknown(s): " + ", ".join(u.label for u in unknowns))
+    bypass = contact_bypass(base, unknowns)
+    if bypass:
+        log(f"   note: the particles of {', '.join(bypass)} touch with no contact resistance; R_int does not act "
+            f"on their contact faces (link R_c = 2·R_int to include them)")
 
     try:
         import numba
@@ -965,6 +1044,7 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
         Rel = np.full((len(U), len(samples)), np.nan)
         Y = _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event, "design", (0.05, 0.45),
                       rel=Rel)
+        stage = ["design"] * len(U)
         ax, Ug = _grid(p)
         history = []
         for rnd in range(rounds + 1):
@@ -1008,6 +1088,7 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
                            (0.45 + 0.4 * rnd / max(rounds, 1), 0.45 + 0.4 * (rnd + 1) / max(rounds, 1)), rel=Rn)
             U = np.vstack([U, new])
             Y = np.vstack([Y, Yn])
+            stage += [f"round {rnd + 1}"] * len(new)
             Rel = np.vstack([Rel, Rn])
 
         # ---- a direct solve at the estimate --------------------------------
@@ -1075,12 +1156,47 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
                 joint["pairs"].append({"a": a, "b": b, "p": M2.T.tolist(),
                                        "x": [float(v) for v in unknowns[a].value(ax)],
                                        "y": [float(v) for v in unknowns[b].value(ax)]})
-        notes = _notes(summ, ident)
+        U_all, Y_all = np.vstack([U, u_map[None, :]]), np.vstack([Y, Yv[None, :]])
+        br_notes, out_of = _bracket_notes(samples, U_all, Y_all, unknowns, bypass)
+        if out_of:
+            # the estimate sits where the computed values come closest, not
+            # where the data put it: no value in the ranges reaches them
+            for r in summ:
+                r["unreached"] = True
+        notes = br_notes + _notes(summ, ident)
         bad = [r for r in rows if abs(r["residual_sigma"]) > 2.5]
-        if bad:
-            notes.append("No parameter set in the ranges reproduces " + ", ".join(r["label"] for r in bad)
+        bad_rest = [r for r, s in zip(rows, samples) if abs(r["residual_sigma"]) > 2.5 and s["i"] not in out_of]
+        if bad_rest:
+            notes.append("No parameter set in the ranges reproduces " + ", ".join(r["label"] for r in bad_rest)
                          + " within its uncertainty: another mechanism is missing from the model (agglomerates, "
                            "porosity, an interphase, a filler property) or a range is too narrow")
+        # R_int and R_c of one filler: in a dense filling the contacts carry
+        # the heat, and one content alone rarely tells the two apart
+        paths_u = {u.path for u in unknowns}
+        both = [(ph.get("name") or f"phase {i + 1}") for i, ph in enumerate(base.get("phases") or [])
+                if {f"phases.{i}.r_int", f"phases.{i}.r_contact"} <= paths_u]
+        c_ix = ident.get("collinearity")
+        if both and (ident.get("underdetermined") or (c_ix and c_ix > 15)):
+            if p == 2:
+                # said in particular below
+                notes = [n for n in notes if not n.startswith(("Fewer measurements than unknowns", "Collinearity index"))]
+            notes.append(f"R_int and R_c of {', '.join(both)} act together in these measurements: they fix a "
+                         f"combination (see Identifiability), not each value. A sample in which the contacts weigh "
+                         f"differently - a lower content (fewer contacts) or another particle size - separates them; "
+                         f"linking R_c = 2·R_int gives one value from one measurement, with the factor as an assumption.")
+        if bypass and not br_notes:
+            notes.append(f"The particles of {', '.join(bypass)} touch with no contact resistance: R_int does not act "
+                         f"on their contact faces, so the estimate also stands for the heat the contacts carry. "
+                         f"Linking R_c = 2·R_int includes them.")
+        # every parameter set solved: the unknowns, what follows them through
+        # links, and the computed value of each sample
+        link_paths = [ln["path"] for u in unknowns for ln in u.links]
+        evals = []
+        for uu, yy, tg in zip(U_all, Y_all, stage + ["check"]):
+            th = [float(u.value(x)) for u, x in zip(unknowns, uu)]
+            tv = theta_values(unknowns, th)
+            evals.append({"stage": tg, "values": th, "linked": [float(tv[q]) for q in link_paths],
+                          "results": [float(v) if math.isfinite(v) else None for v in yy]})
         from . import __version__
         result = {"kind": "calibration", "name": job.get("name") or "Calibration", "version": __version__,
                   "created": time.strftime("%Y-%m-%d %H:%M:%S"), "elapsed_s": time.time() - t0,
@@ -1088,7 +1204,12 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
                   "identifiability": ident, "suggestions": sugg, "suggestions_note": sugg_note,
                   "joint": joint, "history": history, "notes": notes, "model_unc": model_unc,
                   "design": {"points": [[float(u.value(x)) for u, x in zip(unknowns, uu)] for uu in U],
-                             "values": Y.tolist()},
+                             "values": Y.tolist(), "evaluations": evals,
+                             "links": [{"path": q, "label": (cat.get(q) or {}).get("label") or q,
+                                        "unit": PROP_UNITS.get(q.split(".")[-1], ""),
+                                        "expr": next(ln["expr"] for u in unknowns for ln in u.links if ln["path"] == q)}
+                                       for q in link_paths]},
+                  "contact_bypass": bypass,
                   "theory": theory(base), "theory_preview": theory_rows,
                   "apply": {k: float(v) for k, v in theta_values(unknowns, [float(r["map"]) for r in summ]).items()}}
         # what the run list shows, also after a restart (it reads this file)
@@ -1180,11 +1301,16 @@ def preview(job):
     unknowns = [_Unknown(u) for u in job["unknowns"]]
     meas = job["measurements"]
     rx = re.compile(r"^(matrix|phases\.\d+)\.props\.k$|^phases\.\d+\.r_int$")
-    if any(m.get("property") != "k" for m in meas) or not all(
-            rx.match(p) for p in [u.path for u in unknowns] + [ln["path"] for u in unknowns for ln in u.links]):
+    # a contact resistance may follow an unknown: the mean field has no
+    # contacts and leaves it out
+    rx_c = re.compile(r"^phases\.\d+\.r_contact$|^contact_rc\.")
+    lpaths = [ln["path"] for u in unknowns for ln in u.links]
+    if any(m.get("property") != "k" for m in meas) or not all(rx.match(p) for p in [u.path for u in unknowns]) \
+            or not all(rx.match(q) or rx_c.match(q) for q in lpaths):
         return {"available": False,
                 "reason": "The effective-medium preview covers thermal conductivity with the matrix and filler "
-                          "conductivities and R_int as unknowns; the RVE calibration covers the rest"}
+                          "conductivities and R_int as unknowns; the RVE calibration covers the rest (a contact "
+                          "resistance among them: the mean field has no particle contacts)"}
     p = len(unknowns)
     n = {1: 401, 2: 81, 3: 31}[p]
     ax = np.linspace(0.0, 1.0, n)
@@ -1194,6 +1320,14 @@ def preview(job):
     for j, u in enumerate(unknowns):
         lp += u.log_prior(Ug[:, j])
     specs, notes = [], []
+    if any(rx_c.match(q) for q in lpaths):
+        notes.append("The contact resistance that follows an unknown is left out of this preview: the mean-field model "
+                     "has no particle contacts. The RVE calibration includes it, so its estimate differs from this one.")
+    bypass = contact_bypass(base, unknowns)
+    if bypass:
+        notes.append(f"The particles of {', '.join(bypass)} touch and their contact faces carry no resistance. This "
+                     f"mean-field preview does not see contacts, but the RVE does: there R_int alone cannot lower k "
+                     f"past what the contacts conduct. Linking R_c = 2·R_int includes them.")
     mid = [u.value(0.5) for u in unknowns]
     for m in meas:
         f = copy.deepcopy(base)

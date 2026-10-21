@@ -6,7 +6,9 @@ each analysis are now queued as soon as it finishes and drawn by a separate
 process while the next analysis solves; a listener thread reports each one
 the moment it is written, so the browser shows it then. The end of the run
 waits for the queue and renders only what is still missing, so the total
-time is not longer than before.
+time is not longer than before. Since 5.5.1 two or three processes draw from
+the one queue (as the free memory allows), so the figures still due when the
+last analysis ends take a half or a third of the time.
 """
 from __future__ import annotations
 
@@ -35,16 +37,35 @@ def _loop(q_in, q_out, threads):
             q_out.put((name, False, f"{type(e).__name__}: {e}", time.time() - t0))
 
 
-class FigureWorker:
-    """One background process that draws figures in the order they come;
-    on_done(name, ok, error, seconds, title, group) is called from a listener
-    thread as each one finishes."""
+def _n_procs():
+    """Figure processes: up to three, a core of the run each beyond the
+    solves, and about 1.5 GB of free memory each (a large scene)."""
+    try:
+        cores = int(os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 1)
+    except ValueError:
+        cores = os.cpu_count() or 1
+    try:
+        import psutil
+        free = psutil.virtual_memory().available
+    except Exception:                                                # noqa: BLE001
+        free = 4e9
+    return max(1, min(3, cores // 4, int(free // 1.5e9)))
 
-    def __init__(self, on_done=None, threads=2):
+
+class FigureWorker:
+    """Background processes that draw the figures as they come (from one
+    queue); on_done(name, ok, error, seconds, title, group) is called from a
+    listener thread as each one finishes."""
+
+    def __init__(self, on_done=None, threads=2, procs=None):
         ctx = mp.get_context("spawn")
         self.q_in, self.q_out = ctx.Queue(), ctx.Queue()
-        self.proc = ctx.Process(target=_loop, args=(self.q_in, self.q_out, threads), daemon=True)
-        self.proc.start()
+        n = procs or _n_procs()
+        self.procs = [ctx.Process(target=_loop, args=(self.q_in, self.q_out, threads), daemon=True)
+                      for _ in range(n)]
+        for p in self.procs:
+            p.start()
+        self.proc = self.procs[0]
         self.queued = {}            # name -> (title, group)
         self.done = {}              # name -> (ok, error, seconds)
         self.lock = threading.Lock()
@@ -58,7 +79,7 @@ class FigureWorker:
             try:
                 name, ok, err, sec = self.q_out.get(timeout=0.5)
             except queue.Empty:
-                if not self.proc.is_alive():
+                if not self.alive():
                     break
                 continue
             except (EOFError, OSError):
@@ -80,6 +101,9 @@ class FigureWorker:
         self.q_in.put((name, kind, view_dir, req, out))
         return True
 
+    def alive(self):
+        return any(p.is_alive() for p in self.procs)
+
     def pending(self):
         with self.lock:
             return [n for n in self.queued if n not in self.done]
@@ -88,7 +112,7 @@ class FigureWorker:
         """Waits for every queued figure (or the timeout), then stops the
         process. Returns {name: (ok, error, seconds)}."""
         t0 = time.time()
-        while self.pending() and time.time() - t0 < timeout and self.proc.is_alive():
+        while self.pending() and time.time() - t0 < timeout and self.alive():
             if should_stop is not None and should_stop():
                 break
             time.sleep(0.25)
@@ -99,9 +123,12 @@ class FigureWorker:
     def close(self):
         self._stop = True
         try:
-            self.q_in.put(None)
-            self.proc.join(timeout=10)
+            for _ in self.procs:
+                self.q_in.put(None)
+            for p in self.procs:
+                p.join(timeout=10)
         except Exception:                                            # noqa: BLE001
             pass
-        if self.proc.is_alive():
-            self.proc.terminate()
+        for p in self.procs:
+            if p.is_alive():
+                p.terminate()

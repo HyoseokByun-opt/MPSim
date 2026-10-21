@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.5.0-0b62c4" alt="version 5.5.0">
+  <img src="https://img.shields.io/badge/version-5.5.1-0b62c4" alt="version 5.5.1">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-73%20checks-2da44e" alt="73 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-78%20checks-2da44e" alt="78 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -63,6 +63,12 @@ The main capabilities are listed below.
   particle dynamics before they are drawn, which yields the arrangement of a compound after flow. Fillers and further
   matrix materials can be confined to sections (slabs) of the RVE, so that two compounds, a filled layer on an unfilled
   one or a resin interlayer are modelled as one structure.
+- **Compression while the resin flows.** The periodic RVE is shortened along z with its sides free or held, step by
+  step: each step solves the three-dimensional creeping flow of the whole RVE on its voxels (every resin with its own
+  viscosity, the filler spheres rigid, the pores a compressible gas), the spheres move as rigid bodies and the resins
+  and pores as material markers that keep the volume of an incompressible resin. The result is the compressed box,
+  solved by every analysis, with the strain and von Mises stress of each region, how far the pores close and whether
+  particles pass into another resin, shown step by step in 3D.
 - **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
   in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
   packing follows the requested density by Monte-Carlo moves weighted against the crowding of hard spheres, and the
@@ -101,7 +107,9 @@ The main capabilities are listed below.
   bound resin layer or the adhesion of a filler surface) are determined from measured effective properties, including
   viscosity: the acoustic and diffuse mismatch models as a starting point, an identifiability check, a Bayesian calibration
   on an RVE or particle-dynamics surrogate with credible intervals, and the next measurement that adds the most
-  information.
+  information. Every parameter set solved is listed with the value each sample gave; a measurement that no value in the
+  ranges reaches is flagged with the reason (with touching particles the contact resistance is calibrated alongside
+  the interface resistance, since the heat crosses the contact faces).
 - **Studies.** Design of experiments (full factorial, one factor at a time, Latin hypercube; the share of a filler in a
   fixed filler content as a factor; one fixed grid for all cases or a grid per case), Gaussian-process surrogates,
   Sobol sensitivity indices, single-objective optima and NSGA-II Pareto fronts. The result table lists, next to each
@@ -115,7 +123,9 @@ The main capabilities are listed below.
   14 threads). Independent solutions (each property and direction, each EMI frequency, the structure analyses, and on
   a CPU the shear rates of a particle-dynamics flow curve) run side by side within the free memory, and the cores of a
   finished solve go to those still running. A run that goes
-  alone takes every core of the PC by default; several runs share them.
+  alone takes every core of the PC by default; several runs share them. The structure is built on all cores too: the
+  placement of particles, their drawing on the grid and the repair of overlaps give exactly the structure of one core
+  (octahedra at 45 vol%: 23.4 s → 7.7 s; flakes with spheres on 248³: 299 s → 105–118 s).
 - **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as voxels, fields on the RVE
   faces and on sections, arrows, animated field lines and pore networks; publication figures rendered on the server
   (PyVista); animations saved as GIF; live fields during the solution; a single-file HTML report for every run.
@@ -315,9 +325,31 @@ The saturated uptake equals the resin uptake scaled by the mass fraction of the 
 diffusion paths wind between closely spaced and touching particles. The silica restrains the hygroscopic swelling of the
 resin to 0.20 %, which corresponds to a coefficient of moisture expansion of 0.26 per unit mass fraction of water.
 
+## Application example: a filled resin against a porous one in a closed mould
+
+Resin A (1 Pa·s) with 24 vol% air pores fills one half of a 30 µm RVE, resin B (2 Pa·s) with 40 vol% of 5 µm silica
+spheres the other. *Domain → Particle arrangement → After compression* shortens the RVE by 10 % along z at 1/s with x and
+y held (a closed mould), on 60³ voxels in four steps of the three-dimensional resin flow (7 minutes on 18 threads).
+
+<p align="center">
+  <img src="docs/images/compression_box.png" alt="The compressed box in 3D: resin A with flattened pores, resin B with the silica spheres" width="46%">
+  <img src="docs/images/compression_vm.png" alt="von Mises stress in the resins at the end of the compression" width="50%">
+</p>
+
+| Region | Share of the box | Strain z | Strain x | Strain y | von Mises in the resin |
+|---|---|---|---|---|---|
+| Resin A with its pores | 38.0 → 42.2 % | −3.7 % | −2.1 % | +5.1 % | 9.9 Pa |
+| Resin B with the spheres | 30.0 → 32.8 % | −10.5 % | +8.3 % | +0.1 % | 16.5 Pa |
+
+- The pores close from 12.0 to 2.7 vol% of the box and take the volume the mould removes; resin A keeps its volume.
+- The filled resin advances into the porous one: resin B widens by 8.3 % across the interface while resin A narrows by
+  2.1 %. The spheres move with their resin; none ends surrounded by resin A.
+- The stress concentrates in the resin films between the spheres and around the closing pores; the axial stress rises
+  from 66 to 147 Pa as the pores flatten. The compressed box conducts 0.331 W/m·K through z.
+
 ## Verification
 
-`5_SELF_TEST.bat` solves **73 problems with known solutions** (49 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **78 problems with known solutions** (51 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -353,6 +385,11 @@ reference values. A selection:
 | Measured size distribution by channel; bounded normal and log-normal | channel shares; bounds | within 1 %; exact |
 | Uneven dispersions: region, 3x gradient, clusters holding 45–50 % | all particles in the region; ratio; share | exact; 2.3–2.7; 42–47 % |
 | Mechanical test: isotropic material, laminate under uniaxial stress | E, ν, constrained modulus; σ equal in both layers | exact; σzz −10 MPa in both layers |
+| Compression of a resin alone, sides free and plane strain | Trouton: σzz = −3ηε̇ and −4ηε̇, von Mises 3 and 2√3 ηε̇ | exact to 4 digits |
+| Compression with both sides held, a pore of 30.6 vol%, 20 % | pore content by the volume balance, 13.19 vol% | 13.16 vol%, resin volume within 0.04 % |
+| Arrangement after compression: resin A against resin B with 40 vol% silica, 30 % | each resin keeps its share; spheres stay in their resin | shares kept; 0 of 48 spheres in the other resin |
+| Acoustic mismatch across epoxy / alumina | detailed balance Γ₁₂/v₁² = Γ₂₁/v₂² | within 4e-5 |
+| Calibration with touching particles, R_c = 2·R_int | known value 5e-9 m²K/W | 5.01e-9 (95 % 3.8–6.3e-9); R_int alone flagged as not reaching |
 
 Two presets also verify the solver against an exact solution. Copper vias that pass straight through a laminate conduct
 heat as parallel paths, k_z = f·k_Cu + (1 − f)·k_laminate for a copper area fraction f. The presets *PCB thermal vias*
@@ -513,13 +550,14 @@ app/
     shapes.py, geometry.py, generate.py      shapes, size distributions, RVE generation (numba)
     solvers/             conduction.py (periodic FV), fans.py and elastic.py (FANS mechanics),
                          viscosity.py (creeping flow), suspension.py (particle dynamics),
+                         compress.py (compression of the RVE while its resin flows),
                          puma_backend.py (NASA PuMA), complex_cond.py and emi.py (EMI), fullwave.py (openEMS)
     morphology.py, poro.py, percolation.py, grains.py, filtration.py, acoustics.py, streamlines.py
     analytical.py        rigorous bounds and mean-field models
     doe.py, optimise.py, calibrate.py, links.py        studies, surrogate models, calibration, linked inputs
     visual.py, report.py viewer data, publication figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (68 materials), presets.json (30 presets)
+    data/                materials.json (68 materials), presets.json (31 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README images (the user guides are attached to the releases)
@@ -557,7 +595,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.5.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.5.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 
