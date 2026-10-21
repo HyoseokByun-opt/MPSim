@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.5.0",
+  "softwareVersion": "5.5.1",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -180,7 +180,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.5.0</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.5.1</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -197,7 +197,8 @@
         <div class="step"><span class="n">1</span><h3>Build the microstructure</h3>
           <p>Fillers of any shape, size distribution (normal, log-normal or a measured particle-size file) and orientation, pores,
           coatings, hollow particles, multi-filler blends and thin films, dispersed evenly or unevenly (a region, a gradient,
-          clusters), on a voxel representative volume element (RVE) whose size is checked against measured criteria.</p></div>
+          clusters), sheared or compressed while the resin flows, on a voxel representative volume element (RVE) whose size
+          is checked against measured criteria.</p></div>
         <div class="step"><span class="n">2</span><h3>Solve the physics</h3>
           <p>Validated open-source solvers (periodic finite volumes, FFT-accelerated voxel finite elements, NASA PuMA, PoreSpy and
           openEMS) compute the effective tensors, which are compared with rigorous bounds.</p></div>
@@ -221,7 +222,7 @@
         <div class="card"><span class="tag">Mechanics</span><h3>Elasticity, CTE and testing</h3>
           <ul><li>Stiffness, engineering constants, CTE tensor</li><li>Thermal stress; α1 / α2 above Tg</li><li>Tension or compression test by displacement, force or pressure: force-displacement line, stress fields, load at the matrix strength</li></ul></div>
         <div class="card"><span class="tag">Rheology</span><h3>Viscosity and flowability</h3>
-          <ul><li>Viscosity of uncured compounds, flow curves</li><li>Particle dynamics of the fillers: particle-size effect and shear thinning, on CPU or GPU</li><li>Maximum packing, underfill filling time, settling</li></ul></div>
+          <ul><li>Viscosity of uncured compounds, flow curves</li><li>Particle dynamics of the fillers: particle-size effect and shear thinning, on CPU or GPU</li><li>Maximum packing, underfill filling time, settling</li><li>Compression of the RVE in 3D while its resins flow: the strain and von Mises stress of each region, pores that close</li></ul></div>
         <div class="card"><span class="tag">Reliability</span><h3>Moisture</h3>
           <ul><li>Moisture diffusivity and saturated uptake</li><li>Uptake curve of a part, hygroscopic swelling (CME)</li></ul></div>
         <div class="card"><span class="tag">Porous media</span><h3>Flow, filtration, acoustics</h3>
@@ -229,9 +230,9 @@
         <div class="card"><span class="tag">Structure</span><h3>Morphology</h3>
           <ul><li>Porosity, size distributions, porosimetry</li><li>Pore networks, grain statistics, percolation paths</li></ul></div>
         <div class="card"><span class="tag">Inverse problems</span><h3>Calibration</h3>
-          <ul><li>Unknown material values from measured properties, including viscosity</li><li>Credible intervals, identifiability, next measurement</li></ul></div>
+          <ul><li>Unknown material values from measured properties, including viscosity</li><li>Credible intervals, identifiability, next measurement</li><li>Every parameter set solved, and the reason when no value reaches a measurement</li></ul></div>
         <div class="card"><span class="tag">Studies</span><h3>DOE and optimisation</h3>
-          <ul><li>Factorial and Latin-hypercube studies, filler shares, one fixed grid for every case</li><li>Linked inputs: one factor sets several entries (x, 0.8·x, sqrt(x1·x2))</li><li>Realised filler content and shares reported for every case</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
+          <ul><li>Factorial and Latin-hypercube studies, filler shares; every case on the Domain as set, one fixed RVE edge or one per case</li><li>Linked inputs: one factor sets several entries (x, 0.8·x, sqrt(x1·x2))</li><li>Realised filler content and shares reported for every case</li><li>Gaussian-process surrogates, Sobol indices, NSGA-II</li></ul></div>
       </div>
     </div>
   </section>
@@ -381,7 +382,7 @@
       <p class="sub">The engine is verified against problems with known solutions. Every run also reports its own checks (RVE size,
         resolution, particle count, convergence and rigorous bounds) as passed, warning or failed, together with the reason.</p>
       <div class="stats">
-        <div class="stat"><b>73</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>78</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
         <div class="stat"><b>30</b><span>ready-to-run presets for semiconductor materials, four compared with published measurements</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
@@ -447,7 +448,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.5.0},
+  version   = {5.5.1},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
