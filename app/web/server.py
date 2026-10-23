@@ -125,6 +125,14 @@ def save_settings(d):
         pass
 
 
+STATE_WORDS = {"queued": "queued", "running": "running", "done": "done", "failed": "failed", "stopped": "stopped"}
+
+
+def html_escape(t):
+    import html as _h
+    return _h.escape(t)
+
+
 def _persistent_secret(workspace):
     """Session secret kept in the workspace. A new random secret at every start
     would invalidate every browser's owner cookie, and users would lose their
@@ -325,6 +333,29 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                 "workfolder": app.config["RUNS_DIR"],
                 "dir": os.path.join(app.config["RUNS_DIR"], app.config.get("CASE") or "")}
 
+    def ws_restore():
+        """Register the runs of every work folder of the workspace (and of the
+        recent folders elsewhere), so the run list holds all of them after a
+        restart or in a new browser - not only the folder open now."""
+        n = 0
+        for row in wf_info()["folders"]:
+            try:
+                n += app.queue.restore(row["path"])
+            except OSError:
+                pass
+        return n
+
+    def ws_folders():
+        """The work folders whose runs the list shows: the open one, the
+        recent ones and every folder in the workspace that holds runs."""
+        return [row["path"] for row in wf_info()["folders"]]
+
+    def shared():
+        """A server started with an access token is shared by several people:
+        each sees their own runs. Without one it is one person's program, and
+        every run in the workspace is theirs, whichever browser started it."""
+        return bool(app.config.get("TOKEN"))
+
     def wf_info():
         cur = app.config["RUNS_DIR"]
         seen, rows = set(), []
@@ -384,6 +415,10 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             out = wf_use(st["current"] or time.strftime("%Y-%m-%d"))
         except (ValueError, OSError):
             out = wf_use(time.strftime("%Y-%m-%d"))
+        try:
+            ws_restore()
+        except Exception:                                            # noqa: BLE001
+            pass
         s = load_settings()
         s["workspace"] = p
         s["recent_workspaces"] = ([p] + [q for q in s.get("recent_workspaces") or []
@@ -408,6 +443,12 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         runs_dir, restored = wf_use(time.strftime("%Y-%m-%d"))
     print(f"  workspace:   {app.config['WORKSPACE']}")
     print(f"  work folder: {runs_dir} ({restored} runs restored)")
+    try:
+        more = ws_restore()
+        if more:
+            print(f"  other work folders: {more} runs restored")
+    except Exception as e:                                           # noqa: BLE001
+        print(f"  (the other work folders could not be read: {e})")
 
     # ------------------------------------------------------------ helpers
     def owner():
@@ -529,9 +570,19 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             from mpsim.pipeline import _plan_phases
             plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
             est_mem_gb.last_plan = plan
-            return round(max((plan.get("memory_gb") or {"-": 0.0}).values()), 3)
+            mem = plan.get("memory_gb") or {"-": 0.0}
+            # the structure phase: the generator's arrays, and for the
+            # arrangement after compression the creeping-flow solves that
+            # build it (voxel FE, like elasticity)
+            n = plan["N"] * plan["N"] * (plan["Nz"] if plan.get("film") else plan["N"])
+            st = float(mem.get("structure") or 0.0)
+            if spec["rve"].get("arrangement") == "pressed":
+                st += n * R.FANS_BYTES / 1e9
+            est_mem_gb.last_struct = round(st, 3)
+            return round(max(mem.values()), 3)
         except Exception:                                   # noqa: BLE001
             est_mem_gb.last_plan = None
+            est_mem_gb.last_struct = None
             return 0.0
 
     app.queue.estimator = est_mem_gb
@@ -662,7 +713,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         except Exception:                                            # noqa: BLE001
             return None, False
         case = app.config.get("CASE") or ""
-        cands = [j for j in app.queue.for_owner(owner_or_none(), limit=100000, folder=app.config["RUNS_DIR"])
+        cands = [j for j in app.queue.for_owner(owner_or_none(), limit=100000, folder=app.config["RUNS_DIR"],
+                                                everyone=not shared())
                  if j.case == case and j.state == "done" and not (j.meta or {}).get("doe")
                  and os.path.exists(os.path.join(j.out_dir, "structure", key + ".npz"))]
         if not cands:
@@ -694,7 +746,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         except ValueError as e:
             return jsonify({"ok": False, "errors": str(e).split("\n")}), 400
         form["_limits"] = app.config["LIMITS"]
-        meta = {"name": spec["name"], "analyses": spec["analyses"], "mem_gb": est_mem_gb(form)}
+        meta = {"name": spec["name"], "analyses": spec["analyses"], "mem_gb": est_mem_gb(form),
+                "mem_struct_gb": est_mem_gb.last_struct, "gated": True}
         meta.update(run_tags(spec, getattr(est_mem_gb, "last_plan", None)))
         src, append = find_reuse(spec, prefer)
         info = {}
@@ -766,7 +819,9 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
     def api_list():
         me = owner()
         rows = []
-        for j in app.queue.for_owner(me, folder=app.config["RUNS_DIR"]):
+        cur = os.path.normcase(os.path.abspath(app.config["RUNS_DIR"]))
+        for j in app.queue.for_owner(me, limit=2000, folders=ws_folders() + [app.config["RUNS_DIR"]],
+                                     everyone=not shared()):
             if "kind" not in j.meta:
                 # a run from before the tags: read them from its input once
                 try:
@@ -787,6 +842,9 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                          # the case folder this run lives in, so the list can be
                          # grouped the way the directory tree is
                          "case": j.case,
+                         # and its work folder: the open one first, the others below
+                         "folder": os.path.basename((j.folder or "").rstrip("\\/")),
+                         "in_current": os.path.normcase(os.path.abspath(j.folder or "")) == cur,
                          # the study a DOE case belongs to, so the run list can
                          # fold a study into one entry instead of 64 loose rows
                          "doe": j.meta.get("doe"),
@@ -795,8 +853,11 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                          "elapsed_s": ((j.ended or time.time()) - j.started) if j.started else 0,
                          "headline": (j.summary or {}).get("headline") if j.state == "done" else None,
                          "queue_position": app.queue.position(j) if j.state == "queued" else 0,
-                         # why a queued run waits (a free place, or memory)
-                         "wait": app.queue.wait_reason(j) if j.state == "queued" else "",
+                         # why a queued run waits (a free place, or memory), or
+                         # a running one with its structure built (memory to solve)
+                         "wait": (app.queue.wait_reason(j) if j.state == "queued"
+                                  else app.queue.gate_reason(j) if j.state == "running" else ""),
+                         "phase": j.phase if j.state == "running" else None,
                          "threads": j.threads if j.state == "running" else None})
         return jsonify(rows)
 
@@ -828,7 +889,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         job = job_or_404(jid)
         # an ownerless run belongs to no one in particular - the command line,
         # or a workspace copied in - so anyone who can see it may remove it
-        if job.owner is not None and job.owner != owner():
+        if shared() and job.owner is not None and job.owner != owner():
             abort(403, "Runs of other users cannot be deleted")
         if job.state in ("running", "queued"):
             abort(409, "A running or queued run must be stopped first")
@@ -1107,7 +1168,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
     def api_doe_list():
         me = owner()
         out = []
-        for s in app.doe.all(me):
+        for s in app.doe.all(me if shared() else None):
             rows, _ = app.doe.rows(s, app.queue)
             counts = {}
             for r in rows:
@@ -1223,7 +1284,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         except ValueError as e:
             return jsonify({"ok": False, "errors": str(e).split("\n")}), 400
         meta = {"name": form["name"], "analyses": s.get("analyses") or [], "doe": sid,
-                "mem_gb": est_mem_gb(form), "doe_label": case["label"]}
+                "mem_gb": est_mem_gb(form), "mem_struct_gb": est_mem_gb.last_struct, "gated": True,
+                "doe_label": case["label"]}
         job = app.queue.submit(owner_or_none(), form, case_dir(), meta,
                                folder=app.config["RUNS_DIR"], case=app.config.get("CASE") or "")
         return jsonify({"ok": True, "id": job.id, "name": form["name"]})
@@ -1253,7 +1315,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                                   parameters=s.get("parameters"))
             form["_limits"] = app.config["LIMITS"]
             meta = {"name": form["name"], "analyses": s.get("analyses") or [], "doe": sid,
-                    "mem_gb": est_mem_gb(form), "doe_label": case["label"]}
+                    "mem_gb": est_mem_gb(form), "mem_struct_gb": est_mem_gb.last_struct, "gated": True,
+                    "doe_label": case["label"]}
             if old is not None:
                 where, folder, cname = os.path.dirname(old.out_dir), old.folder, old.case
             else:
@@ -1281,7 +1344,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         s = app.doe.get(sid)
         if s is None:
             abort(404, "DOE study not found")
-        if s.get("owner") not in (owner(), None):
+        if shared() and s.get("owner") not in (owner(), None):
             abort(403, "DOE studies of other users cannot be deleted")
         if request.args.get("runs") == "1":
             jobs = [app.queue.get(c["job_id"]) for c in s["cases"]]
@@ -1310,6 +1373,24 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         if not os.path.exists(p):
             abort(404, "No report is available yet")
         return send_file(p, mimetype="text/html", max_age=0)
+
+    @app.get("/api/jobs/<jid>/input_report")
+    def api_input_report(jid):
+        """The inputs of a run as a short report: for a case still waiting in
+        the queue or running, what it will build and compute."""
+        job = job_or_404(jid)
+        from mpsim import report as RP
+        form = copy.deepcopy(job.spec or {})
+        try:
+            pl, spec, _ = plan_form(form)
+        except ValueError as e:
+            return Response(f"<p>The input of this run cannot be read: {html_escape(str(e))}</p>", mimetype="text/html")
+        try:
+            page = RP.input_html(spec, pl, job.meta if isinstance(job.meta, dict) else {}, STATE_WORDS.get(job.state, job.state),
+                                 job.created)
+        except Exception as e:                                       # noqa: BLE001
+            return Response(f"<p>The input report could not be made: {html_escape(str(e))}</p>", mimetype="text/html")
+        return Response(page, mimetype="text/html")
 
     @app.get("/api/jobs/<jid>/download/<what>")
     def api_download(jid, what):

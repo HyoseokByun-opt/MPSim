@@ -357,6 +357,15 @@ class SolvePool:
         except Exception:                                              # noqa: BLE001
             self.mgr, self.q, self.allot = None, None, None
 
+    def cores_now(self):
+        """The job's cores now: the server's queue may change them while the
+        job runs (MPSIM_JOB_CORES, set by the job's process)."""
+        try:
+            v = int(os.environ.get("MPSIM_JOB_CORES") or 0)
+        except ValueError:
+            v = 0
+        return max(1, v) if v > 0 else self.cores
+
     def share(self, labels, name="labels"):
         p = os.path.join(self.tmp, f"{name}.npy")
         np.save(p, np.ascontiguousarray(labels))
@@ -392,12 +401,17 @@ class SolvePool:
             if self.allot is None or not running:
                 return
             idx = [i for i, _ in running.values()]
+            cores = self.cores_now()
             if queue:
-                base = max(1, self.cores // max(1, self.workers))
+                base = max(1, cores // max(1, self.workers))
                 want = {i: threads_of.get(i, base) for i in idx}
+                tot = sum(want.values())
+                if tot > cores:
+                    # the job's cores were cut: each solve keeps its part
+                    want = {i: max(1, (n * cores) // tot) for i, n in want.items()}
             else:
                 n = len(idx)
-                q, r = divmod(self.cores, n)
+                q, r = divmod(cores, n)
                 order = sorted(idx)
                 want = {i: max(1, q + (1 if k < r else 0)) for k, i in enumerate(order)}
             for i, n in want.items():
@@ -440,8 +454,9 @@ class SolvePool:
                 # its share: an equal part of the job's cores while more
                 # solves wait, else every core the running ones leave free
                 busy = sum(threads_of.get(j, 0) for j, _ in running.values())
-                base = max(1, self.cores // self.workers)
-                threads_of[i] = max(1, min(self.cores - busy, base) if queue else self.cores - busy)
+                cores = self.cores_now()
+                base = max(1, cores // self.workers)
+                threads_of[i] = max(1, min(cores - busy, base) if queue else cores - busy)
                 if self.allot is not None:
                     try:
                         self.allot[i] = threads_of[i]

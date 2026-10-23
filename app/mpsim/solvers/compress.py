@@ -202,6 +202,102 @@ def push_apart(c, r, L, max_iter=200, tol=1e-4):
     return worst
 
 
+R_GAS = 8.314462618
+
+
+class Cure:
+    """The cure of every resin while the RVE is compressed: Kamal-Sourour
+    kinetics d(alpha)/dt = (k1 + k2 alpha^m)(1 - alpha)^n, k_i = A_i
+    exp(-E_i / R T), and the Castro-Macosko viscosity
+    eta = eta0(T) (alpha_g / (alpha_g - alpha))^(A + B alpha), which diverges at
+    the gel point alpha_g. The temperature is uniform in the RVE (heat crosses
+    a few tens of µm in milliseconds) and follows the mould through a lumped
+    exchange: rho c dT/dt = sum(heat of each resin x its rate) - rho c (T -
+    T_mould) / tau, tau = rho c L^2 / (pi^2 k) for a part of thickness L.
+
+    kin: {label: {E1, A1, E2, A2 (J/mol, 1/s), m, n, ag, A, B, Ea (J/mol)}};
+    eta0: {label: viscosity of the uncured resin at the mould temperature};
+    heat: {label: heat released per unit conversion per volume of the RVE,
+    J/m^3}; rhocp: J/m^3 K; tau: s (0 or None: isothermal)."""
+
+    def __init__(self, kin, eta0, T_mold_C, heat, rhocp, tau, alpha0=0.0):
+        self.labels = sorted(kin)
+        self.kin = kin
+        self.eta0 = eta0
+        self.Tm = float(T_mold_C) + 273.15
+        self.T = self.Tm
+        self.t = 0.0
+        self.a = np.full(len(self.labels), float(alpha0))
+        self.heat = np.array([float(heat.get(li, 0.0)) for li in self.labels])
+        self.rhocp = float(rhocp)
+        self.tau = float(tau or 0.0)
+
+    def _rates(self, a, T):
+        r = np.empty(len(self.labels))
+        for i, li in enumerate(self.labels):
+            k = self.kin[li]
+            ai = min(max(a[i], 0.0), 1.0)
+            k1 = k["A1"] * math.exp(-k["E1"] / (R_GAS * T))
+            k2 = k["A2"] * math.exp(-k["E2"] / (R_GAS * T))
+            r[i] = (k1 + k2 * ai ** k["m"]) * (1.0 - ai) ** k["n"] if ai < 1.0 else 0.0
+        return r
+
+    def _deriv(self, a, T):
+        r = self._rates(a, T)
+        dT = float(np.dot(self.heat, r)) / self.rhocp - ((T - self.Tm) / self.tau if self.tau > 0 else 0.0)
+        if self.tau <= 0:
+            dT = 0.0
+        return r, dT
+
+    def advance(self, dt):
+        """Fourth-order Runge-Kutta in sub-steps of at most 1 % conversion."""
+        t_left = float(dt)
+        while t_left > 0:
+            r, _ = self._deriv(self.a, self.T)
+            rmax = float(r.max()) if len(r) else 0.0
+            h = t_left if rmax <= 0 else min(t_left, 0.01 / rmax)
+            if self.tau > 0:
+                h = min(h, 0.2 * self.tau)
+            k1a, k1T = self._deriv(self.a, self.T)
+            k2a, k2T = self._deriv(self.a + 0.5 * h * k1a, self.T + 0.5 * h * k1T)
+            k3a, k3T = self._deriv(self.a + 0.5 * h * k2a, self.T + 0.5 * h * k2T)
+            k4a, k4T = self._deriv(self.a + h * k3a, self.T + h * k3T)
+            self.a = np.minimum(self.a + h / 6.0 * (k1a + 2 * k2a + 2 * k3a + k4a), 1.0)
+            self.T += h / 6.0 * (k1T + 2 * k2T + 2 * k3T + k4T)
+            t_left -= h
+        self.t += dt
+
+    def alpha(self, li):
+        return float(self.a[self.labels.index(li)])
+
+    def gelled(self, li):
+        return self.alpha(li) >= 0.999 * self.kin[li]["ag"]
+
+    def all_gelled(self):
+        return all(self.gelled(li) for li in self.labels)
+
+    def viscosity(self, li):
+        """Castro-Macosko viscosity now (inf at and past the gel point)."""
+        k = self.kin[li]
+        a = self.alpha(li)
+        if a >= 0.999 * k["ag"]:
+            return math.inf
+        f = math.exp(k.get("Ea", 0.0) / R_GAS * (1.0 / self.T - 1.0 / self.Tm))
+        return self.eta0[li] * f * (k["ag"] / (k["ag"] - a)) ** (k["A"] + k["B"] * a)
+
+    def dt_for(self, dalpha):
+        """The time for the fastest resin to cure by dalpha, or to reach its
+        gel point, whichever is first."""
+        r = self._rates(self.a, self.T)
+        best = math.inf
+        for i, li in enumerate(self.labels):
+            ag = self.kin[li]["ag"]
+            if self.a[i] >= 0.999 * ag or r[i] <= 0:
+                continue
+            best = min(best, min(dalpha, 0.999 * ag - self.a[i] + 1e-6) / r[i])
+        return best
+
+
 class Compress:
     """base: table label of every voxel of the initial N x N x N structure
     without the spheres (the resin regions, the pores; under a sphere, the
@@ -211,7 +307,8 @@ class Compress:
     None for others; pore: bool per table label. h: voxel (µm)."""
 
     def __init__(self, base, h, mu, pore, centres, radii, sphere_label, raster, lateral="xy", compression=0.3,
-                 rate=1.0, steps=None, log=None, should_stop=None, progress=None, tol=1e-4, frames=True):
+                 rate=1.0, steps=None, log=None, should_stop=None, progress=None, tol=1e-4, frames=True,
+                 cure=None, stress_limit=None, t_max=None):
         base = np.ascontiguousarray(base, np.uint8)
         self.h = float(h)
         self.L0 = np.array(base.shape, float) * self.h
@@ -239,6 +336,8 @@ class Compress:
         lo, hi = float(np.nanmin(mu_r)), float(np.nanmax(mu_r))
         self.mu = np.where(resin, mu_r, np.where(self.pore, BUBBLE_RATIO * lo, RIGID_RATIO * hi))
         self.lam = np.where(self.pore, BUBBLE_RATIO * lo, PENALTY * hi)
+        self.mu0 = self.mu.copy()
+        self.mu_cap = RIGID_RATIO * hi             # a gelled resin: as stiff as the spheres
         self.c = np.array(centres, float).reshape(-1, 3)
         self.r = np.asarray(radii, float)
         self.slab = np.asarray(sphere_label, np.int64)
@@ -256,6 +355,62 @@ class Compress:
         self.tol = tol
         self.keep_frames = frames
         self.has_pores = bool(self.pore[self.cls_lab].any())
+        # the cure: viscosities that rise with conversion; the closing rate
+        # set, or limited by an axial stress the press can apply
+        self.cure = cure
+        self.stress_limit = float(stress_limit) if stress_limit else None
+        self.t_max = float(t_max) if t_max else None
+
+    def cure_viscosities(self):
+        """Every curing resin at its viscosity now, its bulk penalty with it.
+        The rest follows the resins that still flow, so that the contrasts
+        stay those of the start: the spheres - and a resin past its gel
+        point - RIGID_RATIO times the stiffest of them, the pores
+        BUBBLE_RATIO times the softest. (Held at the start's values, a resin
+        near its gel point reached the spheres' viscosity and the RVE became
+        one uniform material.)"""
+        eta = {li: self.cure.viscosity(li) for li in self.cure.labels}
+        flowing = [v for v in eta.values() if math.isfinite(v)]
+        flowing += [float(self.mu0[li]) for li in range(len(self.mu))
+                    if self.resin[li] and li not in eta and math.isfinite(self.mu0[li])]
+        if not flowing:
+            return                                     # every resin gelled: the run stops
+        hi, lo = max(flowing), min(flowing)
+        rigid = RIGID_RATIO * hi
+        for li, v in eta.items():
+            self.mu[li] = v if math.isfinite(v) else rigid
+            self.lam[li] = PENALTY * self.mu[li]
+        solid = ~self.resin & ~self.pore
+        self.mu[solid] = rigid
+        self.lam[solid] = PENALTY * hi
+        self.mu[self.pore] = BUBBLE_RATIO * lo
+        self.lam[self.pore] = BUBBLE_RATIO * lo
+        self.mu_cap = rigid
+
+    def _mean_thinning(self, lab, dt, n=16):
+        """Mean over the next dt of eta(now) / eta(t) of the curing resins
+        (their volume-weighted viscosity), from a copy of the cure."""
+        import copy
+        c = copy.deepcopy(self.cure)
+        w = np.array([float(np.count_nonzero(lab == li)) for li in c.labels])
+        w = w / max(w.sum(), 1.0)
+
+        def eta_mix(cc):
+            return float(sum(wi * min(cc.viscosity(li), self.mu_cap) for wi, li in zip(w, cc.labels)))
+        e0 = eta_mix(c)
+        vals = [1.0]
+        for _ in range(n):
+            c.advance(dt / n)
+            vals.append(e0 / eta_mix(c))
+        return float(np.trapz(vals, dx=1.0 / n))
+
+    @staticmethod
+    def _scale(flow, f):
+        """A flow solved at a unit rate, at the rate f."""
+        for k in ("e", "x", "eps", "div", "stress", "sigma"):
+            if flow.get(k) is not None:
+                flow[k] = flow[k] * (np.float32(f) if k == "stress" else f)
+        flow["P"] = flow["P"] * f
 
     # ------------------------------------------------------------------
     def field(self):
@@ -483,16 +638,38 @@ class Compress:
         reg = {int(li): {"strain": np.zeros(6), "strain_all": np.zeros(6), "vm": [], "volume": [],
                          "volume_all": []} for li in labels_all if self.resin[li]}
         frames = []
+        if self.cure is not None:
+            for k in ("time_s", "T_C", "rate_1_s"):
+                series[k] = []
+            series["alpha"] = {int(li): [] for li in self.cure.labels}
+            series["eta_Pa_s"] = {int(li): [] for li in self.cure.labels}
+        eps_target = -math.log(1.0 - self.comp)
+        eps_done = 0.0
+        stop_why = None
+        rate_set = self.rate
         lab, fld, owner = self.labels()
         around0 = self.surroundings(fld)
         vol0 = {li: float(np.count_nonzero(lab == li)) * self.h ** 3 for li in reg}
         pore0 = float(np.mean(self.pore[lab]))
         max_ov = 0.0
         flow = None
-        for step in range(self.n_steps + 1):
+        step = 0
+        while True:
             if self.should_stop is not None and self.should_stop():
                 raise InterruptedError
-            flow = self.solve(self.flow_labels(lab, fld, owner))
+            if self.cure is not None:
+                # solve at a unit rate, then close at the rate the press can
+                self.cure_viscosities()
+                self.rate = 1.0
+                flow = self.solve(self.flow_labels(lab, fld, owner))
+                s_unit = abs(float(flow["sigma"][2]))
+                rate = rate_set
+                if self.stress_limit and s_unit > 0:
+                    rate = min(rate_set, self.stress_limit / s_unit)
+                self._scale(flow, rate)
+                self.rate = rate
+            else:
+                flow = self.solve(self.flow_labels(lab, fld, owner))
             vm = self.von_mises(flow["stress"])
             # the region of every sphere: the resin around it; a region is
             # its resin with the spheres in it
@@ -508,6 +685,13 @@ class Compress:
             series["strain_z"].append(float(math.log(self.A[2])))
             series["pore_fraction"].append(float(np.mean(self.pore[lab])))
             series["iterations"].append(int(flow["iterations"]))
+            if self.cure is not None:
+                series["time_s"].append(float(self.cure.t))
+                series["T_C"].append(float(self.cure.T - 273.15))
+                series["rate_1_s"].append(float(self.rate))
+                for li in self.cure.labels:
+                    series["alpha"][int(li)].append(self.cure.alpha(li))
+                    series["eta_Pa_s"][int(li)].append(float(min(self.cure.viscosity(li), 1e30)))
             hv3 = float(np.prod(self.L / np.array(self.shape)))
             for li, rr in reg.items():
                 m = lab == li
@@ -521,12 +705,39 @@ class Compress:
             if self.keep_frames:
                 frames.append(self.frame(lab, vm_r))
             self.progress(step, self.n_steps, comp, flow["sigma"][2])
-            self.log(f"    step {step}/{self.n_steps}: compression {100 * comp:.1f} %, box "
+            cure_txt = ""
+            if self.cure is not None:
+                cure_txt = (f", t {self.cure.t:.4g} s, {self.cure.T - 273.15:.4g} °C, rate {self.rate:.3g} 1/s, cure "
+                            + ", ".join(f"{self.cure.alpha(li):.3f}" for li in self.cure.labels))
+            self.log(f"    step {step}{'' if self.cure is not None else '/' + str(self.n_steps)}: compression {100 * comp:.1f} %, box "
                      + " × ".join(f"{v:.3g}" for v in self.L) + f" µm, σzz {flow['sigma'][2]:.4g} Pa, "
-                     f"lateral strain rates {flow['e'][0] / self.rate:+.3f} / {flow['e'][1] / self.rate:+.3f}, "
-                     f"{flow['iterations']} iterations")
-            if step == self.n_steps:
-                break
+                     f"lateral strain rates {flow['e'][0] / max(self.rate, 1e-300):+.3f} / {flow['e'][1] / max(self.rate, 1e-300):+.3f}, "
+                     f"{flow['iterations']} iterations" + cure_txt)
+            if self.cure is None:
+                if step == self.n_steps:
+                    break
+            else:
+                if eps_done >= eps_target * (1.0 - 1e-6):
+                    stop_why = "compressed"
+                elif self.cure.all_gelled():
+                    stop_why = "gelled"
+                elif self.t_max and self.cure.t >= self.t_max:
+                    stop_why = "time"
+                elif self.rate < 1e-6 * max(rate_set, 1e-300):
+                    # the closing has stopped: at the gel point, or short of it
+                    near = all(self.cure.alpha(li) >= 0.98 * self.cure.kin[li]["ag"] for li in self.cure.labels)
+                    stop_why = "gelled" if near else "stalled"
+                elif step >= 200:
+                    stop_why = "steps"
+                if stop_why:
+                    break
+                # the step: at most 5 % strain and 4 % conversion, never past
+                # the gel point of a resin or the time limit
+                dt = min(0.05, eps_target - eps_done) / self.rate
+                dt = min(dt, self.cure.dt_for(0.04))
+                if self.t_max:
+                    dt = min(dt, self.t_max - self.cure.t)
+                self.dt = max(dt, 1e-9)
             # the strain of each resin over the step: the mean strain rate of
             # its voxels times the step
             for li, rr in reg.items():
@@ -536,8 +747,20 @@ class Compress:
                 m = in_reg == li
                 if m.any():
                     rr["strain_all"] += flow["eps"][:, m].mean(axis=1) * self.dt
+            if self.cure is not None and self.stress_limit and self.rate < rate_set * (1.0 - 1e-9):
+                # held at the stress limit, the rate falls as the resins
+                # thicken during the step: the mean of eta(start) / eta(t)
+                # over the step (the curing resins' volume-weighted viscosity)
+                f = self._mean_thinning(lab, self.dt)
+                rate_new = min(rate_set, self.rate * f)
+                self._scale(flow, rate_new / self.rate)
+                self.rate = rate_new
             flow["eps"] = None
             max_ov = max(max_ov, self.move(flow, owner))
+            if self.cure is not None:
+                self.cure.advance(self.dt)
+                eps_done += self.rate * self.dt
+            step += 1
             lab, fld, owner = self.labels()
         around1 = self.surroundings(fld)
         out = {"series": series, "frames": frames, "labels": lab, "field": fld, "owner": owner,
@@ -551,7 +774,7 @@ class Compress:
                "pore_fraction": [pore0, float(np.mean(self.pore[lab]))],
                "crossed": int(np.count_nonzero((around0 >= 0) & (around1 >= 0) & (around0 != around1))),
                "around0": around0.tolist(), "around1": around1.tolist(),
-               "max_overlap": max_ov, "steps": self.n_steps, "seconds": time.time() - t0}
+               "max_overlap": max_ov, "steps": step, "seconds": time.time() - t0, "stop": stop_why}
         return out
 
     def frame(self, lab, vm):

@@ -178,6 +178,33 @@ def _force_pass(out, lab, fmat, ii, jj, kk):
 
 
 @njit(parallel=True, fastmath=True, cache=True)
+def _force_pass_eig(out, lab, gmat, eig, ii, jj, kk):
+    """Adds each voxel's nodal forces of an isotropic eigenstrain eig[voxel]:
+    gmat[material] (24) times the voxel's eigenstrain."""
+    nx, ny, nz = lab.shape
+    for t in prange(ii.size):
+        i = ii[t]
+        for j in jj:
+            for k in kk:
+                m = lab[i, j, k]
+                e = eig[i, j, k]
+                if e == 0.0:
+                    continue
+                for n in range(8):
+                    a = i + (n & 1)
+                    if a == nx:
+                        a = 0
+                    b = j + ((n >> 1) & 1)
+                    if b == ny:
+                        b = 0
+                    c = k + ((n >> 2) & 1)
+                    if c == nz:
+                        c = 0
+                    for d in range(3):
+                        out[d, a, b, c] += gmat[m, 3 * n + d] * e
+
+
+@njit(parallel=True, fastmath=True, cache=True)
 def _strain(u, lab, Bbar, eps):
     """Voxel-averaged strain of the displacement fluctuation (6 per voxel)."""
     nx, ny, nz = lab.shape
@@ -359,9 +386,11 @@ class FANS:
             z[c] = sfft.irfftn(R[c], s=self.shape, workers=w)
         return z
 
-    def rhs(self, E_voigt, dT=0.0):
+    def rhs(self, E_voigt, dT=0.0, eig=None):
         """Nodal forces of a macroscopic strain E and a thermal eigenstrain
-        alpha dT: f = - sum_e Bbar^T C_e (E - alpha_e dT [1 1 1 0 0 0])."""
+        alpha dT: f = - sum_e Bbar^T C_e (E - alpha_e dT [1 1 1 0 0 0]).
+        eig: an isotropic eigenstrain per voxel (a temperature field's thermal
+        strain), added to the material's alpha dT."""
         E_voigt = np.asarray(E_voigt, float)
         fmat = np.empty((len(self.C), 24))
         for m, Cm in enumerate(self.C):
@@ -371,19 +400,27 @@ class FANS:
         b = np.zeros((3,) + self.shape)
         for ii, jj, kk in self.passes:
             _force_pass(b, self.lab, fmat, ii, jj, kk)
+        if eig is not None:
+            mvec = np.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+            gmat = np.ascontiguousarray([self.Bbar.T @ (Cm @ mvec) for Cm in self.C])
+            ef = np.ascontiguousarray(eig, dtype=np.float64)
+            for ii, jj, kk in self.passes:
+                _force_pass_eig(b, self.lab, gmat, ef, ii, jj, kk)
         return b
 
     def solve(self, E_voigt, dT=0.0, tol=1e-5, maxiter=5000, callback=None, should_stop=None,
-              keep_stress=False, keep_strain=False, keep_disp=False, x0=None):
+              keep_stress=False, keep_strain=False, keep_disp=False, x0=None, eig=None):
         """Mean stress (Voigt) for a macroscopic strain and a temperature
         change; the per-voxel stress (6, nx, ny, nz) when keep_stress, the
         per-voxel total strain in self.last_strain when keep_strain, and the
         nodal displacement fluctuation (3, nx, ny, nz; node i,j,k at the lower
         corner of voxel i,j,k, unit voxel) in self.last_disp when keep_disp.
         x0: a first guess of that fluctuation (the solution of a nearby
-        problem, such as the previous step of a deforming structure)."""
+        problem, such as the previous step of a deforming structure).
+        eig: an isotropic eigenstrain per voxel (see rhs); the stresses are
+        then C (eps - alpha dT - eig)."""
         t0 = time.time()
-        b = self.rhs(E_voigt, dT)
+        b = self.rhs(E_voigt, dT, eig)
         bn = math.sqrt(_dot(b, b))
         x = np.zeros_like(b)
         it, res = 0, 0.0
@@ -433,6 +470,8 @@ class FANS:
             mask = self.lab == m
             e = eps[:, mask] + E_voigt[:, None]
             e[:3] -= self.alpha[m] * dT
+            if eig is not None:
+                e[:3] -= np.asarray(eig)[mask][None, :]
             s = self.C[m] @ e
             sbar += s.sum(axis=1)
             if keep_stress:

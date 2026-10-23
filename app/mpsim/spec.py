@@ -44,7 +44,11 @@ ANALYSES = {
     "grains":       ("Grain and filler analysis", "Structure analysis"),
     "viscosity":    ("Viscosity and flowability (uncured compound)", "Rheology"),
     "moisture":     ("Moisture uptake, diffusion and swelling", "Reliability"),
+    # coupled analyses of a thin film (v5.6)
+    "thermomech":   ("Thermal stress and warpage (heat flow coupled to stress)", "Multiphysics"),
+    "joule":        ("Joule heating (current coupled to temperature)", "Multiphysics"),
 }
+FILM_ANALYSES = {"thermomech", "joule"}
 PORE_ANALYSES = {"permeability", "tortuosity", "acoustics", "radiation", "porosimetry", "pore_network",
                  "filtration"}
 
@@ -142,6 +146,66 @@ def _mechtest(mt, rve, errors):
             out["length_mm"] = _num(mt.get("length_mm"), "specimen length along the load", lo=1e-9)
         out["area_mm2"] = _num(mt.get("area_mm2", 10.0), "loaded area of the specimen", lo=1e-12)
         out["strength_MPa"] = _num(mt.get("strength_MPa"), "strength of the matrix", lo=0.0, allow_none=True) or None
+    except ValueError as e:
+        errors.append(str(e))
+    return out
+
+
+def _thermomech(tm, errors):
+    """Thermal stress and warpage of a film (solvers/thermomech.py): the
+    stress-free temperature (where the film was cured), the two face
+    temperatures in service (z = 0 the bottom, the die side), how the film is
+    supported, an optional substrate under it, the span of the warpage."""
+    lib = None
+    sub = tm.get("substrate") or {}
+    out = {"T_ref": 175.0, "T_bottom": 25.0, "T_top": 25.0,
+           "support": tm.get("support") if tm.get("support") in ("free", "substrate", "held") else "free",
+           "span_mm": 10.0, "compare_uniform": bool(tm.get("compare_uniform", True)), "substrate": None}
+    try:
+        out["T_ref"] = _num(tm.get("T_ref", 175.0), "stress-free temperature", -273.0, 2000.0)
+        out["T_bottom"] = _num(tm.get("T_bottom", 25.0), "temperature of the bottom face", -273.0, 2000.0)
+        out["T_top"] = _num(tm.get("T_top", 25.0), "temperature of the top face", -273.0, 2000.0)
+        out["span_mm"] = _num(tm.get("span_mm", 10.0), "span of the warpage", 1e-6, 1e5)
+        if out["support"] == "substrate":
+            mid = sub.get("material_id") or "si"
+            props = {}
+            if sub.get("E") in (None, "") or sub.get("nu") in (None, "") or sub.get("alpha") in (None, ""):
+                lib = M.library_by_id()
+                if mid not in lib:
+                    raise ValueError(f"The substrate material '{mid}' is not in the library")
+                props = lib[mid]["props"]
+            name = sub.get("name") or (lib[mid]["name"] if lib and mid in lib else mid)
+            out["substrate"] = {
+                "material_id": mid, "name": name,
+                "E": _num(sub.get("E") if sub.get("E") not in (None, "") else props.get("E"), "substrate Young's modulus", 1e-6, 1e4),
+                "nu": _num(sub.get("nu") if sub.get("nu") not in (None, "") else props.get("nu"), "substrate Poisson's ratio", -0.99, 0.499),
+                "alpha": _num(sub.get("alpha") if sub.get("alpha") not in (None, "") else props.get("alpha"), "substrate CTE", -100.0, 2000.0),
+                "thickness_um": _num(sub.get("thickness_um", 775.0), "substrate thickness", 1e-3, 1e6)}
+    except ValueError as e:
+        errors.append(str(e))
+    return out
+
+
+def _joule(jo, errors):
+    """Joule heating of a film (solvers/joule.py): a current density (A/m²)
+    or a voltage (V) between its faces, stepped up through the values given;
+    the ambient temperature and the thermal resistance per area from the
+    film's faces to ambient (K m²/W)."""
+    out = {"control": "voltage" if jo.get("control") == "voltage" else "current", "values": [1e5, 2e5, 5e5, 1e6],
+           "T_amb": 25.0, "R_th": 1e-3}
+    try:
+        vals = jo.get("values", out["values"])
+        if isinstance(vals, str):
+            vals = [v for v in vals.replace(";", ",").replace(" ", ",").split(",") if v.strip()]
+        vals = [_num(v, "current density" if out["control"] == "current" else "voltage", 0.0, 1e15) for v in vals]
+        vals = sorted(v for v in vals if v > 0)
+        if not vals:
+            raise ValueError("Joule heating needs at least one current density or voltage above zero")
+        if len(vals) > 30:
+            raise ValueError("Joule heating takes at most 30 steps of current or voltage")
+        out["values"] = vals
+        out["T_amb"] = _num(jo.get("T_amb", 25.0), "ambient temperature", -273.0, 1000.0)
+        out["R_th"] = _num(jo.get("R_th", 1e-3), "thermal resistance to ambient (per area)", 0.0, 1e3)
     except ValueError as e:
         errors.append(str(e))
     return out
@@ -488,6 +552,20 @@ def normalize(form):
         "press_lateral": rv.get("press_lateral") if rv.get("press_lateral") in ("xy", "x", "none") else "xy",
         "press_steps": (int(round(_num(rv.get("press_steps"), "steps of the compression", 2, 200)))
                         if rv.get("press_steps") not in (None, "", 0) else None),
+        # the cure during the compression (solvers/compress.Cure): the resins
+        # with cure constants in their material cure at the mould temperature
+        # and thicken towards their gel point; the press closes at the strain
+        # rate, or ("stress") no faster than an axial stress allows
+        "press_cure": bool(rv.get("press_cure")),
+        "press_mold_C": _num(rv.get("press_mold_C") if rv.get("press_mold_C") not in (None, "") else 175,
+                             "mould temperature", -50, 400),
+        "press_control": rv.get("press_control") if rv.get("press_control") in ("rate", "stress") else "rate",
+        "press_stress_Pa": _num(rv.get("press_stress_Pa") if rv.get("press_stress_Pa") not in (None, "") else 100,
+                                 "axial stress of the press", 1e-9, 1e9),
+        "press_part_mm": _num(rv.get("press_part_mm") if rv.get("press_part_mm") not in (None, "") else 1.0,
+                              "part thickness (heat exchange with the mould)", 0.0, 1000.0),
+        "press_time_s": _num(rv.get("press_time_s") if rv.get("press_time_s") not in (None, "") else 600,
+                             "longest time of the compression", 0.001, 1e6),
     }
     out["rve"]["dispersion"] = _dispersion(rv.get("dispersion") or {}, phases, out["rve"], errors)
 
@@ -548,6 +626,8 @@ def normalize(form):
         # in their rubbery state (E above Tg, alpha2): the alpha2 of an EMC
         "above_tg": bool(opts.get("above_tg", False)),
         "mechtest": _mechtest(opts.get("mechtest") or {}, out["rve"], errors),
+        "thermomech": _thermomech(opts.get("thermomech") or {}, errors),
+        "joule": _joule(opts.get("joule") or {}, errors),
         # moisture: plate thickness and exposure for the uptake curve
         "moisture": {"thickness_mm": _num((opts.get("moisture") or {}).get("thickness_mm", 1.0), "moisture plate thickness", 1e-4, 1e3),
                      "hours": _num((opts.get("moisture") or {}).get("hours", 168.0), "moisture exposure time", 0.0, 1e6),
@@ -700,6 +780,14 @@ def normalize(form):
         if not out["matrix"]["void"] and not (mp_.get("D_w") and mp_.get("c_sat")):
             errors.append("The moisture analysis needs the matrix's moisture diffusivity D_w and saturated uptake c_sat "
                           "(Material tab, optional properties)")
+    film_only = sorted(FILM_ANALYSES & set(chosen))
+    if film_only and not out["rve"]["film"]:
+        errors.append(", ".join(ANALYSES[k][0] for k in film_only) + " solve a thin film between its two faces: "
+                      "tick 'Thin film' in the Domain tab and give its thickness")
+    if "joule" in chosen:
+        sig_ = [out["matrix"]["props"].get("sigma") or 0.0] + [p["props"].get("sigma") or 0.0 for p in phases if p["vf"] > 0]
+        if max(sig_) <= 1e-6:
+            errors.append("Joule heating needs a conducting material (electrical conductivity above 1e-6 S/m)")
     if out["options"]["above_tg"] and "cte" in chosen:
         if not any(t.get("E_r") and t.get("alpha2") for t in [out["matrix"]["props"]] + [p["props"] for p in phases]):
             errors.append("Elasticity above Tg needs E above Tg and the CTE above Tg of at least one material "

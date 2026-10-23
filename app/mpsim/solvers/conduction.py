@@ -717,7 +717,8 @@ def _apply_film_z(u, kx, ky, kz, gb, gt, out):
 
 
 def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=None, should_stop=None,
-                 workers=None, cmask=None, rcpair=None, flux_h=None, label_axes=None):
+                 workers=None, cmask=None, rcpair=None, flux_h=None, label_axes=None, kvox=None, source=None,
+                 h_m=None, t_bottom=1.0, t_top=0.0, keep_faces=False, x0=None):
     """Through-thickness conduction of a film between two plates.
 
     x and y are periodic; the bottom face is held at 1, the top face at 0
@@ -728,6 +729,15 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
     "u" is the full field, 1 at the bottom face and 0 at the top.
     label_axes: {label: (kx, ky, kz)} of materials anisotropic along the box
     axes (a laminate matrix such as FR-4), in the units of vals.
+    kvox: a value per voxel (isotropic) in place of the label's - a
+    conductivity that depends on the local temperature; vals then only set
+    the scale. source: heat (or current) generated per volume in each voxel,
+    W/m^3, with h_m the voxel edge in m. t_bottom, t_top: the plates' values
+    (a temperature or a potential); the field returned is absolute.
+    keep_faces: also return the face conductances (W/K per voxel edge, kf x h)
+    and the plates' half-cell conductances, for the dissipation of a field.
+    x0: a first guess of the field (the solution of a nearby problem, such
+    as the previous pass of a coupled iteration).
     """
     labels = np.ascontiguousarray(labels, dtype=np.uint8)
     vals = np.asarray(vals, dtype=np.float64)
@@ -744,7 +754,13 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
     shape = labels.shape
     n0, n1, n2 = shape
     kf = [np.empty(shape) for _ in range(3)]
-    if label_axes:
+    if kvox is not None:
+        kv1 = np.ascontiguousarray(np.asarray(kvox, dtype=np.float64) / scale)
+        kv = [kv1, kv1, kv1]
+        for ax in range(3):
+            _faces_v(labels, kv[ax], rp, cm, rc, use_c, ax, kf[ax])
+        kz = kv1
+    elif label_axes:
         kv = aniso_axes(labels, v, {"label_axes": label_axes}, scale)
         for ax in range(3):
             _faces_v(labels, kv[ax], rp, cm, rc, use_c, ax, kf[ax])
@@ -757,12 +773,17 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
     gb = 2.0 * kz[:, :, 0]                 # half a cell between the plate and the first layer
     gt = 2.0 * kz[:, :, -1]
     b = np.zeros(shape)
-    b[:, :, 0] = gb * 1.0                  # bottom plate at 1, top plate at 0
+    b[:, :, 0] = gb * float(t_bottom)      # the plates' values (1 and 0 for a unit drop)
+    b[:, :, -1] += gt * float(t_top)
+    if source is not None:
+        # sum_faces k (u_i - u_j) = S h^2 (scaled by the conductivity scale)
+        b += np.asarray(source, dtype=np.float64) * (float(h_m) ** 2 / scale)
 
     fpos = [k[k > 0] for k in kf]
     k0 = math.sqrt(min(float(k.min()) for k in fpos) * max(float(k.max()) for k in fpos))
     M = FFTPreconditioner(shape, k0, workers=workers, zbc="dirichlet")
-    u = M(b)                               # a good start: the constant-coefficient solution
+    # a good start: the given guess, or the constant-coefficient solution
+    u = np.array(x0, dtype=np.float64, copy=True) if x0 is not None else M(b)
     Ap = np.empty(shape)
     _apply_film_z(u, kf[0], kf[1], kf[2], gb, gt, Ap)
     r = b - Ap
@@ -798,6 +819,17 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
         _cg_direction(p, z, 0.0, rz_new / rz)
         rz = rz_new
 
+    if source is not None or kvox is not None or keep_faces or t_bottom != 1.0 or t_top != 0.0:
+        # a general load: the field and the heat through each plate
+        out = {"u": u, "iterations": it, "residual": res, "converged": bool(converged),
+               "seconds": time.time() - t0, "history": history, "absolute_potential": True,
+               # heat (or current) into each plate per area, W/m^2 (A/m^2) with h_m
+               "q_bottom": float(np.sum(gb * (u[:, :, 0] - float(t_bottom)))) * scale / (n0 * n1) / float(h_m or 1.0),
+               "q_top": float(np.sum(gt * (u[:, :, -1] - float(t_top)))) * scale / (n0 * n1) / float(h_m or 1.0)}
+        if keep_faces:
+            out["faces"] = [k * scale for k in kf]
+            out["gb"], out["gt"] = gb * scale, gt * scale
+        return out
     # flux through each z plane (all equal at convergence); the bottom plate's is used
     q_bottom = float(np.sum(gb * (1.0 - u[:, :, 0]))) / (n0 * n1)
     q_top = float(np.sum(gt * u[:, :, -1])) / (n0 * n1)
@@ -850,6 +882,7 @@ def solve_film_z(labels, vals, rpair=None, tol=1e-7, maxiter=20000, callback=Non
         "iterations": it, "residual": res, "converged": bool(converged),
         "seconds": time.time() - t0, "history": history,
         "u": u, "q": q, "absolute_potential": True,
+        **({"faces": [k * scale for k in kf], "gb": gb * scale, "gt": gt * scale} if keep_faces else {}),
     }
 
 
@@ -910,7 +943,38 @@ def wrapping_axes(mask):
     return wraps
 
 
-def contrast_policy(labels, vals, direction, cap, wraps_cache):
+def spans_z(mask):
+    """Does a 6-connected cluster of `mask` join the two faces of a film (z =
+    0 and z = nz - 1)? x and y are periodic (clusters cut by those faces are
+    one); z is not, so a film's conductor percolates through its thickness
+    when it reaches from face to face - the periodic wrap of wrapping_axes
+    asks for a cluster that continues through the z faces into its own image,
+    which a film's particles never do."""
+    mask = np.asarray(mask, bool)
+    lab, n = ndimage.label(mask)
+    if n == 0:
+        return False
+    parent = np.arange(n + 1)
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for ax in (0, 1):
+        hi = np.take(lab, lab.shape[ax] - 1, axis=ax)
+        lo = np.take(lab, 0, axis=ax)
+        m = (hi > 0) & (lo > 0)
+        for p, q in np.unique(np.stack([hi[m], lo[m]], axis=1), axis=0) if m.any() else ():
+            rp, rq = find(p), find(q)
+            if rp != rq:
+                parent[rp] = rq
+    bottom = {find(int(v)) for v in np.unique(lab[:, :, 0]) if v > 0}
+    top = {find(int(v)) for v in np.unique(lab[:, :, -1]) if v > 0}
+    return bool(bottom & top)
+
+
+def contrast_policy(labels, vals, direction, cap, wraps_cache, film=False):
     """Limit the value contrast so CG converges, choosing the side that keeps
     the answer exact in the limit.
 
@@ -918,7 +982,8 @@ def contrast_policy(labels, vals, direction, cap, wraps_cache):
     the flux and the low values are raised to max/cap (their contribution is
     ~1/cap relative). Otherwise the low phase is continuous and the high values
     are lowered to min*cap - the perfectly-conducting-inclusion limit, which
-    the true answer has already saturated to.
+    the true answer has already saturated to. Through a film (`film`, z) the
+    high phase percolates when it joins the two faces (spans_z).
     """
     vals = np.asarray(vals, dtype=float).copy()
     vmax = float(vals.max())
@@ -930,7 +995,11 @@ def contrast_policy(labels, vals, direction, cap, wraps_cache):
     key = "wraps"
     if key not in wraps_cache:
         high = np.nonzero(vals >= vmax / 1e3)[0]
-        wraps_cache[key] = wrapping_axes(np.isin(labels, high))
+        hm = np.isin(labels, high)
+        wr = wrapping_axes(hm)
+        if film:
+            wr[2] = spans_z(hm)
+        wraps_cache[key] = wr
     if wraps_cache[key][direction]:
         return np.maximum(vals, vmax / cap), "network"
     return np.minimum(vals, vmin * cap), "dispersed"

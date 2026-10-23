@@ -44,6 +44,22 @@ OPTIONAL_META = {
     "k_x":    ("thermal conductivity along x (particle axes)", "W/m·K", 0.0, 1e5),
     "k_y":    ("thermal conductivity along y (particle axes)", "W/m·K", 0.0, 1e5),
     "k_z":    ("thermal conductivity along z (particle axes)", "W/m·K", 0.0, 1e5),
+    # electro-thermal coupling (v5.6): sigma(T) = sigma / (1 + tcr (T - 20 C))
+    "tcr":    ("temperature coefficient of resistivity", "1/K", -0.1, 0.1),
+    # cure of a resin (v5.6, the compression with cure): Kamal-Sourour
+    # d(alpha)/dt = (k1 + k2 alpha^m)(1 - alpha)^n, k_i = A_i exp(-E_i / R T);
+    # Castro-Macosko viscosity eta0 (alpha_g / (alpha_g - alpha))^(A + B alpha)
+    "cure_E1":    ("cure: activation energy E1", "kJ/mol", 0.0, 500.0),
+    "cure_logA1": ("cure: log10 of the pre-exponential factor A1 (1/s)", "-", -10.0, 40.0),
+    "cure_E2":    ("cure: activation energy E2 (autocatalytic)", "kJ/mol", 0.0, 500.0),
+    "cure_logA2": ("cure: log10 of the pre-exponential factor A2 (1/s)", "-", -10.0, 40.0),
+    "cure_m":     ("cure: autocatalytic order m", "-", 0.0, 10.0),
+    "cure_n":     ("cure: reaction order n", "-", 0.0, 10.0),
+    "cure_dH":    ("cure: heat of reaction per mass of resin", "J/g", 0.0, 2000.0),
+    "gel_alpha":  ("cure: conversion at the gel point", "-", 0.01, 1.0),
+    "cm_A":       ("cure: Castro-Macosko exponent A", "-", -50.0, 50.0),
+    "cm_B":       ("cure: Castro-Macosko exponent B", "-", -50.0, 50.0),
+    "visc_Ea":    ("cure: activation energy of the uncured viscosity", "kJ/mol", 0.0, 500.0),
 }
 
 

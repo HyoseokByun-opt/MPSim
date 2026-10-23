@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import html
+import time
 import json
 import math
 import os
@@ -251,6 +252,32 @@ def write(out_dir, r):
                      f"{_fmt(pp[2])} after the flow; their tilt ⟨n_x n_z⟩ {fab['random'][0][2]:+.3f} → "
                      f"{fab['sheared'][0][2]:+.3f} (0 at random, below 0 along the flow's compression axis).")
         P.append(f"<p>{stxt}</p>")
+    pz = rz.get("pressed")
+    if pz:
+        side = {"xy": "x and y free", "x": "x free, y held", "none": "x and y held"}.get(pz.get("lateral"), pz.get("lateral"))
+        ptxt = (f"Arrangement after compression: the periodic RVE was shortened by {_fmt(100 * pz['compression'])} % along z "
+                f"({side}) while its resins flowed - three-dimensional creeping flow of every resin on the voxels, the "
+                f"filler spheres rigid, the pores a compressible gas - in {pz['steps']} steps; box "
+                + " × ".join(_fmt(v) for v in pz["box0_um"]) + " → " + " × ".join(_fmt(v) for v in pz["box_um"])
+                + f" µm, axial stress at the end {_fmt(-pz['series']['sigma_zz_Pa'][-1])} Pa.")
+        if (pz.get("pore_fraction") or [0])[0] > 0:
+            ptxt += f" Pores {_fmt(100 * pz['pore_fraction'][0])} → {_fmt(100 * pz['pore_fraction'][1])} vol%."
+        cu = pz.get("cure")
+        if cu:
+            stop = {"compressed": "the compression was reached", "gelled": "every resin gelled first",
+                    "time": "the longest time passed first", "stalled": "the press stalled",
+                    "steps": "the step limit was reached"}.get(cu.get("stop"), cu.get("stop"))
+            ptxt += (f" The resins cured meanwhile at a mould temperature of {_fmt(cu['mold_C'])} °C "
+                     f"(Kamal-Sourour kinetics, Castro-Macosko viscosity; exchange time with the mould "
+                     f"{_fmt(cu['tau_s'])} s for a {_fmt(cu['part_mm'])} mm part), the press closing "
+                     + (f"at no more than {_fmt(cu['stress_Pa'])} Pa" if cu.get("control") == "stress"
+                        else f"at {_fmt(pz['rate_1_s'])} 1/s")
+                     + f"; after {_fmt(cu['time_s'][-1])} s {stop}: "
+                     + "; ".join(f"{e(n)} α {_fmt(v['alpha'][-1])} (gel {_fmt(v['gel'])}"
+                                 + (", gelled)" if v.get("gelled") else f", {_fmt(v['eta_Pa_s'][-1])} Pa·s)")
+                                 for n, v in (cu.get("resins") or {}).items())
+                     + f"; temperature {_fmt(max(cu['T_C']))} °C at most.")
+        P.append(f"<p>{e(ptxt)}</p>")
     dtxt = _dispersion_text(r["spec"].get("rve"))
     dz = rz.get("dispersion") or {}
     if dtxt:
@@ -391,6 +418,57 @@ def write(out_dir, r):
             P.append("<p>von Mises stress by region at the test load [MPa]</p>" +
                      _table(["Region", "Mean", "99th percentile", "Maximum"],
                             [[e(s["label"]), _fmt(s["mean"]), _fmt(s["p99"]), _fmt(s["max"])] for s in vm]))
+    if "thermomech" in props:
+        p = props["thermomech"]
+        o = p.get("options") or {}
+        sup = {"free": "free film", "held": "held flat",
+               "substrate": f"on {(o.get('substrate') or {}).get('name', 'a substrate')} "
+                            f"({_fmt((o.get('substrate') or {}).get('thickness_um'))} µm)"}.get(o.get("support"), o.get("support"))
+        P.append("<h3>Thermal stress and warpage</h3>")
+        P.append(f"<p>The film, stress-free at {_fmt(o.get('T_ref'))} °C, with its bottom face at {_fmt(o.get('T_bottom'))} °C "
+                 f"and its top face at {_fmt(o.get('T_top'))} °C, {e(sup)}. Steady heat flow through the film, every voxel's "
+                 f"thermal strain from its own temperature (α1 below its Tg, α2 above, with the rubbery modulus), the "
+                 f"film released by classical laminate theory. Warpage over a span of {_fmt(p['span_mm'])} mm; negative: "
+                 f"the edges rise.</p>")
+        rows = [["Warpage [µm]", _fmt(p["warpage_um"])], ["Curvature κ [1/m]", _fmt(p["kappa_1_m"])],
+                ["In-plane strain of the bottom face [µε]", _fmt(1e6 * p["eps0"])],
+                ["Temperature in the film [°C]", f"{_fmt(p['T_min'])} … {_fmt(p['T_max'])}"],
+                ["Heat flux through the film [W/m²]", _fmt(p["q_W_m2"])], ["Through-thickness k [W/m·K]", _fmt(p["k_eff"])]]
+        if p.get("substrate_stress"):
+            rows.append(["Substrate stress, top / bottom face [MPa]",
+                         f"{_fmt(p['substrate_stress']['top_MPa'])} / {_fmt(p['substrate_stress']['bottom_MPa'])}"])
+        if p.get("uniform"):
+            rows.append(["Warpage at the uniform mean temperature [µm]", _fmt(p["uniform"]["warpage_um"])])
+        P.append(_table(["Quantity", "Value"], rows))
+        st = list((p.get("stress_stats") or {}).values())
+        if st:
+            P.append("<p>Stresses by region after the release [MPa]</p>" +
+                     _table(["Region", "Mean von Mises", "von Mises 99.9 %", "Largest principal 99.9 %",
+                             "Peeling |σzz| 99.9 %", "Mean T [°C]"],
+                            [[e(x["name"]), _fmt(x["vm_mean"]), _fmt(x["vm_p999"]), _fmt(x["p1_max"]), _fmt(x["szz_p999"]),
+                              _fmt(x["T_mean"])] for x in st]))
+    if "joule" in props:
+        p = props["joule"]
+        P.append("<h3>Joule heating</h3>")
+        if p.get("error"):
+            P.append(f"<p>Not computed: {e(p['error'])}.</p>")
+        else:
+            cur = p.get("control") == "current"
+            P.append(f"<p>Direct current through the film between its faces, driven by the "
+                     f"{'current density' if cur else 'voltage'}; each step solved to a steady state (potential with every "
+                     f"voxel's conductivity at its temperature, Joule heat, temperature; to 1 mK). The faces at "
+                     f"{_fmt(p['T_amb'])} °C + {_fmt(p['R_th'])} K·m²/W × the heat per area."
+                     + (f" The sweep stopped: {'thermal runaway' if p.get('stopped') == 'runaway' else 'above 1000 °C'}."
+                        if p.get("stopped") else "") + "</p>")
+            P.append(_table(["J [A/m²]", "V [V]", "R [Ω·mm²]", "Heat [W/m²]", "Faces [°C]", "Peak [°C]", "State"],
+                            [[_fmt(x["J_A_m2"]), _fmt(x["V"]), _fmt((x["R_ohm_m2"] or 0) * 1e6), _fmt(x["P_W_m2"]),
+                              _fmt(x["T_sink"]), _fmt(x["T_max"]), e(x["status"])] for x in p["steps"]]))
+            lu = p.get("lumped")
+            if lu:
+                P.append(f"<p>As one resistor R(T) = R<sub>20</sub> (1 + a (T - 20 °C)): a = {_fmt(lu['tcr_eff'])} 1/K, "
+                         f"R<sub>20</sub> = {_fmt(lu['R20_ohm_m2'] * 1e6)} Ω·mm²"
+                         + (f"; a set current runs away above J ≈ 1/√(a R<sub>20</sub> R<sub>th</sub>) = "
+                            f"{_fmt(lu['J_crit_A_m2'])} A/m²" if lu.get("J_crit_A_m2") else "") + ".</p>")
     if "viscosity" in props:
         p = props["viscosity"]
         P.append("<h3>Viscosity and flowability of the uncured compound</h3>")
@@ -662,6 +740,154 @@ def write(out_dir, r):
 
 
 
+# the options of each analysis worth listing before a run (the rest are defaults)
+_AN_OPTS = {
+    "emi": "emi", "acoustics": "acoustics", "radiation": "radiation", "filtration": "filtration",
+    "porosimetry": "porosimetry", "moisture": "moisture", "mechtest": "mechtest", "thermomech": "thermomech",
+    "joule": "joule",
+}
+
+
+def _opt_text(d, skip=()):
+    """A dict of options as 'key value, key value' (nested dicts in brackets)."""
+    out = []
+    for k, v in (d or {}).items():
+        if k in skip or v is None or v == "":
+            continue
+        if isinstance(v, dict):
+            inner = _opt_text(v)
+            if inner:
+                out.append(f"{k} ({inner})")
+        elif isinstance(v, (list, tuple)):
+            out.append(f"{k} " + ", ".join(_fmt(x) for x in v[:12]) + (" …" if len(v) > 12 else ""))
+        elif isinstance(v, bool):
+            out.append(f"{k} {'on' if v else 'off'}")
+        else:
+            out.append(f"{k} {_fmt(v) if isinstance(v, (int, float)) else html.escape(str(v))}")
+    return ", ".join(out)
+
+
+def input_html(spec, plan, meta=None, state="queued", created=None):
+    """The inputs of a run before it has a result - a queued case, or one still
+    running: what it will build and compute, as entered, so that a list of
+    cases waiting in the queue can be told apart. The full report replaces it
+    when the run is done."""
+    e = html.escape
+    meta = meta or {}
+    rv = spec.get("rve") or {}
+    o = spec.get("options") or {}
+    P = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{e(spec['name'])} — input</title>"
+         f"<style>{CSS}</style></head><body><div class='wrap'>",
+         f"<h1>{e(spec['name'])}</h1><div class='sub'>Input of a run that is {e(state)}"
+         + (f" · submitted {e(time.strftime('%Y-%m-%d %H:%M', time.localtime(created)))}" if created else "")
+         + "</div>",
+         "<div class='note'>The run has no result yet. This page lists what it will build and compute; the full "
+         "report takes its place when the run is done.</div>"]
+    # ------------------------------------------------------------ materials
+    P.append("<h2>1. Materials and composition</h2><table><tr><th>Role</th><th>Name</th><th>Shape and size</th>"
+             "<th>Content</th><th>Principal properties</th></tr>")
+
+    def props_txt(p):
+        main = (f"k {_fmt(p.get('k'))} W/m·K, σ {_fmt(p.get('sigma'))} S/m, εr {_fmt(p.get('eps_r'))}, "
+                f"E {_fmt(p.get('E'))} GPa, ν {_fmt(p.get('nu'))}, α {_fmt(p.get('alpha'))} ppm/K")
+        extra = [k for k in ("tg", "E_r", "alpha2", "D_w", "c_sat", "cme", "tcr") if p.get(k) not in (None, "")]
+        cure = all(p.get(k) not in (None, "") for k in ("cure_E1", "cure_logA1", "gel_alpha"))
+        if extra:
+            main += "; also " + ", ".join(f"{k} {_fmt(p[k])}" for k in extra)
+        if cure:
+            main += "; cure kinetics (gel at α " + _fmt(p.get("gel_alpha")) + ")"
+        return main
+    m = spec["matrix"]
+    P.append(f"<tr><td>Matrix</td><td>{e(m['name'])}</td><td>—</td><td class='n'>the rest</td>"
+             f"<td>{props_txt(m['props'])}</td></tr>")
+    for mr in spec.get("matrix_regions") or []:
+        sec = mr.get("section") or {}
+        P.append(f"<tr><td>Matrix region</td><td>{e(mr['name'])}</td><td>{e(str(sec.get('axis', '')))} "
+                 f"{_fmt(100 * (sec.get('from') or 0))}–{_fmt(100 * (sec.get('to') or 0))} % of the edge</td><td>—</td>"
+                 f"<td>{props_txt(mr['props'])}</td></tr>")
+    for ph in spec["phases"]:
+        sz = ph["size_um"]
+        desc = (f"{SHAPES.get(ph['shape'], ph['shape'])}, d {_fmt(sz['d'])} µm"
+                + (f", aspect ratio {_fmt(sz.get('aspect'))}" if "aspect" in sz else "")
+                + (f", length {_fmt(sz.get('length'))} µm" if "length" in sz else "")
+                + _dist_text(ph["dist"], sz.get("d"))
+                + (f", shell {_fmt(ph['shell']['thickness_um'])} µm" if ph.get("shell") else "")
+                + (f", R<sub>int</sub> {_fmt(ph['r_int'])} m²K/W" if ph.get("r_int") else "")
+                + (f", R<sub>c</sub> {_fmt(ph['r_contact'])} m²K/W" if ph.get("r_contact") else "")
+                + (f", in {ph['section']['axis']} {_fmt(100 * ph['section']['from'])}–{_fmt(100 * ph['section']['to'])} % "
+                   f"of the edge" if ph.get("section") else ""))
+        P.append(f"<tr><td>{'Pore phase' if ph['void'] else ('Network' if ph['shape'] == 'network' else 'Filler')}</td>"
+                 f"<td>{e(ph['name'])}</td><td>{desc}</td><td class='n'>{_fmt(100 * ph['vf'])} vol%</td>"
+                 f"<td>{props_txt(ph['props'])}</td></tr>")
+    P.append("</table>")
+    # --------------------------------------------------------------- domain
+    P.append("<h2>2. Domain</h2>")
+    if plan:
+        grid = f"{plan['N']} × {plan['N']} × {plan['Nz']}" if plan.get("film") else f"{plan['N']}³"
+        P.append(f"<p>Grid <b>{grid}</b>, voxel <b>{_fmt(plan['h_um'])} µm</b>, edge <b>{_fmt(plan['L_um'])} µm</b>"
+                 + (f", film <b>{_fmt(plan['T_um'])} µm</b> thick" if plan.get("film") else "")
+                 + f" (level {e(str(plan.get('quality_label') or rv.get('quality')))}, {plan.get('seeds', 1)} realisation(s), "
+                   f"seed {rv.get('seed', 1)}).</p>")
+        for n in plan.get("notes") or []:
+            P.append(f"<div class='note'>{e(n)}</div>")
+        bad = [c for c in plan.get("checks") or [] if c.get("status") != "pass"]
+        if bad:
+            P.append(_table(["Criterion before solving", "Value", "Target", "State"],
+                            [[e(c["label"]), _fmt(c.get("value")), e(str(c.get("target"))), e(c["status"])] for c in bad]))
+    arr = rv.get("arrangement") or "random"
+    if arr == "sheared":
+        P.append(f"<p>Arrangement after shear flow: sheared to a strain of {_fmt(rv.get('shear_strain'))}.</p>")
+    elif arr == "pressed":
+        side = {"xy": "x and y free", "x": "x free, y held", "none": "x and y held"}.get(rv.get("press_lateral"), "")
+        txt = (f"Arrangement after compression: {_fmt(rv.get('press_compression'))} % along z at "
+               f"{_fmt(rv.get('press_rate'))} 1/s, {side}")
+        if rv.get("press_cure"):
+            txt += (f"; cure at a mould temperature of {_fmt(rv.get('press_mold_C'))} °C, closing "
+                    + (f"at no more than {_fmt(rv.get('press_stress_Pa'))} Pa" if rv.get("press_control") == "stress"
+                       else "at the strain rate")
+                    + f", part {_fmt(rv.get('press_part_mm'))} mm, at most {_fmt(rv.get('press_time_s'))} s")
+        P.append(f"<p>{e(txt)}.</p>")
+    else:
+        P.append("<p>Random packing.</p>")
+    dtxt = _dispersion_text(rv)
+    if dtxt:
+        P.append(f"<p>Particle dispersion: {e(dtxt)}</p>")
+    gap = o.get("particle_gap_vox") or 0
+    P.append(f"<p>Particles {'kept ' + _fmt(gap) + ' voxels apart' if gap else 'may touch (gap 0)'}"
+             + (f"; matrix skin {_fmt(rv.get('skin_um'))} µm at the film faces" if rv.get("film") and rv.get("skin_um") is not None else "")
+             + ".</p>")
+    # ------------------------------------------------------------ analyses
+    an = list(spec.get("analyses") or [])
+    P.append("<h2>3. Analyses</h2>")
+    if not an:
+        P.append("<p>The structure alone (no analysis).</p>")
+    else:
+        from .spec import ANALYSES
+        rows = []
+        for k in an:
+            title = ANALYSES.get(k, (k,))[0]
+            opt = _opt_text(o.get(_AN_OPTS[k])) if k in _AN_OPTS else ""
+            if k == "cte":
+                opt = f"ΔT {_fmt(o.get('delta_T'))} K, stress maps {e(str(o.get('thermal_bc')))}" + \
+                      (", also above Tg" if o.get("above_tg") else "")
+            if k == "viscosity":
+                vo = o.get("viscosity") or {}
+                opt = (f"resin {_opt_text(vo.get('model'))}; shear rates {_fmt(vo.get('gd_min'))}–{_fmt(vo.get('gd_max'))} "
+                       f"1/s (reference {_fmt(vo.get('gd_ref'))}); particle dynamics "
+                       + ("on" if (vo.get("dem") or {}).get("on") else "off"))
+            rows.append([e(title), opt or "—"])
+        P.append(_table(["Analysis", "Its options"], rows))
+        P.append(f"<p>Directions {e(str(o.get('directions')))} · solvers {e(str(o.get('backend')))} · conduction "
+                 f"{e(str(o.get('cond_method')))} · elasticity {e(str(o.get('elastic_method')))} · tolerance "
+                 f"{_fmt(o.get('tol'))}" + (" · resolution check" if o.get("resolution_check") == "on" else "") + ".</p>")
+    if meta.get("mem_gb"):
+        P.append(f"<p>Memory expected for the largest solve: about {_fmt(meta['mem_gb'])} GB.</p>")
+    if meta.get("doe_label"):
+        P.append(f"<p>A case of a DOE study: {e(str(meta['doe_label']))}.</p>")
+    P.append("</div></body></html>")
+    return "".join(P)
+
+
 def _methods(r):
     """The methods behind this run's numbers, from its own analyses and options."""
     spec = r["spec"]
@@ -702,6 +928,20 @@ def _methods(r):
              "fft": "the Moulinec-Suquet spectral scheme"}.get(em, em)
         out.append(f"Elasticity and thermal expansion: {m}; six unit strains and an isotropic thermal load"
                    + ("; the mechanical test from the same stiffness" if "mechtest" in an else "") + ".")
+    if "thermomech" in an:
+        out.append("Thermal stress and warpage: steady film heat flow (periodic FV in x and y, the faces held at their "
+                   "temperatures, interface and contact resistances on the voxel faces), each voxel's thermal strain as "
+                   "an eigenstrain of the FANS voxel elements with void layers above and below, and classical laminate "
+                   "theory on the slab averages for the release.")
+    if "joule" in an:
+        out.append("Joule heating: the film's electric potential and temperature by the same film FV, σ(T) = σ/(1 + TCR "
+                   "(T - 20 °C)) per voxel, the heat of every face split by its two halves' resistances, alternated to "
+                   "1 mK.")
+    if (spec.get("rve") or {}).get("arrangement") == "pressed":
+        out.append("Compression: three-dimensional creeping flow of the resins on the voxels (FANS, B-bar), rigid "
+                   "spheres, the pores a compressible gas, material markers"
+                   + ("; cure by Kamal-Sourour kinetics with the Castro-Macosko viscosity and a lumped energy balance"
+                      if (spec.get("rve") or {}).get("press_cure") else "") + ".")
     if "viscosity" in an:
         out.append("Viscosity: lubrication particle dynamics of the fillers in the resin (Taichi); Krieger-Dougherty with "
                    "the maximum packing fraction of the size distribution; the resin flow through the RVE with FANS "
@@ -747,4 +987,8 @@ def _methods_short(r):
         out.append("diffusion NASA PuMA FV")
     if "viscosity" in an:
         out.append("viscosity particle dynamics")
+    if "thermomech" in an:
+        out.append("thermal stress FV + FANS + laminate")
+    if "joule" in an:
+        out.append("Joule heating FV potential and heat")
     return " · ".join(out) or "structure analyses"

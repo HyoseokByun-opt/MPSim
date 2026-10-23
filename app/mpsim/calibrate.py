@@ -551,7 +551,7 @@ def _cond_tasks(sample, theta_form, tol, pool, tag):
     cache = {}
     for d in _dirs(m):
         di = "xyz".index(d)
-        v_used, _ = CD.contrast_policy(sample["labels"], vals, di, spec["options"]["contrast_cap"], cache)
+        v_used, _ = CD.contrast_policy(sample["labels"], vals, di, spec["options"]["contrast_cap"], cache, film=bool(sample["film"]))
         tasks.append((PAR.cond_task, {"labels": sample["lab_path"], "vals": v_used, "d": d, "tol": tol,
                                       "backend": "fv", "rpair": rpair, "rcpair": rcpair,
                                       "cmask": sample["cm_path"] if rcpair is not None else None,

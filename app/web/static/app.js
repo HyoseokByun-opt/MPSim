@@ -31,6 +31,19 @@
     ["D_w", "Moisture diffusivity", "m²/s"], ["c_sat", "Saturated moisture uptake", "wt%"], ["cme", "Moisture expansion CME", "1/mass fr."],
     ["tg", "Glass transition Tg", "°C"], ["E_r", "Young's modulus above Tg", "GPa"], ["alpha2", "CTE above Tg", "ppm/K"],
   ];
+  // electro-thermal coupling: sigma(T) = sigma / (1 + TCR (T - 20 C))
+  const TCR_PROPS = [["tcr", "Temperature coefficient of resistivity", "1/K"]];
+  // cure of a resin (the compression with cure): Kamal-Sourour kinetics and
+  // the Castro-Macosko viscosity rise to the gel point
+  const CURE_PROPS = [
+    ["cure_E1", "Activation energy E₁", "kJ/mol"], ["cure_logA1", "log₁₀ A₁ (A₁ in 1/s)", "-"], ["cure_E2", "Activation energy E₂ (autocatalytic)", "kJ/mol"],
+    ["cure_logA2", "log₁₀ A₂ (A₂ in 1/s)", "-"], ["cure_m", "Autocatalytic order m", "-"], ["cure_n", "Reaction order n", "-"],
+    ["cure_dH", "Heat of reaction (per gram of resin)", "J/g"], ["gel_alpha", "Conversion at the gel point α_g", "-"],
+    ["cm_A", "Castro–Macosko exponent A", "-"], ["cm_B", "Castro–Macosko exponent B", "-"], ["visc_Ea", "Activation energy of the uncured viscosity", "kJ/mol"],
+  ];
+  const CURE_NEEDED = ["cure_E1", "cure_logA1", "cure_E2", "cure_logA2", "cure_m", "cure_n", "gel_alpha", "cm_A", "cm_B"];
+  const hasCure = (p) => !!p && CURE_NEEDED.every((k) => p[k] !== undefined && p[k] !== null && p[k] !== "");
+  const OPT_ALL = OPT_PROPS.concat(TCR_PROPS, CURE_PROPS);
   // anisotropic thermal conductivity: along the particle's own axes (the box axes for the matrix)
   const ANISO_PROPS = [["k_x", "k along x", "W/m·K"], ["k_y", "k along y", "W/m·K"], ["k_z", "k along z", "W/m·K"]];
   const isAniso = (p) => !!p && ANISO_PROPS.some(([k]) => p[k] !== undefined && p[k] !== null && p[k] !== "");
@@ -57,6 +70,8 @@
     emi: { title: "EMI shielding", icon: "emi", color: "var(--c-mag)", solver: "PuMA σ, ε, μ → scikit-rf", out: "SE(f) with reflection, absorption and multiple-reflection terms" },
     cte: { title: "Elasticity and CTE", icon: "cte", color: "var(--c-mech)", solver: "Voxel FE with an FFT preconditioner (FANS) · 6 strains + ΔT", out: "C and S matrices · E, G, ν · α tensor · thermal stress fields" },
     mechtest: { title: "Mechanical test", icon: "cte", color: "var(--c-mech)", solver: "Testing-machine load on the effective stiffness · one FANS solve for the stress fields", out: "Force–displacement line · apparent modulus and Poisson's ratio · von Mises, axial stress and strain fields · load at the matrix strength" },
+    thermomech: { title: "Thermal stress and warpage", short: "Thermal stress, warpage", icon: "cte", color: "var(--c-thermal)", solver: "Film heat flow (FV with interface resistances) → per-voxel thermal strain, α1/α2 and E by the local temperature (FANS eigenstrain) → laminate release", out: "Temperature field · curvature and warpage · stress profile through the film · von Mises, principal and peeling stress fields · substrate stress", film: true },
+    joule: { title: "Joule heating", icon: "electrical", color: "var(--c-electrical)", solver: "Film potential (FV, σ at each voxel's temperature) ⇄ Joule heat ⇄ temperature (FV), repeated to 1 mK at every step", out: "I–V line · peak and sink temperature per step · thermal runaway · temperature, heat, current-density and potential fields", film: true },
     permeability: { title: "Permeability", icon: "permeability", color: "var(--c-flow)", solver: "NASA PuMA · Stokes finite elements", out: "K tensor · flow resistivity · Kozeny constant · velocity field", pores: true },
     moisture: { title: "Moisture uptake and swelling", short: "Moisture and swelling", icon: "tortuosity", color: "var(--c-flow)", solver: "Periodic FV on the activity c/c_sat (permeability D·c_sat) · FANS eigenstrain for swelling", out: "Effective moisture diffusivity · saturated uptake · uptake curve of the part · hygroscopic swelling and CME" },
     viscosity: { title: "Viscosity and flowability", icon: "permeability", color: "var(--c-flow)", solver: "Voxel FE creeping flow (B-bar, FFT-preconditioned CG) · particle dynamics of the fillers (lubrication, contacts, friction, van der Waals; CPU or CUDA GPU) · Krieger–Dougherty with the jammed packing fraction", out: "Relative viscosity · flow curve of the compound · maximum packing fraction · underfill filling time · settling" },
@@ -74,7 +89,7 @@
   const SHORT_AN = { thermal: "Thermal", electrical: "Electrical", dielectric: "Dielectric", magnetic: "Magnetic", emi: "EMI",
     cte: "Elastic/CTE", mechtest: "Mech. test", permeability: "Permeability", filtration: "Filtration", tortuosity: "Diffusion", acoustics: "Acoustics",
     radiation: "Radiation", morphology: "Pore sizes", percolation: "Percolation", porosimetry: "Porosimetry",
-    pore_network: "Pore network", grains: "Grains", viscosity: "Viscosity", moisture: "Moisture" };
+    pore_network: "Pore network", grains: "Grains", viscosity: "Viscosity", moisture: "Moisture", thermomech: "Warpage", joule: "Joule" };
   const ST = { pass: "Passed", warn: "Warning", fail: "Failed" };
   const STATE = { queued: "Queued", running: "Running", done: "Completed", failed: "Failed", stopped: "Stopped" };
   const QUALITY_HINT = {
@@ -103,6 +118,8 @@
     if (an.has("tortuosity")) { out.push("diffusion NASA PuMA FV"); puma = true; }
     if (an.has("radiation")) { out.push("rays NASA PuMA"); puma = true; }
     if (an.has("viscosity")) out.push("viscosity particle dynamics" + (r.dem_direct ? "" : " and FANS"));
+    if (an.has("thermomech")) out.push("thermal stress: film FV heat → FANS eigenstrain → laminate");
+    if (an.has("joule")) out.push("Joule heating: film FV potential ⇄ FV heat");
     return { text: out.join(" · ") || (BACKEND[r.backend] || ""), puma };
   }
   const backendTxt = (r) => runMethods(r).text + (r.plan && r.plan.film ? " · thin film" : "");
@@ -282,9 +299,11 @@
       const mod = ref && props && Number(props[k]) !== Number(ref[k]);
       return `<label class="prop"><span>${lab}<em>${unitTxt(unit)}</em></span><input type="number" step="any" class="${mod ? "mod" : ""}" data-k="${path}.${k}" data-num data-ref="${ref ? (ref[k] ?? "") : ""}"></label>`;
     };
-    const anyOpt = OPT_PROPS.some(([k]) => props && props[k] !== undefined && props[k] !== null && props[k] !== "");
+    const set = (list) => list.some(([k]) => props && props[k] !== undefined && props[k] !== null && props[k] !== "");
     return `<div class="props">` + PROPS.map(row).join("") + "</div>" +
-      `<details class="optprops" ${anyOpt ? "" : ""}><summary>Moisture and glass transition <span class="hint">(optional${anyOpt ? ", set" : ""})</span></summary><div class="props">${OPT_PROPS.map(row).join("")}</div></details>`;
+      `<details class="optprops"><summary>Moisture and glass transition <span class="hint">(optional${set(OPT_PROPS) ? ", set" : ""})</span></summary><div class="props">${OPT_PROPS.map(row).join("")}</div></details>` +
+      `<details class="optprops"><summary>Resistance with temperature <span class="hint">(optional, Joule heating${set(TCR_PROPS) ? "; set" : ""})</span></summary><div class="props">${TCR_PROPS.map(row).join("")}</div></details>` +
+      `<details class="optprops"><summary>Cure kinetics and viscosity rise <span class="hint">(optional, compression with cure${set(CURE_PROPS) ? "; set" : ""})</span></summary><div class="props">${CURE_PROPS.map(row).join("")}</div></details>`;
   }
   function matEntry(id) { const m = mat(id); return { material_id: id, name: m.name, props: clone(m.props) }; }
   function phaseEntry(id, shape) {
@@ -305,7 +324,7 @@
   function defaultForm() {
     return {
       name: "New case", defaults: FORM_DEFAULTS, matrix: matEntry("epoxy"), phases: [phaseEntry("al2o3", "sphere")],
-      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, dispersion: { mode: "uniform" } },
+      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, press_cure: false, press_mold_C: 175, press_control: "rate", press_stress_Pa: 100, press_part_mm: 1, press_time_s: 600, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
         directions: "z", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: false, reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
@@ -320,6 +339,8 @@
           dem: { on: true, n: 500, strain: 10, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
         mechtest: { mode: "compression", axis: "z", lateral: "free", control: "force", value: 100, length_mm: null, area_mm2: 10, strength_MPa: null },
+        thermomech: { T_ref: 175, T_bottom: 25, T_top: 25, support: "free", substrate: { material_id: "si", E: null, nu: null, alpha: null, thickness_um: 775 }, span_mm: 10, compare_uniform: true },
+        joule: { control: "current", values: "1e6, 1e7, 3e7, 1e8", T_amb: 25, R_th: 0.001 },
         gas: { molar_mass_g_mol: 28.97, viscosity_Pa_s: 1.81e-5, diffusivity_m2_s: 2.0e-5, pressure_Pa: 101325, molecule_diameter_nm: 0.37, density_kg_m3: 1.204, sound_speed_m_s: 343.2, gamma: 1.4, prandtl: 0.71 },
       },
     };
@@ -386,6 +407,7 @@
     const a = AN[key];
     if (a.pores && !hasPores()) return "Requires a pore phase or a gas matrix.";
     if (a.particles && !hasParticles()) return "Requires a particle phase.";
+    if (a.film && !state.form.rve.film) return "Requires a thin film (Domain tab).";
     return "";
   }
   // the colour of each phase of the form, as its run will draw it (shells
@@ -405,7 +427,7 @@
   const RB = (id, icon, label, extra = {}) => ({ id, icon, label, ...extra });
   function ribbonGroups() {
     const f = state.form, an = f.analyses || {};
-    const toggle = (k) => RB("an:" + k, AN[k].icon, AN[k].short || AN[k].title, { on: !!an[k], dis: !!disabledReason(k), color: AN[k].color, tip: `${AN[k].title} — ${AN[k].out}` });
+    const toggle = (k) => RB("an:" + k, AN[k].icon, AN[k].short || AN[k].title, { on: !!an[k], dis: !!disabledReason(k) && !an[k], color: AN[k].color, tip: `${AN[k].title} — ${AN[k].out}` });
     const running = ["running", "queued"].includes(state.activeState) || anyLive();
     // Execute (Home): build the structure alone, run, stop; Structure and
     // Domain follow every change and offer Refresh instead
@@ -413,10 +435,10 @@
     // silently adding another run to the pile
     // one source of truth with the guard in submit(), and it counts everyone's
     // runs rather than only this browser's
-    const full = queueRoom().free <= 0;
+    const busy = anyLive();
     const execute = { group: "Execute", items: [
-      RB("generate", "cube", "Generate structure", { dis: full, tip: "Builds the structure alone (no analyses) and shows it in the 3D view" }),
-      RB("run", "play", "Run analyses", { primary: true, dis: full, tip: full ? "The machine is already running its maximum number of analyses" : "Run analyses" }),
+      RB("generate", "cube", "Generate structure", { tip: "Builds the structure alone (no analyses) and shows it in the 3D view" + (busy ? "; queued after the runs under way" : "") }),
+      RB("run", busy ? "plus" : "play", busy ? "Add analysis" : "Run analyses", { primary: true, tip: busy ? "Adds this case to the queue: it starts when a place and the memory for it are free, and its inputs can be read in the Runs list meanwhile" : "Run analyses" }),
       RB("stop", "stop", "Stop", { dis: !running })] };
     const G = {
       home: [
@@ -466,6 +488,7 @@
         { group: "Porous media", items: ["permeability", "filtration", "tortuosity", "acoustics"].map(toggle) },
         { group: "Rheology", items: [toggle("viscosity")] },
         { group: "Reliability", items: [toggle("moisture")] },
+        { group: "Multiphysics", items: [toggle("thermomech"), toggle("joule")] },
         { group: "Radiation", items: [toggle("radiation")] },
         execute,
       ],
@@ -487,7 +510,7 @@
     if (el && el.classList.contains("dis")) return;
     const [kind, arg] = id.split(":");
     if (kind === "an") {
-      if (disabledReason(arg)) { toast(disabledReason(arg)); return; }
+      if (disabledReason(arg) && !f.analyses[arg]) { toast(disabledReason(arg)); return; }
       f.analyses[arg] = !f.analyses[arg];
       saveForm(); schedulePlan(); renderRibbon(); renderLeft();
       const card = $(`[data-card="${arg}"]`); if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -815,7 +838,7 @@
         </div>
         <div class="hint">The largest RVE edge in voxels for every solver (default 500; 0: no limit). A plan that needs more is held at this edge and says so; the memory shown is one solve on a grid of that size (Stokes flow takes about eight times the elasticity).</div>`;
         })()}
-        <div class="hint">A run starts beside the others only while the memory they are expected to take fits this budget (empty: 70 % of the RAM; 0: no limit), so that parallel runs never page to disk. A large grid can therefore run alone although more places are set: an Accurate RVE of 470³ voxels reserves about 35 GB. The run list says when a run waits for memory. While memory lets fewer runs go at once than are set, the automatic cores of the waiting places go to the runs that do run.</div>
+        <div class="hint">The runs in progress share this memory budget (empty: 70 % of the RAM; 0: no limit), so that parallel runs never page to disk. A run takes a place and builds its structure beside the others with only the structure's memory, then waits before its first solve until the memory of its solves fits: structures are built side by side, and the solves go together while they fit - a heavy one beside light ones, or one after another (an Accurate RVE of 470³ voxels reserves about 35 GB). A light solve may go ahead of a heavy one that does not fit yet, but never so far that the heavy one would not fit once the solves before it are done. A run that starts solving takes the cores the other solving runs leave free. The run list says which phase each run is in and what it waits for.</div>
         <div class="hint">A change applies to the next analysis to start; nothing running is disturbed. An analysis splits its cores between its independent solves (properties, directions, elastic load cases) and the threads inside each solve, and takes the split that finishes first: a PuMA FE solve runs about 4× faster on 14 threads, several solves side by side do more work per core.</div>
       </div></div>`;
   }
@@ -844,7 +867,11 @@
         <label class="chk"><input type="checkbox" data-laniso ${an ? "checked" : ""}> Anisotropic k</label>
         ${an ? `<div class="props">${ANISO_PROPS.map(lrow).join("")}</div>` : ""}
         <div class="hint">k along the particle's own axes, turned with every particle in the thermal solve: a cuboid's edges (x = d, y = ly, z = lz) or the symmetry axis z of a spheroid, cylinder or platelet — an h-BN platelet conducts well in its plane (x, y) and poorly through its thickness (z). As the matrix, along the box axes. k above follows their mean, which the closed-form estimates use.</div></details>` +
-      `<details class="optprops" open><summary>Moisture and glass transition <span class="hint">(optional; empty = not absorbing, no Tg)</span></summary><div class="props">${OPT_PROPS.map(lrow).join("")}</div></details>`;
+      `<details class="optprops" open><summary>Moisture and glass transition <span class="hint">(optional; empty = not absorbing, no Tg)</span></summary><div class="props">${OPT_PROPS.map(lrow).join("")}</div></details>` +
+      `<details class="optprops" ${TCR_PROPS.some(([k]) => !unset(m.props[k])) ? "open" : ""}><summary>Resistance with temperature <span class="hint">(optional; empty = constant conductivity)</span></summary><div class="props">${TCR_PROPS.map(lrow).join("")}</div>
+        <div class="hint">σ(T) = σ / (1 + TCR (T − 20 °C)), σ the electrical conductivity above (at 20 °C): the Joule heating analysis. Metals about 0.004 1/K.</div></details>` +
+      `<details class="optprops" ${CURE_PROPS.some(([k]) => !unset(m.props[k])) ? "open" : ""}><summary>Cure kinetics and viscosity rise <span class="hint">(optional; empty = the resin does not cure)</span></summary><div class="props">${CURE_PROPS.map(lrow).join("")}</div>
+        <div class="hint">For the compression with cure. Kamal–Sourour kinetics dα/dt = (k₁ + k₂ α^m)(1 − α)^n with k_i = A_i exp(−E_i / RT), from isothermal or dynamic DSC; Castro–Macosko viscosity η = η₀(T) (α_g / (α_g − α))^(A + B α), which diverges at the gel point α_g (rheometry). η₀ is the resin's viscosity at the mould temperature (the viscosity analysis' flow model); its activation energy makes it change with the temperature of the cure.</div></details>`;
     // keep the selected material in view inside the list
     setTimeout(() => {
       const box = $("#lbody .mlist"), on = box && $(".prow.on", box);
@@ -1013,31 +1040,82 @@
         <span class="hint">${rows ? `${esc(d.file || "table")} · ${rows} rows` : "No file loaded"}</span></div>
       <div class="g2"><div><label class="f">Values by</label><select data-k="phases.${i}.dist.basis"><option value="volume" ${d.basis !== "number" ? "selected" : ""}>Volume (laser)</option><option value="number" ${d.basis === "number" ? "selected" : ""}>Number (count)</option></select></div>
         <div><label class="f">Values are</label><select data-k="phases.${i}.dist.form"><option value="auto" ${!d.form || d.form === "auto" ? "selected" : ""}>Detect</option><option value="differential" ${d.form === "differential" ? "selected" : ""}>% per channel</option><option value="cumulative" ${d.form === "cumulative" ? "selected" : ""}>Cumulative % passing</option></select></div></div>
-      <div class="g2"><div><label class="f">Diameters in</label><select data-k="phases.${i}.dist.unit"><option value="nm" ${d.unit === "nm" ? "selected" : ""}>nm</option><option value="um" ${!d.unit || d.unit === "um" ? "selected" : ""}>µm</option><option value="mm" ${d.unit === "mm" ? "selected" : ""}>mm</option></select></div><div></div></div>
+      <div class="g2"><div><label class="f">Diameters in</label><select data-k="phases.${i}.dist.unit"><option value="nm" ${d.unit === "nm" ? "selected" : ""}>nm</option><option value="um" ${!d.unit || d.unit === "um" ? "selected" : ""}>µm</option><option value="mm" ${d.unit === "mm" ? "selected" : ""}>mm</option></select></div>
+        <div><label class="f">Columns</label><select data-k="phases.${i}.dist.cols"><option value="auto" ${!d.cols || d.cols === "auto" ? "selected" : ""}>Detect${d.cols_used && (!d.cols || d.cols === "auto") ? (d.cols_used === "vd" ? " (percentage, diameter)" : " (diameter, percentage)") : ""}</option><option value="dv" ${d.cols === "dv" ? "selected" : ""}>Diameter, percentage</option><option value="vd" ${d.cols === "vd" ? "selected" : ""}>Percentage, diameter</option></select></div></div>
       ${bounds}
-      <div class="hint">Two columns: the diameter and its value (a third column and header lines are ignored); separators comma, semicolon, tab or space. The particles are drawn from this distribution - a volume distribution is turned into numbers by d³ - and the size entered above is replaced by its number mean, the other lengths of the shape scaling with it.</div>
+      <div class="hint">Two columns: <b>diameter, then percentage</b> (a third column and header lines are ignored); separators comma, semicolon, tab or space. A file with the percentage first is recognised by its header or by its values; set Columns where it is not. The particles are drawn from this distribution - a volume distribution is turned into numbers by d³ - and the size entered above is replaced by its number mean, the other lengths of the shape scaling with it.</div>
       ${rows ? chart + stats : ""}`;
   }
-  // a measured PSD file: diameters and values from the first two numeric columns
+  // A measured PSD file: the diameter in the first numeric column and its
+  // percentage in the second. A file the other way round (percentage first)
+  // is recognised by its header ("%", "vol", "cum", "pass" against "diameter",
+  // "size", "µm") or, without one, by its values: diameters rise or fall
+  // steadily, in nearly constant ratios, where percentages do not, and they
+  // stay within 0-100. The Columns setting overrides the detection.
+  function psdOrder(a, b, header) {
+    const h = (header || []).map((x) => String(x).toLowerCase());
+    const isD = (x) => /diam|size|\bd\b|µm|\bum\b|\bnm\b|micron/.test(x), isP = (x) => /%|perc|vol|cum|pass|freq|q3|q0|value|chan/.test(x);
+    if (h.length >= 2) {
+      if (isD(h[0]) && !isD(h[1])) return "dv";
+      if (isD(h[1]) && !isD(h[0])) return "vd";
+      if (isP(h[0]) && !isP(h[1])) return "vd";
+      if (isP(h[1]) && !isP(h[0])) return "dv";
+    }
+    const score = (c) => {
+      let sc = 0;
+      const inc = c.every((x, k) => !k || x > c[k - 1]), dec = c.every((x, k) => !k || x < c[k - 1]);
+      if (inc || dec) sc += 2;
+      if (c.every((x) => x > 0)) {
+        const lr = c.slice(1).map((x, k) => Math.log(x / c[k]));
+        const m = lr.reduce((t, x) => t + x, 0) / lr.length, sd = Math.sqrt(lr.reduce((t, x) => t + (x - m) ** 2, 0) / lr.length);
+        if (Math.abs(m) > 1e-9 && sd < 0.2 * Math.abs(m)) sc += 2;
+      } else sc -= 3;                                   // a diameter is never zero
+      const sum = c.reduce((t, x) => t + x, 0), mx = Math.max(...c);
+      if (c.every((x) => x >= 0 && x <= 100.5) && ((sum > 90 && sum < 110) || (mx > 95 && mx <= 100.5))) sc -= 2;
+      return sc;
+    };
+    return score(b) > score(a) ? "vd" : "dv";
+  }
+  function psdColumns(a, b, order) {
+    const [dd, vv] = order === "vd" ? [b, a] : [a, b];
+    const d = [], v = [];
+    dd.forEach((x, k) => { if (x > 0) { d.push(x); v.push(vv[k]); } });
+    return { d, v };
+  }
   function readPsdFile(input) {
     const i = +input.dataset.psdfile, f = input.files && input.files[0];
     if (!f) return;
     const rd = new FileReader();
     rd.onload = () => {
-      const d = [], v = [];
+      const a = [], b = [];
+      let header = null;
       String(rd.result).split(/\r?\n/).forEach((line) => {
         const cells = line.trim().split(/[,;\t ]+/).map((c) => c.replace(",", ".")).filter((c) => c !== "");
         if (cells.length < 2) return;
-        const a = Number(cells[0]), b = Number(cells[1]);
-        if (isFinite(a) && isFinite(b) && a > 0) { d.push(a); v.push(b); }
+        const x = Number(cells[0]), y = Number(cells[1]);
+        if (isFinite(x) && isFinite(y)) { a.push(x); b.push(y); }
+        else if (!a.length) header = line.trim().split(/[,;\t]+|\s{2,}/).filter((c) => c !== "");
       });
-      if (d.length < 2) { toast("No two numeric columns (diameter, value) were found in this file."); return; }
       const ph = state.form.phases[i];
-      ph.dist = Object.assign({ type: "table", basis: "volume", form: "auto", unit: "um" }, ph.dist || {}, { type: "table", d, v, file: f.name });
+      const want = (ph.dist || {}).cols || "auto";
+      const order = want === "auto" ? psdOrder(a, b, header) : want;
+      const { d, v } = psdColumns(a, b, order);
+      if (d.length < 2) { toast("No two numeric columns (diameter, percentage) were found in this file."); return; }
+      ph.dist = Object.assign({ type: "table", basis: "volume", form: "auto", unit: "um" }, ph.dist || {},
+        { type: "table", d, v, file: f.name, cols_used: order, raw: { a, b, header } });
       saveForm(); renderLeft(); schedulePlan(0);
-      toast(`${d.length} rows read from ${f.name}.`);
+      toast(`${d.length} rows read from ${f.name}: ${order === "vd" ? "percentage in the first column, diameter in the second" : "diameter in the first column, percentage in the second"}.`);
     };
     rd.readAsText(f);
+  }
+  // the Columns setting changed after a file was read: its columns again
+  function psdReorder(i) {
+    const ph = state.form.phases[i], d0 = ph && ph.dist;
+    if (!d0 || !d0.raw) return;
+    const want = d0.cols || "auto";
+    const order = want === "auto" ? psdOrder(d0.raw.a, d0.raw.b, d0.raw.header) : want;
+    const { d, v } = psdColumns(d0.raw.a, d0.raw.b, order);
+    if (d.length >= 2) Object.assign(d0, { d, v, cols_used: order });
   }
   // the preview of each size distribution: number and volume density over log d
   // Parts of the Structure and Domain panels that follow the plan or other
@@ -1266,7 +1344,9 @@
         <div class="seg seg-wrap" id="arrSeg"><button data-arr="random" class="${sh || pr ? "" : "on"}">Random packing</button><button data-arr="sheared" class="${sh ? "on" : ""}">After shear flow</button><button data-arr="pressed" class="${pr ? "on" : ""}">After compression</button></div>
         ${pr ? `<div class="g2" style="margin-top:6px"><div><label class="f">Compression along z (% of the height)</label><input type="number" min="1" max="80" step="1" data-k="rve.press_compression" data-num></div><div><label class="f">Strain rate (1/s)</label><input type="number" min="0.000001" step="any" data-k="rve.press_rate" data-num></div></div>
           <div class="g2"><div><label class="f">Sides (x, y)</label><select data-k="rve.press_lateral"><option value="xy" ${lat === "xy" ? "selected" : ""}>x and y free</option><option value="x" ${lat === "x" ? "selected" : ""}>x free, y held</option><option value="none" ${lat === "none" ? "selected" : ""}>x and y held</option></select></div>
-            <div><label class="f">Steps</label><input type="number" min="2" max="200" step="1" data-k="rve.press_steps" data-num placeholder="auto: one per 5 %"></div></div>
+            <div>${f.rve.press_cure ? `<label class="f">Longest time (s)</label><input type="number" min="0.001" step="any" data-k="rve.press_time_s" data-num>` : `<label class="f">Steps</label><input type="number" min="2" max="200" step="1" data-k="rve.press_steps" data-num placeholder="auto: one per 5 %">`}</div></div>
+          <label class="chk" style="margin-top:6px"><input type="checkbox" data-k="rve.press_cure"> Cure during the compression</label>
+          ${f.rve.press_cure ? cureInputs(f) : ""}
           ${whyP ? `<div class="note warn">The compression moves solid fillers as rigid spheres, starting from a periodic cube; this structure has ${whyP}.</div>` : ""}
           ${lat === "none" && poreVf <= +f.rve.press_compression ? `<div class="note warn">With both sides held the volume lost (${fmt(+f.rve.press_compression)} % of the RVE) must come from pores; the structure has ${fmt(poreVf)} vol%. Add pores in the Structure tab or let a side expand.</div>` : ""}
           <div class="hint">The periodic RVE is a point inside a part pressed slowly while its resin still flows: it is shortened along z at this strain rate, and its sides expand freely (no stress across them), or one or both are held - then the volume lost must come from pores (Structure tab), which close. Each step solves the three-dimensional creeping flow of the whole RVE on its voxels - every resin with its viscosity (the main one by its flow model, a matrix region by its viscosity before cure), the filler spheres rigid, the pores a compressible gas - and moves the structure with it: the spheres as rigid bodies, the resins and the pores as material markers. An incompressible resin keeps its volume; with both sides held, the pores close. The result is the compressed box (its own shape, periodic) that the analyses then solve, the strain and the von Mises stress of every region, and the compression step by step in 3D.</div>`
@@ -1274,6 +1354,20 @@
           ${why ? `<div class="note warn">The arrangement after shear flow is made for spheres in a periodic cube; this structure has ${why}.</div>` : ""}
           <div class="hint">The random packing is sheared in the resin by the particle dynamics of the viscosity analysis - lubrication, contacts with friction, van der Waals and adhesion as set there - and the particles are drawn where the flow leaves them: the arrangement a dispensed or moulded compound keeps when it cures. Flow along x, its velocity gradient through z (across the gap the compound flows in), vorticity along y. The strain is a whole number, so that the sheared box is periodic again; 10 lets the structure forget its random start. It takes as long as the viscosity at one shear rate (minutes on a GPU).</div>`
           : `<div class="hint" style="margin-top:6px">Particles packed at random. <b>After shear flow</b> shears this packing in the resin first (spheres): the structure of a cured underfill or mould compound. <b>After compression</b> compresses the periodic RVE while its resins flow: a compound or two resins pressed in a mould or a laminate, with pores that close.</div>`}</div></div>`;
+  }
+
+  // the cure of the resins while the RVE is compressed (rve.press_*)
+  function cureInputs(f) {
+    const ctl = f.rve.press_control || "rate";
+    const resins = [f.matrix].concat(f.matrix_regions || []).filter(Boolean);
+    const withC = resins.filter((m) => hasCure(m.props)), without = resins.filter((m) => !hasCure(m.props));
+    return `<div class="g2" style="margin-top:4px"><div><label class="f">Mould temperature (°C)</label><input type="number" min="-50" max="400" step="any" data-k="rve.press_mold_C" data-num></div>
+        <div><label class="f">Part thickness (mm) <span class="u">heat from the mould</span></label><input type="number" min="0" step="any" data-k="rve.press_part_mm" data-num></div></div>
+      <div class="g2"><div><label class="f">Closing</label><select data-k="rve.press_control"><option value="rate" ${ctl === "rate" ? "selected" : ""}>at the strain rate</option><option value="stress" ${ctl === "stress" ? "selected" : ""}>at most an axial stress</option></select></div>
+        <div>${ctl === "stress" ? `<label class="f">Axial stress (Pa)</label><input type="number" min="0" step="any" data-k="rve.press_stress_Pa" data-num>` : ""}</div></div>
+      ${withC.length ? `<div class="hint">Curing: ${withC.map((m) => `<b>${esc(m.name)}</b> (gel at α = ${fmt(+m.props.gel_alpha)})`).join(", ")}${without.length ? `; ${without.map((m) => esc(m.name)).join(", ")} without cure constants, at a constant viscosity` : ""}.</div>`
+        : `<div class="note warn">No resin has cure constants: set them in the Material tab (Cure kinetics and viscosity rise), or pick a resin that carries them (Epoxy).</div>`}
+      <div class="hint">Each resin cures at the temperature of the RVE (Kamal–Sourour) and thickens towards its gel point (Castro–Macosko). The temperature starts at the mould's and rises with the heat of reaction, which the mould takes back over the part thickness (ρc L² / π² k). ${ctl === "stress" ? "The press closes at the strain rate above at most, and slower when the axial stress would exceed the limit: as the resins thicken the closing slows, and it stops at the gel point." : "The press closes at the strain rate; the stress rises as the resins thicken."} The compression ends when it is reached, when every resin has gelled, or at the longest time.</div>`;
   }
 
   // How evenly the particles fill the box: even, only in a region, graded
@@ -1315,7 +1409,7 @@
   function anCard(key, options = "") {
     const a = AN[key], on = !!state.form.analyses[key], dis = disabledReason(key);
     return `<div class="sec acard ${on ? "on" : ""} ${dis ? "dis" : ""}" data-card="${key}"><div class="sh" style="--ic:${a.color}">${I(a.icon)}<span>${a.title}</span><div class="grow"></div>
-        <label class="switch" title="${esc(dis || "Include in the run")}"><input type="checkbox" data-an="${key}" ${on ? "checked" : ""} ${dis ? "disabled" : ""}><span></span></label></div>
+        <label class="switch" title="${esc(dis || "Include in the run")}"><input type="checkbox" data-an="${key}" ${on ? "checked" : ""} ${dis && !on ? "disabled" : ""}><span></span></label></div>
       <div class="sb"><div class="solver">${a.solver}</div><div class="outs">${a.out}</div>${dis ? `<div class="note warn">${dis}</div>` : ""}
         ${on && options ? `<div class="opts"><div class="cap">Options</div>${options}</div>` : ""}</div></div>`;
   }
@@ -1334,6 +1428,34 @@
         ${num("options.mechtest.value", "Load", unit)}</div>
       <div class="g2">${num("options.mechtest.length_mm", "Specimen length along the load", film && (o.axis || "z") === "z" ? "mm, empty = film thickness" : "mm, empty = 10")}${num("options.mechtest.area_mm2", "Loaded area", "mm²")}</div>
       <div class="hint">A universal testing machine on a specimen of this composite: the specimen is a uniform bar - or a film between platens - and the RVE a material point inside it. <b>Free</b> sides contract or bulge freely (a tensile bar, or a film between lubricated platens); <b>confined</b> sides cannot move (a film bonded to platens much wider than it is thick, or a die). The force acts on the loaded area, the displacement on the specimen length. Includes elasticity automatically and adds one solve for the stress fields; the material is linear elastic, so the line is straight and tension and compression differ only in sign. With a matrix strength, the load at which its most stressed 0.1 % reaches it is the estimated onset of yielding or cracking.</div>`;
+  }
+  // thermal stress and warpage of a film: cured at T_ref, in service with a
+  // temperature on each face; free, on a substrate, or held flat
+  function tmOptions() {
+    const o = state.form.options.thermomech || (state.form.options.thermomech = { T_ref: 175, T_bottom: 25, T_top: 25, support: "free", substrate: { material_id: "si", thickness_um: 775 }, span_mm: 10, compare_uniform: true });
+    const sup = o.support || "free", sub = o.substrate || (o.substrate = { material_id: "si", thickness_um: 775 });
+    const sm = mat(sub.material_id || "si"), sp = sm ? sm.props : {};
+    const film = !!state.form.rve.film;
+    const mats = allMaterials().map((m) => `<option value="${m.id}" ${m.id === (sub.material_id || "si") ? "selected" : ""}>${esc(m.name)}</option>`).join("");
+    return `${film ? "" : `<div class="note warn">Solved on a thin film between its two faces: tick 'Thin film' on the Domain tab and give its real thickness.</div>`}
+      <div class="g3">${num("options.thermomech.T_ref", "Stress-free temperature", "°C (cure)")}${num("options.thermomech.T_bottom", "Bottom face (z = 0)", "°C")}${num("options.thermomech.T_top", "Top face", "°C")}</div>
+      <div class="g2"><div><label class="f">Support</label><select data-k="options.thermomech.support"><option value="free" ${sup === "free" ? "selected" : ""}>Free film (bends and stretches)</option><option value="substrate" ${sup === "substrate" ? "selected" : ""}>On a substrate under the bottom face</option><option value="held" ${sup === "held" ? "selected" : ""}>Held flat (no bending, no stretching)</option></select></div>
+        ${num("options.thermomech.span_mm", "Span of the warpage", "mm")}</div>
+      ${sup === "substrate" ? `<div class="g2"><div><label class="f">Substrate material</label><select data-k="options.thermomech.substrate.material_id">${mats}</select></div>${num("options.thermomech.substrate.thickness_um", "Substrate thickness", "µm")}</div>
+        <div class="g3"><div><label class="f">E <span class="u">GPa, empty = ${fmt(sp.E)}</span></label><input type="number" step="any" data-k="options.thermomech.substrate.E" data-num></div><div><label class="f">ν <span class="u">empty = ${fmt(sp.nu)}</span></label><input type="number" step="any" data-k="options.thermomech.substrate.nu" data-num></div><div><label class="f">CTE <span class="u">ppm/K, empty = ${fmt(sp.alpha)}</span></label><input type="number" step="any" data-k="options.thermomech.substrate.alpha" data-num></div></div>` : ""}
+      <label class="chk"><span class="switch"><input type="checkbox" data-k="options.thermomech.compare_uniform"><span></span></span> Also at the uniform mean temperature (what the gradient adds)</label>
+      <div class="hint">Three coupled steps. <b>Heat</b>: the steady temperature field of the film between its two face temperatures, with the thermal conductivities and the interface and contact resistances of the thermal analysis. <b>Stress</b>: every voxel expands from the stress-free temperature (where the film cured) by its own α - α1 below its Tg, α2 above, with the rubbery modulus there (Material tab, optional properties) - solved as an eigenstrain of the voxel finite elements with the film held in its plane. <b>Warpage</b>: classical laminate theory on that solution releases the film${sup === "substrate" ? " bonded to the substrate (a homogeneous layer at the bottom face's temperature)" : ""} until no force and no moment remain: in-plane strain, curvature κ and the warpage κL²/8 of a span L. Negative warpage: the edges rise (the face on top shrinks more). Elastic; viscoelastic relaxation and cure shrinkage are not included. ${sup === "held" ? "Held flat: the stress of a film clamped to a rigid carrier." : ""}</div>`;
+  }
+  // Joule heating of a film: a current density or a voltage between its faces
+  function jhOptions() {
+    const o = state.form.options.joule || (state.form.options.joule = { control: "current", values: "1e6, 1e7, 3e7, 1e8", T_amb: 25, R_th: 0.001 });
+    const film = !!state.form.rve.film, cur = (o.control || "current") === "current";
+    const tcr = [state.form.matrix].concat(state.form.phases || []).filter((m) => m && m.props && +m.props.tcr);
+    return `${film ? "" : `<div class="note warn">Solved on a thin film between its two faces (the electrodes): tick 'Thin film' on the Domain tab and give its real thickness.</div>`}
+      <div class="g2"><div><label class="f">Driven by</label><select data-k="options.joule.control"><option value="current" ${cur ? "selected" : ""}>Current density (A/m²)</option><option value="voltage" ${!cur ? "selected" : ""}>Voltage (V)</option></select></div>
+        <div><label class="f">Steps <span class="u">${cur ? "A/m²" : "V"}, comma-separated, rising</span></label><input type="text" data-k="options.joule.values"></div></div>
+      <div class="g2">${num("options.joule.T_amb", "Ambient temperature", "°C")}${num("options.joule.R_th", "Thermal resistance to ambient", "K·m²/W, per area")}</div>
+      <div class="hint">At every step the potential is solved with each voxel's conductivity at its temperature, σ(T) = σ / (1 + TCR (T − 20 °C)), the heat of the current in every voxel follows, then the temperature it raises, and the two are solved in turn until the temperature changes by less than 1 mK. The faces sit at T<sub>amb</sub> + R<sub>th</sub>·P (P the heat per area of the film: R<sub>th</sub> carries the joint's path to ambient; 1e-3 K·m²/W is 10 K/W for 1 cm²). A set current through a conductor whose resistance rises with temperature can run away: the sweep stops at the step where the temperature no longer settles or exceeds 1000 °C. ${tcr.length ? `TCR set for ${tcr.map((m) => esc(m.name)).join(", ")}.` : "No material has a TCR (Material tab, optional): the conductivities stay constant."} The conductor must join the two faces (set the matrix skin to 0 on the Domain tab where particles touch the electrodes).</div>`;
   }
   function gasDetails() {
     return `<details class="more"><summary>Gas properties (pores)</summary><div class="g2">${num("options.gas.viscosity_Pa_s", "Viscosity", "Pa·s")}${num("options.gas.density_kg_m3", "Density", "kg/m³")}
@@ -1393,6 +1515,7 @@
       anCard("mechtest", mechOptions()) +
       anCard("permeability", gasDetails()) +
       anCard("viscosity", viscosityOptions()) +
+      anCard("thermomech", tmOptions()) + anCard("joule", jhOptions()) +
       anCard("moisture", `<div class="g3">${num("options.moisture.thickness_mm", "Thickness", "mm")}${num("options.moisture.hours", "Exposure", "h")}<div><label class="f">Exposed faces</label><select data-k="options.moisture.sides"><option value="both">Both</option><option value="one">One (the other sealed)</option></select></div></div>
         <div class="hint">Uses the optional moisture properties of each material (Material tab): diffusivity D_w and saturated uptake c_sat at the test condition (e.g. 85 °C / 85 % RH) and the swelling coefficient CME. A material without them takes up no water. The uptake curve is Crank's solution for a plate of the given thickness; 168 h is the JEDEC level-1 soak.</div>`) +
       anCard("filtration", `<div class="g3">${num("options.filtration.face_velocity_m_s", "Face velocity", "m/s")}${num("options.filtration.n_particles", "Particles per size", "", "1")}${num("options.filtration.particle_density_kg_m3", "Particle density", "kg/m³")}</div>
@@ -1415,12 +1538,22 @@
       <i class="dot ${j.state}"></i><div class="nm">${esc(j.name || j.id)}
         <div class="rtags">${chips(j)}${j.grid ? `<span class="rgrid">${esc(j.grid)}</span>` : ""}</div>
         ${j.doe_label ? `<small class="rvars">${esc(j.doe_label)}</small>` : (j.structure ? `<small class="rstruct" title="${esc(j.structure)}">${esc(j.structure)}</small>` : "")}
-        <small>${STATE[j.state]}${j.state === "running" ? " · " + Math.round(100 * j.progress) + " %" + (j.threads ? ` · ${j.threads} cores` : "") : ""}${j.state === "queued" ? " · " + esc(j.wait || "position " + j.queue_position) : ""} · ${secs(j.elapsed_s)}</small></div>
+        <small>${STATE[j.state]}${j.state === "running" ? (j.phase === "gate" ? ` · ${esc(j.wait || "structure built, waiting for memory to solve")}` : " · " + Math.round(100 * j.progress) + " %" + (j.phase === "structure" ? " · structure" : j.phase === "solve" ? " · solving" : "") + (j.threads ? ` · ${j.threads} cores` : "")) : ""}${j.state === "queued" ? " · " + esc(j.wait || "position " + j.queue_position) : ""} · ${secs(j.elapsed_s)}</small></div>
       <div class="acts">${["running", "queued"].includes(j.state) ? `<button class="btn sm danger" data-stop="${j.id}" title="Stop">${I("stop")}</button>` : `<button class="btn sm" data-del="${j.id}" title="Delete">${I("delete")}</button>`}</div></div>`;
     // A study queues up to 64 cases. Listed one by one they bury every earlier
     // result, so a study collapses into a single row that opens on a click.
     const seen = new Set(), out = [];
-    state.jobs.forEach((j) => {
+    // runs of the other work folders of the workspace (earlier days, other
+    // sessions or browsers), folded per folder below the open one
+    const here = state.jobs.filter((j) => j.in_current !== false), there = state.jobs.filter((j) => j.in_current === false);
+    const folders = [...new Set(there.map((j) => j.folder || "—"))].sort().reverse();
+    const tail = folders.map((fd) => {
+      const js = there.filter((j) => (j.folder || "—") === fd), open = !!(state.openFolders || {})[fd];
+      return `<div class="run study fgroup ${open ? "open" : ""}" data-fgroup="${esc(fd)}"><i class="dot done"></i><div class="nm">${I("open")} ${esc(fd)}
+          <small>Work folder · ${js.length} run${js.length === 1 ? "" : "s"}</small></div><div class="acts"><button class="btn sm" data-fgroup="${esc(fd)}" title="${open ? "Collapse" : "Show its runs"}">${open ? "−" : "+"}</button></div></div>`
+        + (open ? `<div class="substack">${js.map(one).join("")}</div>` : "");
+    });
+    here.forEach((j) => {
       if (!j.doe) { out.push(one(j)); return; }
       if (seen.has(j.doe)) return;
       seen.add(j.doe);
@@ -1439,7 +1572,8 @@
           <button class="btn sm" data-doetoggle="${j.doe}" title="${open ? "Collapse" : "Show the cases"}">${open ? "−" : "+"}</button></div></div>`
         + (open ? `<div class="substack">${cases.map(one).join("")}</div>` : ""));
     });
-    return out.join("");
+    if (tail.length) out.push(`<div class="hint" style="margin:8px 2px 4px">Other work folders of this workspace</div>`, ...tail);
+    return out.join("") || '<div class="empty">' + I("runs") + '<div>No runs in this work folder yet.</div></div>';
   }
   function leftResults() {
     const r = state.result;
@@ -1472,7 +1606,7 @@
       }
     });
   }
-  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|fraction\.value|size\.d|section\.(?:from|to))$/;
+  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|rve\.press_cure|rve\.press_control|rve\.press_lateral|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|fraction\.value|size\.d|section\.(?:from|to))$/;
   function onField(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
@@ -1481,6 +1615,8 @@
     else if ("num" in el.dataset) v = el.value === "" ? null : Number(el.value) * unitScale(el);
     else v = el.value;
     setPath(state.form, el.dataset.k, v);
+    const mcols = /^phases\.(\d+)\.dist\.cols$/.exec(el.dataset.k);
+    if (mcols) { psdReorder(+mcols[1]); saveForm(); renderLeft(); schedulePlan(0); return; }
     // the grid size follows from the edge length and the voxel size; an old
     // form's fixed grid size would otherwise override them silently
     if (/^rve\.(L_um|voxel_um)$/.test(el.dataset.k)) state.form.rve.N = null;
@@ -1525,7 +1661,7 @@
     if (key.startsWith("props.")) {
       const k0 = key.slice(6);
       // an optional value cleared is no longer set (not absorbing, no Tg)
-      if (el.value === "" && OPT_PROPS.some(([o]) => o === k0)) { delete m.props[k0]; libChanged(id); return; }
+      if (el.value === "" && OPT_ALL.some(([o]) => o === k0)) { delete m.props[k0]; libChanged(id); return; }
       if (el.value === "" || !isFinite(Number(el.value))) return;
       const k = key.slice(6), v = Number(el.value);
       m.props[k] = v;
@@ -1621,18 +1757,12 @@
     return { cap, busy, total, free: cap - total };
   }
   async function submit(preview) {
-    // One machine, one set of cores. Starting another run while the machine is
-    // already full only makes both slower, and it happened on a stray click
-    // because nothing said no. Up to the chosen number of parallel jobs is
-    // still allowed, since that is what the setting is for.
-    const q = queueRoom();
-    if (q.free <= 0) {
-      const j = q.busy[0];
-      toast(`${q.busy.length} analysis${q.busy.length === 1 ? " is" : "es are"} already under way `
-        + `(limit ${q.cap}). Stop "${esc(j.name || j.id)}" or wait, `
-        + `or raise the number of parallel analyses on the Home tab.`, 7000);
-      return;
-    }
+    // One machine, one set of cores: the server starts the chosen number of
+    // runs at once, within the memory budget. While runs are under way the
+    // button reads "Add analysis" and a case goes into the queue, to start by
+    // itself when a place and its memory are free (5.6; before, a full
+    // machine refused it until a run ended).
+    const q = queueRoom(), adding = anyLive();
     const body = clone(state.form);
     body.preview = !!preview;
     // the run on screen is the one to continue when it holds the same structure
@@ -1640,6 +1770,15 @@
     try {
       const res = await api("POST", "/api/jobs", body);
       if (res.continued && state.resultJob === res.continued) { state.result = null; state.resultJob = null; state.viewerJob = null; }
+      if (adding && !res.continued) {
+        // the console stays on the run it follows; the new case waits in Runs
+        await pollRuns();
+        const nj = (state.jobs || []).find((x) => x.id === res.id);
+        toast(`Added to the queue: "${esc(body.name || "case")}"`
+          + (nj && nj.state === "queued" ? ` - ${nj.queue_position > 1 ? `${nj.queue_position - 1} ahead of it` : "next in line"}${q.free <= 0 ? `, it starts when one of the ${q.cap} places is free` : ""}` : " - started beside the others")
+          + ". A click on it in Runs shows its inputs.", 7000);
+        return;
+      }
       attach(res.id, preview);
       toast(res.continued
         ? (res.kept && res.kept.length
@@ -1913,7 +2052,12 @@
     // what made a second click seem to do something. Redrawn on change only, so
     // the ribbon is not rebuilt under the pointer every four seconds.
     const inflight = running + queued;
-    if (inflight !== state._inflight) { state._inflight = inflight; renderRibbon(); }
+    if (inflight !== state._inflight) {
+      state._inflight = inflight; renderRibbon();
+      // the header's button too: Run, or Add while runs are under way
+      const hb = $("#btnRun");
+      if (hb) { hb.innerHTML = inflight ? `${I("plus")}Add` : `${I("play")}Run`; hb.title = inflight ? "Add this case to the queue (it starts when a place and its memory are free)" : "Generate the structure and run the selected analyses"; }
+    }
     $("#btnStop").disabled = !inflight && !["running", "queued"].includes(state.activeState || "");
     // a run going on (started in another tab, a study, or before this page
     // loaded) is followed when the one followed here has finished: its live
@@ -1924,7 +2068,7 @@
     // happened to start with, or the status bar contradicts the Home tab
     const st = state.settings;
     if (state.health) {
-      const memWait = state.jobs.some((j) => j.state === "queued" && /memory/.test(j.wait || ""));
+      const memWait = state.jobs.some((j) => (j.state === "queued" || j.phase === "gate") && /memory/.test(j.wait || ""));
       $("#sbServer").textContent = `${running} running · ${queued} queued${memWait ? " (waiting for memory)" : ""} · `
         + (st ? `${st.concurrency} at a time × ${st.threads} of ${st.cores} cores`
               : `${state.health.cores} cores`);
@@ -1947,8 +2091,15 @@
   }
   async function openJob(id) {
     const j = state.jobs.find((x) => x.id === id);
-    if (j && j.state === "done") { await loadResult(id); setCenter(state.center === "rep" ? "rep" : state.center); if (state.center === "vis") openViewer(); }
-    else attach(id, j && !(j.analyses || []).length);
+    if (j && j.state === "done") { await loadResult(id); setCenter(state.center === "rep" ? "rep" : state.center); if (state.center === "vis") openViewer(); return; }
+    // queued, running, stopped or failed: the console follows it and the
+    // Result Viewer shows its inputs (the analyses it finishes replace them)
+    attach(id, j && !(j.analyses || []).length);
+    state.result = null; state.resultJob = null;
+    state.noResult = { id, state: (j && j.state) || "queued", label: (j && (j.doe_label || j.name)) || "" };
+    if (j && j.state === "running") await loadPartialResult(id);
+    setCenter("res");
+    renderResults();
   }
   async function loadResult(id) {
     try {
@@ -1982,7 +2133,8 @@
       nav.innerHTML = "";
       const nr = state.noResult;
       body.innerHTML = nr && nr.id === state.active
-        ? `<div class="empty">${I("table")}<div><b>This case has no result yet${nr.label ? ` (${esc(nr.label)})` : ""}.</b><br>It is ${esc(STATE[nr.state] || nr.state)}. The console below follows it; the analyses it finishes appear here as they are done.</div></div>`
+        ? `<div class="note" style="margin-bottom:8px"><b>${esc(nr.label || "This case")}</b> has no result${["queued", "running"].includes(nr.state) ? " yet" : ""}: it is ${esc((STATE[nr.state] || nr.state).toLowerCase())}. ${nr.state === "queued" ? "It starts when a place and its memory are free; below are the inputs it will run with." : nr.state === "running" ? "The console below follows it; the analyses it finishes replace this page as they are done." : "The console below shows its log; below are the inputs it ran with."}</div>
+          <iframe class="inrep" src="/api/jobs/${nr.id}/input_report" title="Inputs of this run"></iframe>`
         : `<div class="empty">${I("table")}<div><b>No result is selected.</b><br>Completed runs are opened from the Runs list on the right.</div></div>`;
       return;
     }
@@ -2001,6 +2153,8 @@
     if (P.permeability) add("permeability", "Permeability", "permeability", "var(--c-flow)", "Simulation", secPerm(P.permeability));
     if (P.viscosity) add("viscosity", "Viscosity and flowability", "permeability", "var(--c-flow)", "Simulation", secVisc(P.viscosity));
     if (P.moisture) add("moisture", "Moisture uptake and swelling", "tortuosity", "var(--c-flow)", "Simulation", secMoist(P.moisture));
+    if (P.thermomech) add("thermomech", "Thermal stress and warpage", "cte", "var(--c-thermal)", "Multiphysics", secTM(P.thermomech));
+    if (P.joule) add("joule", "Joule heating", "electrical", "var(--c-electrical)", "Multiphysics", secJoule(P.joule));
     if (P.filtration) add("filtration", "Filtration efficiency", "pores", "var(--c-flow)", "Simulation", secFiltration(P.filtration));
     if (P.tortuosity) add("tortuosity", "Diffusion and tortuosity", "tortuosity", "var(--c-diff)", "Simulation", secTort(P.tortuosity));
     if (P.acoustics) add("acoustics", "Acoustic absorption", "acoustics", "var(--c-ac)", "Simulation", secAcoustics(P.acoustics));
@@ -2069,7 +2223,9 @@
     const ser = [{ x: c, y: s.sigma_zz_Pa.map((v) => -v), color: "#0b62c4", width: 2.2, marker: true, label: "Axial stress −σzz" }];
     if (p.lateral !== "xy") ser.push({ x: c, y: s.sigma_yy_Pa.map((v) => -v), color: "#e8590c", dash: [5, 4], label: "Stress across y −σyy (held)" });
     if (p.lateral === "none") ser.push({ x: c, y: s.sigma_xx_Pa.map((v) => -v), color: "#8250df", dash: [2, 3], label: "Stress across x −σxx (held)" });
-    draws.push(() => CH.line($("#pressCurve"), { xlabel: "Compression along z (% of the height)", ylabel: "Compressive stress (Pa)", xmin: 0, ymin: 0, series: ser }));
+    // a cure near its gel point raises the stress by decades: a log axis then
+    const sz = s.sigma_zz_Pa.map((v) => -v).filter((v) => v > 0), wide = sz.length && Math.max(...sz) / Math.min(...sz) > 1e3;
+    draws.push(() => CH.line($("#pressCurve"), { xlabel: "Compression along z (% of the height)", ylabel: "Compressive stress (Pa)", xmin: 0, ...(wide ? { ylog: true } : { ymin: 0 }), series: ser }));
     const pores = (p.pore_fraction || [0, 0])[0] > 0;
     const ser2 = pores ? [{ x: c, y: s.pore_fraction.map((v) => 100 * v), color: "#57606a", width: 2.2, marker: true, label: "Pores" }]
       : [{ x: c, y: s.strain_x.map((v) => 100 * v), color: "#d1242f", width: 2, label: "Box strain x" }, { x: c, y: s.strain_y.map((v) => 100 * v), color: "#1a7f37", width: 2, dash: [5, 4], label: "Box strain y" }];
@@ -2083,6 +2239,7 @@
         if (m.press) state.pressPlayer = await window.PressPlayer(host, state.resultJob, m.press);
       } catch (e) { host.innerHTML = `<div class="hint">The compression could not be shown: ${esc(String(e))}</div>`; }
     });
+    const cure = p.cure && s.time_s ? cureBox(p) : "";
     const pc = (v) => `${(100 * v) >= 0 ? "+" : ""}${(100 * v).toFixed(1)} %`;
     const rows = Object.entries(p.regions || {}).map(([n, v]) => [esc(n), `${fmt(100 * v.share0)} → ${fmt(100 * v.share)} %`,
       pc(v.strain_all[2]), pc(v.strain_all[0]), pc(v.strain_all[1]), pc(v.strain[2]), fmt(v.vm_Pa[v.vm_Pa.length - 1])]);
@@ -2093,7 +2250,35 @@
         ${rows.map((rw) => `<tr>${rw.map((v, i) => `<td class="${i ? "n" : ""}">${v}</td>`).join("")}</tr>`).join("")}</table></div>
       <p class="hint">Strains are true (logarithmic) strains of each region with the spheres in it (a sphere belongs to the resin around it); the resin alone strains more where rigid spheres take none of the deformation. Resins: ${resins} at the equivalent shear rate ${fmt(p.gd_eq)} 1/s; compression viscosity ${fmt(p.eta_compression_Pa_s)} Pa·s at the end (−σzz over the strain rate${p.lateral === "none" ? "" : `; the plain resin's is ${p.lateral === "x" ? 4 : 3} times its viscosity, ${fmt((p.lateral === "x" ? 4 : 3) * Math.min(...Object.values(p.resins || { a: 1 })))} Pa·s`}). Where the spheres crowd closer than a voxel or two the resin films between them are not resolved and the stress comes out high, as in the voxel viscosity.
         ${p.n_spheres} spheres, ${p.crossed_resin} now surrounded by another resin than at the start${pores ? `; pores ${fmt(100 * p.pore_fraction[0])} → ${fmt(100 * p.pore_fraction[1])} vol%` : ""}. In a periodic RVE an incompressible resin keeps its volume share, and a sphere moves with the resin around it: the regions change shape, not size.</p>
+      ${cure}
       <div class="bt" style="margin-top:10px">The compression in 3D <span class="hint">the box at every step: its three outer faces, or the three middle sections; materials or von Mises stress</span></div><div id="pressPlayer"></div></div>`;
+  }
+  // the compression with cure: each resin's conversion and viscosity, the
+  // closing and the temperature against time
+  const CURE_STOP = {
+    compressed: "the compression was reached", gelled: "every resin gelled before the compression was reached",
+    time: "the longest time passed before the compression was reached", stalled: "the press stalled: the resins too thick to flow at the stress",
+    steps: "the step limit (200) was reached",
+  };
+  function cureBox(p) {
+    const c = p.cure, s = p.series, t = c.time_s, cols = ["#0b62c4", "#e8590c", "#1a7f37", "#8250df"];
+    const names = Object.keys(c.resins || {}), al = s.alpha || {}, et = s.eta_Pa_s || {};
+    const keys = Object.keys(al);
+    const sa = keys.map((k, i) => ({ x: t, y: al[k], color: cols[i % 4], width: 2.2, marker: t.length < 40, label: names[i] || k }));
+    keys.forEach((k, i) => { const g = (c.resins[names[i]] || {}).gel; if (g) sa.push({ x: [t[0], t[t.length - 1]], y: [g, g], color: cols[i % 4], dash: [4, 4], width: 1.2, label: `${names[i] || k}: gel point` }); });
+    const se = keys.map((k, i) => ({ x: t, y: et[k].map((v) => (v >= 1e29 ? null : v)), color: cols[i % 4], width: 2.2, marker: t.length < 40, label: names[i] || k }));
+    draws.push(() => CH.line($("#cureAlpha"), { xlabel: "Time (s)", ylabel: "Conversion α", xmin: 0, ymin: 0, series: sa }));
+    draws.push(() => CH.line($("#cureEta"), { xlabel: "Time (s)", ylabel: "Viscosity (Pa·s)", xmin: 0, ylog: true, series: se }));
+    draws.push(() => CH.line($("#cureComp"), { xlabel: "Time (s)", ylabel: "Compression along z (%)", xmin: 0, ymin: 0,
+      series: [{ x: t, y: s.compression.map((v) => 100 * v), color: "#0b62c4", width: 2.2, marker: t.length < 40, label: "Compression" }] }));
+    draws.push(() => CH.line($("#cureT"), { xlabel: "Time (s)", ylabel: "Temperature (°C)", xmin: 0,
+      series: [{ x: t, y: c.T_C, color: "#d1242f", width: 2.2, label: "Temperature of the RVE" }] }));
+    const rows = names.map((n) => { const r = c.resins[n]; return [esc(n), fmt(r.alpha[r.alpha.length - 1]), fmt(r.gel), r.gelled ? "∞ (gelled)" : fmt(r.eta_Pa_s[r.eta_Pa_s.length - 1]), r.gelled ? "yes" : "no"]; });
+    return `<div class="bt" style="margin-top:10px">Cure during the compression <span class="hint">mould ${fmt(c.mold_C)} °C · ${c.control === "stress" ? `at most ${fmt(c.stress_Pa)} Pa` : `at ${fmt(p.rate_1_s)} 1/s`} · ${fmt(t[t.length - 1])} s · ended: ${esc(CURE_STOP[c.stop] || c.stop || "")}</span></div>
+      <div class="g2"><div>${canvas("cureAlpha", 220)}</div><div>${canvas("cureEta", 220)}</div></div>
+      <div class="g2"><div>${canvas("cureComp", 220)}</div><div>${canvas("cureT", 220)}</div></div>
+      ${tbl(["Resin", "Conversion at the end", "Gel point", "Viscosity at the end (Pa·s)", "Gelled"], rows)}
+      <p class="hint">Kamal–Sourour conversion and Castro–Macosko viscosity of every curing resin at the temperature of the RVE, which starts at the mould's and rises with the heat of reaction (exchange time with the mould ${fmt(c.tau_s)} s for a ${fmt(c.part_mm)} mm part). ${c.control === "stress" ? "The press closes no faster than the axial stress allows, so the closing slows as the resins thicken; a resin past its gel point no longer flows." : "The press closes at its strain rate; the axial stress (above) rises as the resins thicken."} The structure the analyses solve is the one where the compression ended.</p>`;
   }
   // the uneven dispersion as generated: the loading profile against the one
   // asked for (region, gradient), or the clusters' share and loadings
@@ -2244,6 +2429,65 @@
       <div class="box" style="grid-column:1/-1"><div class="bt">Stresses and strains by region <span class="hint">MPa, % · at the test load</span><div class="grow"></div>${viewBtn("mt_", "Stress fields")}</div>
         ${tbl(["Region", "Mean von Mises", "99th percentile", "Maximum", `Mean σ${ax}${ax}`, `Mean ε${ax}${ax} [%]`, "Concentration (99th pct. / applied)"], (ss.von_mises || []).map((s) => [esc(s.label), fmt(s.mean), fmt(s.p99), fmt(s.max), fmt((ea[s.label] || {}).mean), fmt(100 * ((ee[s.label] || {}).mean || 0)), conc(s)]))}
         <p class="hint">The stiff filler carries more of the load than its share and the matrix between close particles the highest strains: the concentration factor says how far the local stress exceeds the applied one. The fields show where: von Mises, the axial stress and strain, and the displacement along the load inside the RVE.</p></div></div>`;
+  }
+  function secTM(p) {
+    const o = p.options || {}, w = p.warpage_um, pr = p.profile || {};
+    const sup = { free: "free film", held: "held flat", substrate: `on ${String((o.substrate || {}).name || "a substrate").split(" (")[0]}` }[o.support] || o.support;
+    const tile = (v, l, d) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div><div class="d">${esc(d || "")}</div></div>`;
+    const tiles_ = [
+      [`${fmt(w)} µm`, `Warpage over ${fmt(p.span_mm)} mm`, o.support === "held" ? "held flat" : w < 0 ? "edges up (top face shrinks more)" : w > 0 ? "edges down" : "flat"],
+      [`${fmt(p.kappa_1_m)} 1/m`, "Curvature κ", p.radius_m ? `radius ${fmt(Math.abs(p.radius_m))} m` : ""],
+      [`${fmt(1e6 * p.eps0)} µε`, "In-plane strain of the bottom face", "after the release"],
+      [`${fmt(p.T_min)} … ${fmt(p.T_max)} °C`, "Temperature in the film", `${fmt(p.q_W_m2)} W/m² through it · k ${fmt(p.k_eff)} W/m·K`]];
+    const z = pr.z_um || [];
+    draws.push(() => CH.line($("#tmProf"), { xlabel: "Height in the film z (µm)", ylabel: "In-plane stress (MPa)", series: [
+      { x: z, y: pr.s_MPa, color: "#0b62c4", width: 2.2, label: `Released (${sup})` },
+      { x: z, y: pr.s_held_MPa, color: "#8c959f", dash: [5, 4], width: 1.6, label: "Held in its plane" }] }));
+    draws.push(() => CH.line($("#tmT"), { xlabel: "Height in the film z (µm)", ylabel: "Temperature (°C)", series: [
+      { x: z, y: pr.T_C, color: "#d1242f", width: 2.2, label: "Mean of each slab" }] }));
+    const st = Object.values(p.stress_stats || {});
+    const rows = st.map((s) => [esc(s.name), `${fmt(s.vm_mean)} / ${fmt(s.vm_p999)}`, `${fmt(s.p1_mean)} / ${fmt(s.p1_max)}`, fmt(s.szz_p999), `${fmt(s.T_mean)} / ${fmt(s.T_max)}`, s.above_tg === null || s.above_tg === undefined ? "—" : `${fmt(100 * s.above_tg)} %`]);
+    const u = p.uniform;
+    const ss = p.substrate_stress;
+    return `<div class="tiles">${tiles_.map((t) => tile(...t)).join("")}</div><div class="rgrid">
+      <div class="box"><div class="bt">Stress through the film <span class="hint">in-plane stress, mean of each slab</span></div>${canvas("tmProf", 240)}
+        <p class="hint">Held in its plane, every slab carries the stress of its own thermal strain; the release lets the film stretch and bend until no force and no moment remain. Cooled from ${fmt(o.T_ref)} °C a resin-rich film is in tension (it shrinks more than its fillers or the substrate).</p></div>
+      <div class="box"><div class="bt">Temperature through the film <span class="hint">${fmt(o.T_bottom)} °C bottom, ${fmt(o.T_top)} °C top</span></div>${canvas("tmT", 240)}
+        <p class="hint">The steady heat flow between the two faces; where the conductivity changes (fillers, interface resistances) the gradient changes. Stress-free at ${fmt(o.T_ref)} °C.</p></div>
+      <div class="box" style="grid-column:1/-1"><div class="bt">Stresses by region <span class="hint">MPa · after the release</span><div class="grow"></div>${viewBtn("tm_", "Stress fields")}</div>
+        ${tbl(["Region", "von Mises, mean / 99.9 %", "Largest principal, mean / 99.9 %", "Peeling |σzz|, 99.9 %", "T, mean / max (°C)", "Above Tg"], rows)}
+        <p class="hint">The largest principal stress is the one that opens cracks (tension positive); the through-thickness stress σzz peels particles from the resin and the film from its substrate. The 99.9th percentile leaves out single voxels at sharp corners of the voxel geometry.</p>
+        ${kv([["Support", sup], ["In-plane strain ε₀ (bottom face)", `${fmt(1e6 * p.eps0)} µε`], ["Curvature κ", `${fmt(p.kappa_1_m)} 1/m`], ...(ss ? [["Substrate stress, top / bottom face", `${fmt(ss.top_MPa)} / ${fmt(ss.bottom_MPa)} MPa`]] : []),
+          ...(u ? [["At the uniform mean temperature", `warpage ${fmt(u.warpage_um)} µm (κ ${fmt(u.kappa_1_m)} 1/m): the gradient adds ${fmt(w - u.warpage_um)} µm`]] : []),
+          ["Solver", `heat ${p.heat ? p.heat.iterations : "—"} iterations · FANS ${(p.iterations || []).join(" + ")} iterations · ${secs(p.seconds)}`]])}
+        <p class="hint">Classical laminate theory on the solved film: the stiffness of every slab from a unit in-plane strain, its held thermal stress from the temperature field, released together (x and y averaged). Warpage κL²/8 is the height of the centre over the edges of a span L; negative means the edges rise. Elastic: viscoelastic relaxation and cure shrinkage are not included.</p></div></div>`;
+  }
+  function secJoule(p) {
+    if (p.error) return `<div class="box"><div class="note warn">Joule heating was not computed: ${esc(p.error)}.</div></div>`;
+    const st = p.steps || [], cur = p.control === "current";
+    const ok = st.filter((s) => s.status === "converged"), last = ok.length ? ok[ok.length - 1] : st[st.length - 1];
+    if (!last) return "";
+    const tile = (v, l, d) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div><div class="d">${esc(d || "")}</div></div>`;
+    const Rmm = (r) => fmt(r * 1e6);
+    const tiles_ = [
+      [`${fmt(last.T_max)} °C`, "Peak temperature", `at ${fmt(last.J_A_m2)} A/m², ${fmt(last.V)} V`],
+      [`${fmt(last.T_max - last.T_sink)} K`, "Rise inside the film", `faces at ${fmt(last.T_sink)} °C`],
+      [`${Rmm(last.R_ohm_m2)} Ω·mm²`, "Area resistance", `σ ${fmt(last.sigma_eff)} S/m through the film`],
+      [`${fmt(last.P_W_m2)} W/m²`, "Joule heat per area", p.stopped ? (p.stopped === "runaway" ? "thermal runaway at the next step" : "above 1000 °C at the next step") : "every step settled"]];
+    draws.push(() => CH.line($("#jhIV"), { xlabel: "Current density (A/m²)", ylabel: "Voltage (V)", xmin: 0, ymin: 0, series: [
+      { x: st.map((s) => s.J_A_m2), y: st.map((s) => s.V), color: "#0b62c4", width: 2.2, marker: true, label: "Steady state at each step" }] }));
+    draws.push(() => CH.line($("#jhT"), { xlabel: "Current density (A/m²)", ylabel: "Temperature (°C)", xmin: 0, series: [
+      { x: st.map((s) => s.J_A_m2), y: st.map((s) => s.T_max), color: "#d1242f", width: 2.2, marker: true, label: "Peak in the film" },
+      { x: st.map((s) => s.J_A_m2), y: st.map((s) => s.T_sink), color: "#8c959f", dash: [5, 4], width: 1.6, marker: true, label: "Faces (sink)" }] }));
+    const STAT = { converged: "settled", runaway: "runaway", "too hot": "> 1000 °C" };
+    const rows = st.map((s) => [fmt(s.J_A_m2), fmt(s.V), Rmm(s.R_ohm_m2), fmt(s.P_W_m2), `${fmt(s.T_sink)} / ${fmt(s.T_max)}`, fmt(s.T_max - s.T_sink), String(s.iterations), (STAT[s.status] || s.status) + (s.T_predicted ? ` (≈ ${fmt(s.T_predicted)} °C)` : "")]);
+    return `<div class="tiles">${tiles_.map((t) => tile(...t)).join("")}</div><div class="rgrid">
+      <div class="box"><div class="bt">Current and voltage</div>${canvas("jhIV", 240)}<p class="hint">Straight while the conductivities stay put; it bends up when the conductor heats and its resistance rises (TCR).</p></div>
+      <div class="box"><div class="bt">Temperature at each step</div>${canvas("jhT", 240)}<p class="hint">The faces follow T<sub>amb</sub> + R<sub>th</sub>·P (R<sub>th</sub> ${fmt(p.R_th)} K·m²/W, ambient ${fmt(p.T_amb)} °C); the peak adds the rise inside the film where the current crowds through particle contacts.</p></div>
+      <div class="box" style="grid-column:1/-1"><div class="bt">Steps <span class="hint">driven by the ${cur ? "current density" : "voltage"}</span><div class="grow"></div>${viewBtn("jh_", "Temperature and current fields")}</div>
+        ${tbl(["J (A/m²)", "V (V)", "R (Ω·mm²)", "Heat (W/m²)", "Faces / peak (°C)", "Rise (K)", "Passes", "State"], rows, "tight")}
+        ${p.lumped ? `<p class="hint">As one resistor R(T) = R₂₀ (1 + a (T − 20 °C)) from the first and last settled steps: a = ${fmt(p.lumped.tcr_eff)} 1/K, R₂₀ = ${Rmm(p.lumped.R20_ohm_m2)} Ω·mm²${p.lumped.J_crit_A_m2 ? `; a set current runs away above J ≈ 1/√(a R₂₀ R<sub>th</sub>) = <b>${fmt(p.lumped.J_crit_A_m2)} A/m²</b>, where the heating R<sub>th</sub>J²R grows faster with temperature than the temperature itself` : ""}.</p>` : ""}
+        <p class="hint">Each step solves the potential with every voxel's conductivity at its temperature, the heat of the current, and the temperature, in turn, until the temperature changes by less than 1 mK. The fields of the last step that settled are in the 3D and 2D views: temperature, heat per volume (log), current density (log) and potential. Direct current, steady state; the thermal conductivities are taken constant and touching particles conduct across a whole voxel face (no electrical contact resistance).</p></div></div>`;
   }
   function secCte(p) {
     const c = p.constants, vo = ["xx", "yy", "zz", "yz", "xz", "xy"];
@@ -4261,6 +4505,12 @@
         if (!state.form.rve.press_compression) state.form.rve.press_compression = 30;
         if (!state.form.rve.press_rate) state.form.rve.press_rate = 1;
         if (!state.form.rve.press_lateral) state.form.rve.press_lateral = "xy";
+        const rv = state.form.rve;
+        if (rv.press_mold_C === undefined || rv.press_mold_C === null) rv.press_mold_C = 175;
+        if (!rv.press_control) rv.press_control = "rate";
+        if (rv.press_stress_Pa === undefined || rv.press_stress_Pa === null) rv.press_stress_Pa = 100;
+        if (rv.press_part_mm === undefined || rv.press_part_mm === null) rv.press_part_mm = 1;
+        if (!rv.press_time_s) rv.press_time_s = 600;
         saveForm(); renderLeft(); schedulePlan(0);
         return;
       }
@@ -4339,8 +4589,16 @@
     });
 
     document.body.addEventListener("click", async (e) => {
-      const b = e.target.closest("[data-open],[data-stop],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel],[data-doestop]");
+      const b = e.target.closest("[data-open],[data-stop],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel],[data-doestop],[data-fgroup]");
       if (!b) return;
+      if (b.dataset.fgroup) {
+        e.stopPropagation();
+        state.openFolders = state.openFolders || {};
+        state.openFolders[b.dataset.fgroup] = !state.openFolders[b.dataset.fgroup];
+        $("#runsList").innerHTML = runsHTML();
+        if (state.tab === "results") renderLeft();
+        return;
+      }
       // the cases of a study are shown only when asked for; the study row itself
       // opens the study rather than any one of its runs
       if (b.dataset.doetoggle !== undefined && b.dataset.doetoggle) {

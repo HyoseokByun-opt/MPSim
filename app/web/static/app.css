@@ -358,6 +358,11 @@ table.grid tr.sum td{font-weight:700;background:var(--sub)}
 .substack{border:1px solid var(--accent-md);border-top:0;border-radius:0 0 7px 7px;
   padding:6px 6px 1px;margin-bottom:6px;background:var(--accent-lt)}
 .substack .run{margin-bottom:5px}
+/* the runs of another work folder of the workspace, folded under its name */
+.run.fgroup{background:#f6f8fa;border-color:var(--line)}
+.run.fgroup .nm svg{width:13px;height:13px;vertical-align:-2px}
+/* the inputs of a run that has no result yet (queued, running, stopped) */
+iframe.inrep{width:100%;height:calc(100vh - 260px);min-height:420px;border:1px solid var(--line);border-radius:8px;background:#fff}
 
 /* ------------------------------------------------------------ result viewer */
 .rv{display:grid;grid-template-columns:212px minmax(0,1fr);flex:1;min-height:0}

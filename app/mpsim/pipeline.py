@@ -284,9 +284,67 @@ def press_key(spec):
     if rv.get("arrangement") != "pressed":
         return None
     vo = spec["options"]["viscosity"]
+    cure = None
+    if rv.get("press_cure"):
+        cure = {k: rv.get(k) for k in ("press_mold_C", "press_control", "press_stress_Pa", "press_part_mm", "press_time_s")}
+        cure["kin"] = [{k: t["props"].get(k) for k in CURE_KEYS} for t in spec["labels"] if t["kind"] == "matrix"]
     return {"v": 3, "compression": float(rv["press_compression"]), "rate": float(rv["press_rate"]),
-            "lateral": rv.get("press_lateral", "xy"), "steps": rv.get("press_steps"),
+            "lateral": rv.get("press_lateral", "xy"), "steps": rv.get("press_steps"), "cure": cure,
             "model": vo["model"], "mu_regions": [m.get("mu_pas") for m in spec.get("matrix_regions") or []]}
+
+
+CURE_KEYS = ("cure_E1", "cure_logA1", "cure_E2", "cure_logA2", "cure_m", "cure_n", "cure_dH", "gel_alpha", "cm_A",
+             "cm_B", "visc_Ea")
+CURE_NEEDED = ("cure_E1", "cure_logA1", "cure_E2", "cure_logA2", "cure_m", "cure_n", "gel_alpha", "cm_A", "cm_B")
+
+
+def press_cure(spec, base, mu, log):
+    """The Cure of a compression with cure (solvers/compress.Cure), or
+    (None, reason): every resin whose material carries the cure constants,
+    its viscosity at the start the one of the compression; the heat of
+    reaction per volume of the RVE from the resin's share of the box; the
+    exchange time with the mould from the part thickness and a Maxwell
+    estimate of the compound's conductivity."""
+    from .solvers import compress as CP
+    rv = spec["rve"]
+    table = spec["labels"]
+    n = base.size
+    kin, eta0, heat, skipped = {}, {}, {}, []
+    for li, t in enumerate(table):
+        if mu[li] is None or not (base == li).any():
+            continue
+        pr = t["props"]
+        if any(pr.get(k) in (None, "") for k in CURE_NEEDED):
+            skipped.append(t["name"])
+            continue
+        kin[li] = {"E1": float(pr["cure_E1"]) * 1e3, "A1": 10.0 ** float(pr["cure_logA1"]),
+                   "E2": float(pr["cure_E2"]) * 1e3, "A2": 10.0 ** float(pr["cure_logA2"]),
+                   "m": float(pr["cure_m"]), "n": float(pr["cure_n"]), "ag": float(pr["gel_alpha"]),
+                   "A": float(pr["cm_A"]), "B": float(pr["cm_B"]), "Ea": float(pr.get("visc_Ea") or 0.0) * 1e3}
+        eta0[li] = float(mu[li])
+        phi = float(np.count_nonzero(base == li)) / n
+        heat[li] = phi * float(pr.get("rho") or 1.2) * 1e3 * float(pr.get("cure_dH") or 0.0) * 1e3
+    if skipped:
+        log(f"  (no cure constants for {', '.join(skipped)}: its viscosity stays as it is)")
+    if not kin:
+        return None, "no resin has cure constants (Material tab)"
+    # rho c of the RVE and its conductivity (Maxwell, the fillers as spheres)
+    rhocp, kf, phif = 0.0, 0.0, 0.0
+    for li, t in enumerate(table):
+        f = float(np.count_nonzero(base == li)) / n
+        pr = t["props"]
+        rhocp += f * float(pr.get("rho") or 1.0) * 1e3 * float(pr.get("cp") or 1000.0)
+    for ph in spec["phases"]:
+        if ph["void"] or ph["shape"] == G.NETWORK:
+            continue
+        phif += float(ph["vf"])
+        kf += float(ph["vf"]) * float(ph["props"].get("k") or 1.0)
+    km = float(spec["matrix"]["props"].get("k") or 0.2)
+    kfil = kf / phif if phif > 0 else km
+    kc = km * (kfil + 2 * km + 2 * phif * (kfil - km)) / (kfil + 2 * km - phif * (kfil - km)) if phif > 0 else km
+    L = float(rv.get("press_part_mm") or 0.0) * 1e-3
+    tau = rhocp * L * L / (math.pi ** 2 * kc) if L > 0 else 0.0
+    return CP.Cure(kin, eta0, rv["press_mold_C"], heat, rhocp, tau), {"tau_s": tau, "rhocp": rhocp, "k_compound": kc}
 
 
 def press_viscosities(spec, rate):
@@ -380,9 +438,22 @@ def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop
     def cb(step, n, c, szz):
         event("stage", name=name, detail=f"{detail} · step {step} of {n}, compression {100 * c:.1f} %",
               progress=prog.sub(0.2 + 0.8 * min(step / max(n, 1), 0.999)))
+    cure, cure_info = (press_cure(spec, base, mu, log) if rv.get("press_cure") else (None, None))
+    if rv.get("press_cure") and cure is None:
+        log(f"  (the compression runs without cure: {cure_info})")
+        cure_info = None
+    if cure is not None:
+        log(f"  cure at a mould temperature of {rv['press_mold_C']:g} °C: "
+            + ", ".join(f"{table[li]['name']} (gel at {cure.kin[li]['ag']:g})" for li in cure.labels)
+            + f"; heat exchange with the mould in {cure_info['tau_s']:.3g} s ({rv['press_part_mm']:g} mm part); "
+            + ("closing at the strain rate" if rv["press_control"] == "rate" else
+               f"closing at no more than {rv['press_stress_Pa']:g} Pa axial stress (at most {rate:g} 1/s)"))
     cpr = CP.Compress(base, h, mu, pore, np.ascontiguousarray(sub["centers"], float) if n_sp else np.zeros((0, 3)),
                       rad, sph_label, raster, lateral=lateral, compression=comp, rate=rate,
-                      steps=rv.get("press_steps"), log=log, should_stop=should_stop, progress=cb)
+                      steps=rv.get("press_steps"), log=log, should_stop=should_stop, progress=cb, cure=cure,
+                      stress_limit=(rv["press_stress_Pa"] if (cure is not None and rv["press_control"] == "stress")
+                                    else None),
+                      t_max=rv["press_time_s"] if cure is not None else None)
     out = cpr.run()
     shape = tuple(out["shape"])
     owner, fld = out["owner"], out["field"]
@@ -437,6 +508,12 @@ def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop
         "series": s, "regions": shares, "pore_fraction": out["pore_fraction"],
         "n_spheres": n_sp, "crossed_resin": out["crossed"], "max_overlap": out["max_overlap"],
         "eta_compression_Pa_s": eta_c, "resins": {n: m for n, m in resins},
+        "cure": ({"mold_C": rv["press_mold_C"], "control": rv["press_control"], "stress_Pa": rv["press_stress_Pa"],
+                  "part_mm": rv["press_part_mm"], "tau_s": cure_info["tau_s"], "stop": out.get("stop"),
+                  "resins": {table[li]["name"]: {"alpha": s["alpha"][int(li)], "eta_Pa_s": s["eta_Pa_s"][int(li)],
+                                                 "gel": cure.kin[li]["ag"], "gelled": cure.gelled(li)}
+                             for li in cure.labels},
+                  "time_s": s["time_s"], "T_C": s["T_C"], "rate_1_s": s["rate_1_s"]} if cure is not None else None),
         "frames": out["frames"], "von_mises": out["von_mises"], "pressure": out["pressure"]}
     log("  compression done: box " + " × ".join(f"{v:.4g}" for v in info["pressed"]["box_um"]) + " µm "
         f"({' × '.join(str(n) for n in shape)} voxels); axial stress {-s['sigma_zz_Pa'][-1]:.4g} Pa at the end "
@@ -751,7 +828,7 @@ def _moisture_solve(labels, table, spec, h_um, vf_labels, prog, log, event, shou
     film = bool(spec["rve"].get("film"))
     for d in dirs:
         di = "xyz".index(d)
-        v_used, policy = CD.contrast_policy(labels, P / P.max(), di, opts["contrast_cap"], cache)
+        v_used, policy = CD.contrast_policy(labels, P / P.max(), di, opts["contrast_cap"], cache, film=bool(spec["rve"].get("film")))
         prog.stage(f"Moisture diffusion · {d} direction", f"periodic FV · contrast policy {policy}",
                    units=0.0 if ("moisture", d) in (pre or {}) else 0.5)
         keep = first and viewer is not None and d == dirs[0]
@@ -2215,7 +2292,7 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
     field_stats = {}
     for d in dirs:
         di = "xyz".index(d)
-        v_used, policy = CD.contrast_policy(labels, vals, di, cap, cache)
+        v_used, policy = CD.contrast_policy(labels, vals, di, cap, cache, film=bool(spec["rve"].get("film")))
         policies[d] = policy
         how = {"fv": "periodic FV", "fe": "PuMA periodic FE", "puma_fv": "PuMA FV"}[primary]
         if check:
@@ -2375,7 +2452,7 @@ def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_rati
                 continue
         else:
             vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
-        v_used, _ = CD.contrast_policy(labels_f, vals, di, spec["options"]["contrast_cap"], {})
+        v_used, _ = CD.contrast_policy(labels_f, vals, di, spec["options"]["contrast_cap"], {}, film=bool(spec["rve"].get("film")))
         t0 = time.time()
         if ("res:" + key, d) in pre:
             kf = pre[("res:" + key, d)]["k_eff"]
@@ -2511,7 +2588,9 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
     if opts.get("parallel_solves", "auto") == "off":
         return {}, {}
     try:
-        threads = int(os.environ.get("NUMBA_NUM_THREADS") or 0)
+        # the cores the server's queue granted this run (MPSIM_JOB_CORES),
+        # else those it was started with
+        threads = int(os.environ.get("MPSIM_JOB_CORES") or os.environ.get("NUMBA_NUM_THREADS") or 0)
     except ValueError:
         threads = 0
     # without a job setting (the command line, a script): every core
@@ -2555,7 +2634,7 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
         film_run = bool(spec["rve"].get("film"))
         cache = {}
         for d in dirs:
-            v_used, _ = CD.contrast_policy(labels, vals, "xyz".index(d), opts["contrast_cap"], cache)
+            v_used, _ = CD.contrast_policy(labels, vals, "xyz".index(d), opts["contrast_cap"], cache, film=bool(spec["rve"].get("film")))
             add(PAR.cond_task, "fe" if "fe" in be.split("+") else "fv",
                 {"key": key, "d": d, "kind": COND[key]["kind"], "backend": be,
                  "name": f"{COND[key]['title']} {d}",
@@ -2580,7 +2659,7 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
         if P.max() > 0:
             cache = {}
             for d in dirs:
-                v_used, _ = CD.contrast_policy(labels, P / P.max(), "xyz".index(d), opts["contrast_cap"], cache)
+                v_used, _ = CD.contrast_policy(labels, P / P.max(), "xyz".index(d), opts["contrast_cap"], cache, film=bool(spec["rve"].get("film")))
                 add(PAR.cond_task, "fv",
                     {"key": "moisture", "d": d, "kind": "thermal", "backend": "fv", "name": f"Moisture {d}",
                      "vals": np.asarray(v_used, float), "voxel_m": h * 1e-6, "tol": opts["tol"],
@@ -2653,7 +2732,7 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
                     continue
             else:
                 vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
-            v_used, _ = CD.contrast_policy(fine["labels"], vals, "xyz".index(d0), opts["contrast_cap"], {})
+            v_used, _ = CD.contrast_policy(fine["labels"], vals, "xyz".index(d0), opts["contrast_cap"], {}, film=bool(spec["rve"].get("film")))
             be = "fv" if (primary == "fv" or rpair is not None) else primary
             add(PAR.cond_task, "fe" if be == "fe" else "fv",
                 {"key": "res:" + key, "d": d0, "kind": COND[key]["kind"], "backend": be,
@@ -2963,6 +3042,113 @@ def _mech_test(labels, table, spec, st, h_um, prog, log, event, should_stop, vie
             "matrix_vm_q999": q999}
 
 
+def _thermomech_solve(labels, table, spec, h_um, gas_factor, area_ratio, contact_mask, prog, log, event,
+                      should_stop, viewer, aniso=None):
+    """Thermal stress and warpage of the film (solvers/thermomech.py): the
+    temperature field of the heat flowing between its faces with the thermal
+    analysis's conductivities and interface resistances, the thermal stress
+    of every voxel from the stress-free temperature, and the laminate release
+    of the film (free, on a substrate, or held flat)."""
+    from .solvers import thermomech as TM
+    tm = spec["options"]["thermomech"]
+    tol = 1e-5 if spec["rve"]["quality"] == "fast" else 1e-6
+    k_vals = thermal_values(spec, gas_factor)
+    rpair, rcpair = thermal_interfaces(spec, h_um, area_ratio)
+    sub_name = str((tm.get("substrate") or {}).get("name") or "a substrate").split(" (")[0]
+    sup = {"free": "free film", "held": "held flat", "substrate": f"on {sub_name}"}[tm["support"]]
+    prog.stage("Thermal stress and warpage",
+               f"heat {tm['T_bottom']:g} °C (bottom) → {tm['T_top']:g} °C (top) · stress from {tm['T_ref']:g} °C "
+               f"(voxel FE) · laminate release, {sup}", units=3.0)
+    if aniso is not None:
+        log("    (thermal stress: the anisotropic conductivities are taken at their mean k)")
+    frac = {"f": 0.0}
+
+    def pr(tag, f):
+        frac["f"] = float(f)
+
+    def cb(name, it, res, tgt):
+        event("solver", name=name, it=it, res=res, target=tgt, progress=prog.sub(min(frac["f"] + 0.05, 0.99)))
+    out = TM.run(labels, table, h_um, tm, k_vals, rpair=rpair, cmask=contact_mask if rcpair is not None else None,
+                 rcpair=rcpair, log=log, progress=pr, should_stop=should_stop, tol=tol, keep_fields=viewer is not None,
+                 compare_uniform=tm["compare_uniform"], callback=cb)
+    f = out.pop("fields", None)
+    T = out.pop("T", None)
+    if viewer is not None and f is not None:
+        grp = "Thermal stress and warpage"
+        what = f"from {tm['T_ref']:g} to {tm['T_bottom']:g} / {tm['T_top']:g} °C, {sup}"
+        viewer.add_field("tm_vm", f["vm"], f"von Mises stress ({what})", "MPa", grp)
+        viewer.add_field("tm_T", T, f"Temperature ({tm['T_bottom']:g} °C bottom, {tm['T_top']:g} °C top)", "°C", grp)
+        viewer.add_field("tm_p1", f["p1"], f"Largest principal stress ({what})", "MPa", grp, diverging=True)
+        viewer.add_field("tm_sxx", f["sxx"], f"In-plane stress σxx ({what})", "MPa", grp, diverging=True)
+        viewer.add_field("tm_szz", f["szz"], f"Through-thickness stress σzz, peeling ({what})", "MPa", grp,
+                         diverging=True)
+        if f["above"].any():
+            viewer.add_field("tm_above", f["above"].astype(np.float32), "Above its Tg (1) or below (0)", "-", grp,
+                             categorical=True)
+    del f, T
+    out["options"] = tm
+    prog.end()
+    w = out["warpage_um"]
+    log(f"    thermal stress and warpage: T {out['T_min']:.4g} … {out['T_max']:.4g} °C, κ {out['kappa_1_m']:.4g} 1/m, "
+        f"warpage {w:+.4g} µm over {out['span_mm']:g} mm ({'edges up' if w < 0 else 'edges down' if w > 0 else 'flat'})"
+        + (f", uniform {out['uniform']['warpage_um']:+.4g} µm" if out.get("uniform") else "")
+        + f" ({out['seconds']:.1f} s)")
+    return out
+
+
+def _joule_solve(labels, table, spec, h_um, gas_factor, area_ratio, contact_mask, prog, log, event,
+                 should_stop, viewer):
+    """Joule heating of the film (solvers/joule.py): the electric potential
+    with every voxel's conductivity at its temperature, the heat of the
+    current, the temperature it raises, repeated to a steady state at every
+    step of the current or voltage."""
+    from .solvers import joule as JH
+    jo = spec["options"]["joule"]
+    sig = np.array(S.label_values(table, "sigma"), float)
+    sig_used, policy = CD.contrast_policy(labels, sig, 2, spec["options"]["contrast_cap"], {}, film=True)
+    k_vals = thermal_values(spec, gas_factor)
+    rpair, rcpair = thermal_interfaces(spec, h_um, area_ratio)
+    n = len(jo["values"])
+    word = "current density" if jo["control"] == "current" else "voltage"
+    prog.stage("Joule heating", f"{n} steps of the {word} · potential and temperature solved in turn to 1 mK "
+                                f"(σ with temperature) · contrast policy {policy}", units=1.0 + 0.25 * n)
+    frac = {"f": 0.0}
+
+    def pr(si, nn):
+        frac["f"] = si / max(nn, 1)
+
+    def cb(name, it, res, tgt):
+        event("solver", name=name, it=it, res=res, target=tgt, progress=prog.sub(min(frac["f"] + 0.5 / max(n, 1), 0.99)))
+    if policy == "dispersed":
+        # the contrast limit has lowered the conductor to the matrix's level:
+        # no current path between the electrodes, nothing to heat
+        why = ("the most conductive phase does not connect the two faces of the film, so no current path joins the "
+               "electrodes (a matrix skin at the faces - Domain tab - or too few touching particles)")
+        log(f"    Joule heating not computed: {why}")
+        prog.end()
+        return {"error": why, "steps": [], "policy": policy, "options": jo, "control": jo["control"]}
+    out = JH.run(labels, table, h_um, jo, sig_used, k_vals, rpair=rpair,
+                 cmask=contact_mask if rcpair is not None else None, rcpair=rcpair, log=log, progress=pr,
+                 should_stop=should_stop, keep_fields=viewer is not None, callback=cb)
+    f = out.pop("fields", None)
+    if viewer is not None and f is not None:
+        grp = "Joule heating"
+        st = out["steps"][f["step"]]
+        what = (f"{st['J_A_m2']:.3g} A/m², {st['V']:.3g} V")
+        viewer.add_field("jh_T", f["T"], f"Temperature ({what})", "°C", grp)
+        viewer.add_field("jh_q", f["q"], f"Joule heat per volume ({what})", "W/m³", grp, log=True)
+        viewer.add_field("jh_J", f["J"], f"Current density |J| ({what})", "A/m²", grp, log=True)
+        viewer.add_field("jh_phi", f["phi"], f"Electric potential ({what})", "V", grp)
+    del f
+    out.update({"policy": policy, "sigma_used": sig_used.tolist(), "options": jo})
+    prog.end()
+    last = out["steps"][-1] if out["steps"] else None
+    if last:
+        log(f"    Joule heating: {len(out['steps'])} steps, last {last['J_A_m2']:.4g} A/m² at {last['V']:.4g} V, "
+            f"T max {last['T_max']:.5g} °C ({last['status']}; {out['seconds']:.1f} s)")
+    return out
+
+
 NU_RUBBERY = 0.45   # Poisson's ratio of a cured resin above Tg (0.45-0.49); B-bar elements keep it lock-free
 
 
@@ -3151,6 +3337,28 @@ def _cond_checks(key, tensor, refs, spec, stats):
 # =========================================================================
 # main entry
 # =========================================================================
+_GATE = {"fn": None, "done": False}
+
+
+def set_gate(fn):
+    """The server's gate (web/jobs.py): called once, after the structure of the
+    first realisation is built and before its first solve; it returns when the
+    queue has the memory for the solves, with the cores granted. None: no
+    gate (the command line, the self-test)."""
+    _GATE.update(fn=fn, done=False)
+
+
+def _gate(log):
+    if _GATE["fn"] is None or _GATE["done"]:
+        return
+    _GATE["done"] = True
+    g = _GATE["fn"]()
+    if g and g.get("waited_s", 0.0) > 1.0:
+        log(f"   waited {g['waited_s']:.0f} s for the memory to solve; solving on {g['cores']} cores")
+    elif g:
+        log(f"   solving on {g['cores']} cores")
+
+
 def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
     t_start = time.time()
     event = event or (lambda kind, **p: None)
@@ -3232,6 +3440,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         + (2.0 * len(dirs) if "permeability" in need else 0.0) \
         + (0.5 * len(dirs) if "tortuosity" in need else 0.0) \
         + (0.5 * len(dirs) + 1.0 if "moisture" in need else 0.0) \
+        + (3.0 / seeds if "thermomech" in need else 0.0) \
+        + ((1.0 + 0.25 * len(opts["joule"]["values"])) / seeds if "joule" in need else 0.0) \
         + (3.0 if ("cte" in need and opts.get("above_tg")) else 0.0)         + (4.0 if "viscosity" in need else 0.0)         + (4.0 if spec["rve"].get("arrangement") == "sheared" else 0.0)
     vdem = opts["viscosity"]["dem"]
     once_units = (1.0 if "mechtest" in need else 0.0) + \
@@ -3685,6 +3895,46 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                "note": "Spanning along " + (", ".join(spans) if spans else "no direction")})
         if "moisture" in need and "moisture" in results_first:
             props["moisture"] = _moisture_entry(spec, opts, table, realisations, results_first, checks)
+        if "thermomech" in need and "thermomech" in results_first:
+            tmr = results_first["thermomech"]
+            props["thermomech"] = {"title": "Thermal stress and warpage", **tmr}
+            conv_ = bool(tmr["heat"]["converged"]) and all(tmr["converged"])
+            checks.append({"id": "tm_conv", "group": "Thermal stress and warpage",
+                           "label": "Solver convergence (heat flow, stiffness, thermal stress)",
+                           "value": max([tmr["heat"]["residual"]] + list(tmr["residual"])), "target": 1e-5, "unit": "",
+                           "status": "pass" if conv_ else "fail", "note": ""})
+            sub_ = tmr.get("stress_stats") or {}
+            hot_ = [v["name"] for v in sub_.values() if v.get("above_tg")]
+            if hot_:
+                checks.append({"id": "tm_tg", "group": "Thermal stress and warpage",
+                               "label": "Regions above their glass transition", "value": tmr.get("above_tg") or 0.0,
+                               "target": 0.0, "unit": "", "status": "warn",
+                               "note": ", ".join(hot_) + " partly above Tg: the rubbery modulus and the CTE above Tg "
+                                       "are used there (elastic; no relaxation)"})
+        if "joule" in need and "joule" in results_first:
+            jr = results_first["joule"]
+            props["joule"] = {"title": "Joule heating", **jr}
+            st_ = jr["steps"]
+            if st_:
+                bal = max(x["balance"] for x in st_)
+                checks.append({"id": "jh_balance", "group": "Joule heating",
+                               "label": "Energy balance: Joule heat against the heat leaving through the faces",
+                               "value": bal, "target": 1e-3, "unit": "rel",
+                               "status": "pass" if bal <= 1e-3 else ("warn" if bal <= 1e-2 else "fail"), "note": ""})
+                bad = [x for x in st_ if x["status"] != "converged"]
+                checks.append({"id": "jh_conv", "group": "Joule heating",
+                               "label": "Steady state at every step (potential and temperature)",
+                               "value": len(st_) - len(bad), "target": len(st_), "unit": "steps",
+                               "status": "pass" if not bad else "warn",
+                               "note": "" if not bad else
+                               (f"thermal runaway at {bad[0]['value']:.4g} "
+                                f"{'A/m²' if jr['control'] == 'current' else 'V'}: the temperature kept rising"
+                                if bad[0]["status"] == "runaway" else
+                                f"above 1000 °C at {bad[0]['value']:.4g} {'A/m²' if jr['control'] == 'current' else 'V'}")
+                               + ("; the sweep stopped there" if bad else "")})
+            if jr.get("error"):
+                checks.append({"id": "jh_perc", "group": "Joule heating", "label": "A conducting path joins the faces",
+                               "value": 0, "target": 1, "unit": "", "status": "fail", "note": jr["error"]})
         if "viscosity" in need and "viscosity" in results_first:
             props["viscosity"] = _viscosity_entry(spec, opts, table, realisations, results_first,
                                                   samples.get("viscosity") or [], checks)
@@ -3711,6 +3961,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         return props, composition, rho, cp
 
     if direct:
+        _gate(log)
         prog = Progress(event, 1.5 + 3.0 + float(opts["viscosity"]["dem"]["rates"] or 0))
         results_first, rinfo_d = _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog,
                                                  should_stop)
@@ -3801,7 +4052,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                     pr_ = ginfo["pressed"]
                     viewer.add_field("press_vm", pr_["von_mises"], "von Mises stress in the resins at the end of the compression",
                                      "Pa", "Compression", in_matrix=True,
-                                     note=f"viscous stress at {pr_['rate_1_s']:g} 1/s; spheres and pores are left out")
+                                     note=f"viscous stress at {(pr_['series'].get('rate_1_s') or [pr_['rate_1_s']])[-1]:.3g} 1/s; "
+                                          f"spheres and pores are left out")
                     viewer.add_field("press_p", pr_["pressure"], "Pressure at the end of the compression", "Pa",
                                      "Compression", diverging=True)
                 except Exception as e:                               # noqa: BLE001
@@ -3866,6 +4118,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 rc_fine = f"the finer grid could not be drawn: {e}"
 
         # ---- independent solves, side by side ----------------------------
+        # (the first one waits here until the server's queue has its memory)
+        if not spec.get("preview"):
+            _gate(log)
         pre_cond, pre_el = _prefetch(pool_box, need, labels, table, spec, h, backend, gas_factor, area_ratio,
                                      contact_mask, first, log, should_stop, os.path.join(out_dir, "logs"),
                                      event=event,
@@ -4222,6 +4477,18 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                                 C_known=(res_r.get("cte") or {}).get("C"), pre=pre_cond)
             event("partial", key="moisture", value=_clean([res_r["moisture"]["wt_pct"]]))
             live("moisture")
+
+        # ---- coupled analyses of the film (first realisation) ---------------
+        if "thermomech" in need and first:
+            res_r["thermomech"] = _thermomech_solve(labels, table, spec, h, gas_factor, area_ratio, contact_mask,
+                                                    prog, log, event, should_stop, viewer, aniso=aniso_th)
+            event("partial", key="thermomech", value=_clean([res_r["thermomech"]["warpage_um"]]))
+            live("thermomech")
+        if "joule" in need and first:
+            res_r["joule"] = _joule_solve(labels, table, spec, h, gas_factor, area_ratio, contact_mask, prog, log,
+                                          event, should_stop, viewer)
+            event("partial", key="joule", value=_clean([s_["T_max"] for s_ in res_r["joule"]["steps"]]))
+            live("joule")
 
         if "permeability" in need:
             wr = CD.wrapping_axes(pore_open)
@@ -4728,6 +4995,24 @@ def headline_numbers(props, comp):
         if m.get("onset"):
             out.append({"key": "F_onset", "label": "Load at the matrix strength (0.1 % of the matrix)",
                         "value": m["onset"]["force_N"], "unit": "N"})
+    if "thermomech" in props:
+        t_ = props["thermomech"]
+        out.append({"key": "warp", "label": f"Warpage over {t_['span_mm']:g} mm (centre to edge)",
+                    "value": t_["warpage_um"], "unit": "µm",
+                    "sub": f"κ {t_['kappa_1_m']:.3g} 1/m · {'edges up' if t_['warpage_um'] < 0 else 'edges down'}"})
+        vm_ = [v["vm_p999"] for v in (t_.get("stress_stats") or {}).values()]
+        if vm_:
+            out.append({"key": "vm_tm", "label": "Thermal stress, von Mises (99.9 %)", "value": max(vm_), "unit": "MPa"})
+    if "joule" in props and props["joule"].get("steps"):
+        j_ = props["joule"]
+        ok_ = [x for x in j_["steps"] if x["status"] == "converged"] or j_["steps"]
+        last = ok_[-1]
+        out.append({"key": "T_joule", "label": f"Peak temperature at {last['J_A_m2']:.3g} A/m²", "value": last["T_max"],
+                    "unit": "°C", "sub": f"{last['V']:.3g} V · {last['P_W_m2']:.3g} W/m²"
+                                         + (" · the sweep stopped beyond" if j_.get("stopped") else "")})
+        if last.get("sigma_eff"):
+            out.append({"key": "rho_joule", "label": "Resistivity through the film at that step",
+                        "value": 100.0 / last["sigma_eff"], "unit": "Ω·cm"})
     if "emi" in props:
         e = props["emi"]
         f = np.asarray(e["spectrum"]["freq_hz"])

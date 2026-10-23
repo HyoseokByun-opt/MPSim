@@ -2423,6 +2423,193 @@ def t_sections():
             f"k_z {kz:.4f} W/m·K; a filler over the whole RVE beside it and overlapping regions are refused")
 
 
+# ------------------------------------------------------- coupled analyses (5.6)
+@check("Thermal stress and warpage: a free film with a linear temperature bends stress-free (κ = α ΔT / t); a film on "
+       "a substrate bends as Timoshenko's bimetal; a held film cooled through Tg carries E/(1-ν) [α1 (Tg - T) + "
+       "α2 E_r/E (T_ref - Tg)]")
+def t_thermomech_film():
+    from mpsim.solvers import thermomech as TM
+    mat = {"E": 3.0, "nu": 0.35, "alpha": 60.0, "k": 0.2}
+    table = [{"name": "resin", "props": mat}]
+    nz, n, h_um = 20, 6, 1.0
+    lab = np.zeros((n, n, nz), np.uint8)
+    t = nz * h_um * 1e-6
+    o = TM.run(lab, table, h_um, {"T_ref": 75.0, "T_bottom": 100.0, "T_top": 50.0, "support": "free", "span_mm": 10},
+               [0.2], tol=1e-9, compare_uniform=True)
+    k_exact = 60e-6 * (50.0 - 100.0) / t
+    expect(abs(o["kappa_1_m"] / k_exact - 1) < 2e-3, f"free film κ {o['kappa_1_m']:.5g}, exact {k_exact:.5g}")
+    expect(o["stress_stats"][0]["vm_p999"] < 0.01, f"free film stress {o['stress_stats'][0]['vm_p999']:.3g} MPa")
+    expect(abs(o["uniform"]["kappa_1_m"]) < 1e-6, "the uniform film bends")
+    sub = {"E": 160.0, "nu": 0.22, "alpha": 2.6, "thickness_um": 40.0}
+    o2 = TM.run(lab, table, h_um, {"T_ref": 175.0, "T_bottom": 25.0, "T_top": 25.0, "support": "substrate",
+                                   "substrate": sub, "span_mm": 10}, [0.2], tol=1e-9, compare_uniform=False)
+    E1, h1, a1 = 3e9 / (1 - 0.35), t, 60e-6
+    E2, h2, a2 = 160e9 / (1 - 0.22), 40e-6, 2.6e-6
+    dT = 25.0 - 175.0
+    num = 6 * E1 * E2 * (h1 + h2) * h1 * h2 * (a1 - a2) * dT
+    den = (E1 ** 2 * h1 ** 4 + 4 * E1 * E2 * h1 ** 3 * h2 + 6 * E1 * E2 * h1 ** 2 * h2 ** 2 + 4 * E1 * E2 * h1 * h2 ** 3
+           + E2 ** 2 * h2 ** 4)
+    # Timoshenko's curvature, negative here: the film on top shrinks more and
+    # the edges rise (the solver's sign: κ < 0 lifts the edges)
+    kt = num / den
+    expect(abs(o2["kappa_1_m"] / kt - 1) < 2e-3, f"bimetal κ {o2['kappa_1_m']:.5g}, Timoshenko {kt:.5g}")
+    tg = {"E": 3.0, "nu": 0.35, "alpha": 60.0, "tg": 150.0, "E_r": 0.03, "alpha2": 180.0, "k": 0.2}
+    o3 = TM.run(np.zeros((8, 8, 8), np.uint8), [{"name": "epoxy", "props": tg}], 1.0,
+                {"T_ref": 175.0, "T_bottom": 25.0, "T_top": 25.0, "support": "held", "span_mm": 10}, [0.2],
+                compare_uniform=False)
+    s_held = float(np.mean(o3["profile"]["s_MPa"]))
+    s_ex = 3e9 / 0.65 * (60e-6 * 125.0 + 180e-6 * 0.01 * 25.0) * 1e-6
+    expect(abs(s_held / s_ex - 1) < 1e-4, f"held film through Tg {s_held:.5f} MPa, exact {s_ex:.5f}")
+    return (f"free κ {o['kappa_1_m']:.5g} (exact {k_exact:.5g}), bimetal κ {o2['kappa_1_m']:.5g} (Timoshenko {kt:.5g}), "
+            f"held through Tg {s_held:.4f} MPa (exact {s_ex:.4f})")
+
+
+@check("Joule heating: a uniform conductor at a set current against the 1D parabola, with a TCR against the 1D "
+       "finite-volume solve; two layers in series; the Joule heat leaves through the faces")
+def t_joule_film():
+    from mpsim.solvers import joule as JO
+    n, nz, h_um = 4, 20, 1.0
+    h = h_um * 1e-6
+    lab = np.zeros((n, n, nz), np.uint8)
+
+    def ref_1d(sig0, tcr, J, Tsink):
+        T = np.full(nz, Tsink)
+        A = 2.0 * np.eye(nz) - np.eye(nz, k=1) - np.eye(nz, k=-1)
+        A[0, 0] += 1.0
+        A[-1, -1] += 1.0
+        for _ in range(200):
+            q = J * J / (sig0 / (1 + tcr * (T - 20.0)))
+            b = q * h * h / 1.0
+            b[0] += 2 * Tsink
+            b[-1] += 2 * Tsink
+            Tn = np.linalg.solve(A, b)
+            done = np.abs(Tn - T).max() < 1e-9
+            T = Tn
+            if done:
+                break
+        return T
+    worst, out = 0.0, []
+    for tcr in (0.0, 0.004):
+        table = [{"name": "conductor", "props": {"sigma": 1e5, "k": 1.0, "tcr": tcr}}]
+        o = JO.run(lab, table, h_um, {"control": "current", "values": [1e8, 4e8], "T_amb": 25.0, "R_th": 0.0},
+                   [1e5], [1.0], keep_fields=False)
+        for st in o["steps"]:
+            Tr = ref_1d(1e5, tcr, st["J_A_m2"], 25.0)
+            worst = max(worst, abs(st["T_max"] - Tr.max()))
+            expect(st["balance"] < 1e-6, f"energy balance {st['balance']:.2e}")
+            if tcr == 0.0:
+                par = 25 + (st["J_A_m2"] ** 2 / 1e5) * (nz * h) ** 2 / 8
+                expect(abs(st["T_max"] - par) < 1e-6, f"T max {st['T_max']:.6f}, parabola {par:.6f}")
+        out.append(f"TCR {tcr}: T max {o['steps'][-1]['T_max']:.4f} °C at 4e8 A/m²")
+    expect(worst < 1e-3, f"1D difference {worst:.2e} K")
+    lab2 = np.zeros((n, n, nz), np.uint8)
+    lab2[:, :, nz // 2:] = 1
+    table2 = [{"name": "a", "props": {"sigma": 1e5, "k": 1.0}}, {"name": "b", "props": {"sigma": 2e4, "k": 1.0}}]
+    o2 = JO.run(lab2, table2, h_um, {"control": "voltage", "values": [1e-3], "T_amb": 25.0, "R_th": 0.0},
+                [1e5, 2e4], [1.0, 1.0], keep_fields=False)
+    R_ex = (nz // 2) * h / 1e5 + (nz - nz // 2) * h / 2e4
+    expect(abs(o2["steps"][0]["R_ohm_m2"] / R_ex - 1) < 1e-6, f"series R {o2['steps'][0]['R_ohm_m2']:.6g}, exact {R_ex:.6g}")
+    return "; ".join(out) + f"; largest difference to the 1D solve {worst:.1e} K; series R exact to 1e-6"
+
+
+@check("Cure: n-th order kinetics against the closed form; a resin pressed at a constant stress creeps by "
+       "∫ P / 3η dt until it gels (Castro-Macosko)")
+def t_cure_kinetics():
+    from mpsim.solvers import compress as CP
+    R = CP.R_GAS
+    Tm, k1, E1 = 175.0, 0.02, 60e3
+    A1 = k1 * math.exp(E1 / (R * (Tm + 273.15)))
+    kin = {0: {"E1": E1, "A1": A1, "E2": 50e3, "A2": 0.0, "m": 1.0, "n": 1.5, "ag": 0.6, "A": 0.5, "B": 3.0, "Ea": 0.0}}
+    for t in (10.0, 60.0):
+        c = CP.Cure(kin, {0: 2.0}, Tm, {0: 0.0}, 2e6, 0.0)
+        c.advance(t)
+        ex = 1.0 - (1.0 + 0.5 * k1 * t) ** (1.0 / (1.0 - 1.5))
+        expect(abs(c.alpha(0) - ex) < 1e-6, f"α({t:g} s) {c.alpha(0):.7f}, exact {ex:.7f}")
+    P = 3.0 * 2.0 * 0.05
+    cure = CP.Cure(kin, {0: 2.0}, Tm, {0: 0.0}, 2e6, 0.0)
+    no = (lambda shape, cc: (np.zeros(shape, np.int32), np.zeros(2, np.int64)))
+    cp = CP.Compress(np.zeros((12, 12, 12), np.uint8), 1.0, [2.0], [False], np.zeros((0, 3)), np.zeros(0),
+                     np.zeros(0, np.int64), no, lateral="xy", compression=0.6, rate=10.0, frames=False, cure=cure,
+                     stress_limit=P, t_max=200.0)
+    o = cp.run()
+    s = o["series"]
+    t_end = s["time_s"][-1]
+
+    def eta(t):
+        a = 1.0 - (1.0 + 0.5 * k1 * t) ** (1.0 / (1.0 - 1.5))
+        return 2.0 * (0.6 / (0.6 - a)) ** (0.5 + 3.0 * a)
+    tt = np.linspace(0.0, t_end, 100001)
+    eps_ex = float(np.trapz(P / (3.0 * np.array([eta(x) for x in tt])), tt))
+    expect(o["stop"] == "gelled", f"stopped: {o['stop']}")
+    expect(abs(-s["strain_z"][-1] / eps_ex - 1) < 1e-3, f"creep strain {-s['strain_z'][-1]:.5f}, exact {eps_ex:.5f}")
+    return (f"α exact to 1e-6; creep {-s['strain_z'][-1]:.5f} (exact {eps_ex:.5f}), gelled at {t_end:.1f} s "
+            f"in {o['steps']} steps")
+
+
+@check("Film percolation: a conductor that joins the two faces of a film spans it (not a periodic wrap); the "
+       "contrast limit keeps it conducting through the film")
+def t_film_spans():
+    from mpsim.solvers import conduction as CD
+    lab = np.zeros((12, 12, 16), np.uint8)
+    # a staircase from the bottom face to the top: no voxel column, no wrap in z
+    for z in range(16):
+        x = 2 + z // 3
+        lab[x:x + 2, 5:7, z] = 1
+    expect(CD.spans_z(lab == 1), "the staircase does not span the film")
+    expect(not CD.wrapping_axes(lab == 1)[2], "the staircase wraps periodically in z")
+    lab2 = lab.copy()
+    lab2[:, :, 8] = 0
+    expect(not CD.spans_z(lab2 == 1), "a broken path spans the film")
+    vals = np.array([1e-12, 1e6])
+    v1, p1 = CD.contrast_policy(lab, vals, 2, 1e6, {}, film=True)
+    v0, p0 = CD.contrast_policy(lab, vals, 2, 1e6, {}, film=False)
+    expect(p1 == "network" and p0 == "dispersed", f"policies film {p1}, periodic {p0}")
+    k = CD.solve_direction(lab, v1, 2, film=True, tol=1e-9)["k_eff"]
+    expect(k > 1e3, f"film σ {k:.3g} through a spanning conductor")
+    return f"spans the film, does not wrap; policy {p1} (periodic test: {p0}); σ_zz {k:.4g} S/m"
+
+
+@check("Queue: runs build their structures side by side and wait before solving until their memory fits; a light "
+       "solve passes a heavy one only while the heavy one still fits beside it")
+def t_queue_gate():
+    import threading
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"))
+    from jobs import JobQueue, Job
+
+    class V:
+        value = 0
+    q = JobQueue(concurrency=4, mem_budget_gb=10.0)
+    q.MEM_SCALE, q.MEM_BASE = 1.0, 0.0
+    q.check_free = False                   # the budget alone, not this PC's free memory
+
+    def job(jid, peak, struct=0.2, threads=4):
+        j = Job(jid, None, {"name": jid}, ".", {"mem_gb": peak, "mem_struct_gb": struct, "gated": True}, q)
+        j.state, j.phase, j.threads = "running", "structure", threads
+        j.grant = (threading.Event(), V())
+        with q.lock:
+            q.jobs[jid] = j
+            q.order.append(jid)
+        return j
+    a, h, l1, l2 = job("A", 6.0), job("H", 6.0), job("L1", 1.0), job("L2", 3.5)
+    with q.lock:
+        expect(abs(sum(q._expected(x) for x in q.running()) - 0.8) < 1e-9, "structures do not reserve their own memory")
+        for j, t in ((a, 1.0), (h, 2.0), (l1, 3.0), (l2, 4.0)):
+            j.phase, j.gate_t = "gate", t
+        q._open_gates()
+    expect(a.phase == "solve" and a.grant[0].is_set(), "the first at the gate does not solve")
+    expect(h.phase == "gate", "the heavy second solves beside the first")
+    expect(l1.phase == "solve", "the light one does not pass the heavy one")
+    expect(l2.phase == "gate", "a light one passes that would keep the heavy one out")
+    with q.lock:
+        a.state = "done"
+        q._open_gates()
+    expect(h.phase == "solve", "the heavy one does not solve once the first is done")
+    with q.lock:
+        q.jobs.clear()
+        q.order.clear()
+    return "A solves, H (6 GB) waits, L1 (1 GB) passes it, L2 (3.5 GB) does not; H solves when A is done"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")

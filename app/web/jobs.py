@@ -62,18 +62,42 @@ def kill_tree(pid):
             pass
 
 
-def _child(spec, out_dir, out_q, stop_ev, threads):
-    """Runs one job. Everything it says goes down `out_q`."""
+def _child(spec, out_dir, out_q, stop_ev, threads, gate=None):
+    """Runs one job. Everything it says goes down `out_q`.
+
+    `gate` (grant event, granted cores): the run builds its structure on
+    `threads` cores, then waits before its first solve until the queue has
+    the memory for it, and solves on the cores the queue grants - more than it
+    started with when the other runs leave them free. Numba's pool is
+    therefore sized for every core and limited to `threads` until then."""
     import warnings
     warnings.filterwarnings("ignore")
+    cores = os.cpu_count() or int(threads)
     os.environ.setdefault("OMP_NUM_THREADS", str(threads))
-    os.environ.setdefault("NUMBA_NUM_THREADS", str(threads))
+    os.environ.setdefault("NUMBA_NUM_THREADS", str(max(int(threads), cores) if gate else threads))
     os.environ.setdefault("MKL_NUM_THREADS", str(threads))
+    os.environ["MPSIM_JOB_CORES"] = str(threads)
     # scratch files of the run (the solve pool's shared grids) in its own
     # directory: a stop ends the process at once and removes them with it
     os.environ["MPSIM_TMP"] = os.path.join(out_dir, TMP_DIR)
 
+    now = {"n": int(threads)}
+
     def send(kind, **payload):
+        # the queue gives a run more or fewer cores as the others start and
+        # finish (JobQueue._rebalance), while it builds its structure and
+        # while it solves: taken up here, between two reports, outside any
+        # parallel loop; the solve pool reads MPSIM_JOB_CORES twice a second
+        if gate is not None:
+            try:
+                v = int(gate[1].value or 0)
+                if v and v != now["n"]:
+                    import numba
+                    numba.set_num_threads(max(1, min(v, numba.config.NUMBA_NUM_THREADS)))
+                    os.environ["MPSIM_JOB_CORES"] = str(v)
+                    now["n"] = v
+            except Exception:                                 # noqa: BLE001
+                pass
         try:
             out_q.put((kind, payload))
         except Exception:                                     # noqa: BLE001
@@ -88,6 +112,36 @@ def _child(spec, out_dir, out_q, stop_ev, threads):
                                     should_stop=stop_ev.is_set, limits=spec.get("_limits"))
         else:
             from mpsim import pipeline
+            if gate is not None:
+                grant_ev, grant_n = gate
+                try:
+                    import numba
+                    numba.set_num_threads(max(1, min(int(threads), numba.config.NUMBA_NUM_THREADS)))
+                except Exception:                             # noqa: BLE001
+                    pass
+
+                def wait_gate():
+                    """Before the first solve: wait until the queue grants the
+                    memory, then take the cores it grants."""
+                    send("gate")
+                    t0 = time.time()
+                    while not grant_ev.wait(0.3):
+                        if stop_ev.is_set():
+                            raise InterruptedError
+                    n = int(grant_n.value or threads)
+                    os.environ["MPSIM_JOB_CORES"] = str(n)
+                    try:
+                        import numba
+                        numba.set_num_threads(max(1, min(n, numba.config.NUMBA_NUM_THREADS)))
+                    except Exception:                         # noqa: BLE001
+                        pass
+                    try:
+                        from threadpoolctl import threadpool_limits
+                        threadpool_limits(limits=n)
+                    except Exception:                         # noqa: BLE001
+                        pass
+                    return {"waited_s": time.time() - t0, "cores": n}
+                pipeline.set_gate(wait_gate)
             summary = pipeline.run(spec, out_dir,
                                    log=lambda *a: send("line", text=" ".join(str(x) for x in a)),
                                    event=lambda kind, **p: send(kind, **p),
@@ -103,6 +157,10 @@ def _child(spec, out_dir, out_q, stop_ev, threads):
         send("finished", summary={"error": str(e)})
     finally:
         shutil.rmtree(os.path.join(out_dir, TMP_DIR), ignore_errors=True)
+
+
+# what a restored run keeps of its result.json in memory
+SUMMARY_KEYS = ("name", "headline", "check_counts", "elapsed_s", "error", "preview", "aborted", "analyses", "backend")
 
 
 class Job:
@@ -139,6 +197,13 @@ class Job:
         self.figures = []              # figures drawn while the run goes on
         self.partial = {}              # property -> headline numbers as they land
         self.lines = []
+        # a gated run (meta "gated"): "structure" while it builds its
+        # structure, "gate" while it waits for the memory of its solves,
+        # "solve" once granted. A run that is not gated reserves its peak
+        # memory from the start ("solve").
+        self.phase = None
+        self.gate_t = None              # when it asked for its solve memory
+        self.grant = None               # (grant event, granted cores) of its process
 
     def add(self, kind, payload):
         with self.lock:
@@ -164,7 +229,7 @@ class Job:
             "figures": self.figures,
             "summary": self.summary,
             "elapsed_s": ((self.ended or time.time()) - (self.started or time.time())) if self.started else 0.0,
-            "created": self.created, "seq": self.seq,
+            "created": self.created, "seq": self.seq, "phase": self.phase,
             "lines": self.lines[-400:] if with_lines else [],
         }
 
@@ -198,6 +263,8 @@ class JobQueue:
         self.mem_budget_gb = mem_budget_gb if mem_budget_gb else round(0.7 * self.ram_gb, 1)
         self.mem_budget_auto = not mem_budget_gb
         self.estimator = None          # set by the server: form -> GB
+        # also ask the PC how much memory is free (off only in the self-test)
+        self.check_free = True
         threading.Thread(target=self._loop, daemon=True).start()
 
     # ------------------------------------------------------------- public
@@ -308,7 +375,11 @@ class JobQueue:
         elif os.path.exists(res):
             try:
                 with open(res, encoding="utf-8") as fh:
-                    job.summary = json.load(fh)
+                    full = json.load(fh)
+                # only what the run list and the reuse need: a whole workspace
+                # of results would otherwise sit in memory
+                job.summary = {k: full.get(k) for k in SUMMARY_KEYS if k in full}
+                del full
                 job.state = "done" if not job.summary.get("error") else "failed"
                 job.progress = 1.0
             except (OSError, ValueError):
@@ -369,20 +440,21 @@ class JobQueue:
     def get(self, jid):
         return self.jobs.get(jid)
 
-    def for_owner(self, owner, limit=40, folder=None):
-        """Runs to show in the list: this owner's, in this work folder.
+    def for_owner(self, owner, limit=40, folder=None, folders=None, everyone=False):
+        """Runs to show in the list: this owner's (every run, `everyone`), in
+        this work folder (`folder`) or in any of `folders`.
 
-        `folder` is the point of the work-folder model - the list is the
-        contents of one folder, not everything the server has ever run. A job
-        still in flight in another folder keeps running and is still reachable
-        by id; it is simply not listed here.
+        A job still in flight in another folder keeps running and is still
+        reachable by id; it is simply not listed here.
         """
         want = os.path.abspath(folder) if folder else None
+        among = {os.path.normcase(os.path.abspath(f)) for f in folders} if folders else None
         with self.lock:
             # runs without an owner (command line, copied in) are visible to all
             mine = [j for j in self.jobs.values()
-                    if (owner is None or j.owner in (owner, None))
-                    and (want is None or j.folder == want)]
+                    if (everyone or owner is None or j.owner in (owner, None))
+                    and (want is None or j.folder == want)
+                    and (among is None or os.path.normcase(j.folder or "") in among)]
         mine.sort(key=lambda j: j.created, reverse=True)
         return mine[:limit]
 
@@ -532,9 +604,22 @@ class JobQueue:
     # NumPy and PuMA. The queue plans with what a run will really take.
     MEM_SCALE, MEM_BASE = 1.4, 0.3
 
-    def _expected(self, job):
+    def _expected(self, job, phase=None):
+        """The memory a run is expected to hold: its structure's while it
+        builds it or waits at the gate, its peak once it solves."""
+        phase = phase or (job.phase if job.state == "running" else None) or self._first_phase(job)
+        if phase in ("structure", "gate"):
+            st = (job.meta or {}).get("mem_struct_gb") if isinstance(job.meta, dict) else None
+            if st is not None:
+                return self.MEM_SCALE * float(st) + self.MEM_BASE
         m = self._mem(job)
         return self.MEM_SCALE * m + self.MEM_BASE if m else 0.0
+
+    @staticmethod
+    def _first_phase(job):
+        meta = job.meta if isinstance(job.meta, dict) else {}
+        return "structure" if (meta.get("gated") and meta.get("mem_struct_gb") is not None
+                               and not job.spec.get("preview") and job.spec.get("_kind") != "calibration") else "solve"
 
     def _fits(self, job):
         """Whether `job` can start next to the ones already running.
@@ -551,8 +636,8 @@ class JobQueue:
         And the memory actually free must cover the new run - the budget cannot
         see what the rest of the machine (browser, editor) is using.
         """
-        mine = self._expected(job)        # estimated now even when it will run alone,
-        running = self.running()          # so that it counts once it is running
+        mine = self._expected(job, self._first_phase(job))   # a gated run: its structure only
+        running = self.running()          # estimated now even when it will run alone, so that it counts
         if not running or not self.mem_budget_gb:
             return True
         if sum(self._expected(j) for j in running) + mine > self.mem_budget_gb:
@@ -564,6 +649,22 @@ class JobQueue:
         except Exception:                                      # noqa: BLE001
             pass
         return True
+
+    def gate_reason(self, job):
+        """Why a run with its structure built waits before solving."""
+        if job.state != "running" or job.phase != "gate":
+            return ""
+        need = self._expected(job, "solve")
+        held = sum(self._expected(j) for j in self.running() if j is not job)
+        free = None
+        try:
+            import psutil
+            free = psutil.virtual_memory().available / 2 ** 30
+        except Exception:                                      # noqa: BLE001
+            pass
+        return (f"structure built · waiting for memory to solve: needs about {need:.1f} GB, the other runs hold "
+                f"{held:.1f} of the {self.mem_budget_gb:.1f} GB budget"
+                + (f", {free:.1f} GB free on the PC" if free is not None else ""))
 
     def wait_reason(self, job):
         """Why a queued run has not started yet, for the run list: the first
@@ -578,7 +679,7 @@ class JobQueue:
         if len(run) >= self.concurrency:
             why = f"all {self.concurrency} places in use"
         else:
-            mine = self._expected(head)
+            mine = self._expected(head, self._first_phase(head))
             held = sum(self._expected(j) for j in run)
             why = ""
             if run and self.mem_budget_gb and held + mine > self.mem_budget_gb:
@@ -608,9 +709,88 @@ class JobQueue:
                             nxt = min(waiting, key=lambda j: j.created)
                             if self._fits(nxt):
                                 self._start(nxt)
+                with self.lock:
+                    self._open_gates()
+                    self._rebalance()
             except Exception:                                  # noqa: BLE001
                 traceback.print_exc()
             time.sleep(0.3)
+
+    def _open_gates(self):
+        """Let runs that have built their structure start solving, in the
+        order they asked, while their solve memory fits the budget. A run
+        whose solve does not fit yet lets later, lighter ones through only
+        when it would still fit beside all of them once the solves that were
+        under way before it asked have finished - so a heavy solve is never
+        overtaken for good, and light ones use the room meanwhile (a heavy
+        solve on one run while light ones solve on others)."""
+        at_gate = sorted((j for j in self.jobs.values() if j.state == "running" and j.phase == "gate"),
+                         key=lambda j: j.gate_t or 0.0)
+        if not at_gate:
+            return
+        head = at_gate[0]
+        head_need = self._expected(head, "solve")
+        for j in at_gate:
+            need = self._expected(j, "solve")
+            others = [x for x in self.running() if x is not j]
+            held = sum(self._expected(x) for x in others)
+            solving = [x for x in others if x.phase == "solve"]
+            fits = not self.mem_budget_gb or held + need <= self.mem_budget_gb
+            if not fits and j is head and not solving:
+                # nobody solves: the first in line goes, as a run alone always
+                # starts (the others' structures are all that is held)
+                fits = True
+            if fits and self.mem_budget_gb and solving and self.check_free:
+                try:
+                    import psutil
+                    # the structure's share of this run is already allocated
+                    if psutil.virtual_memory().available / 2 ** 30 < need - self._expected(j, "structure") + 1.0:
+                        fits = False
+                except Exception:                              # noqa: BLE001
+                    pass
+            if fits and j is not head and self.mem_budget_gb:
+                # backfill: the head must still fit beside every run that has
+                # passed the gate after it asked, and this one
+                after = sum(self._expected(x, "solve") for x in solving if (x.gate_t or 0) > (head.gate_t or 0))
+                if head_need + after + need > self.mem_budget_gb:
+                    fits = False
+            if fits:
+                self._grant(j)
+
+    def _rebalance(self):
+        """The cores of the gated runs that build their structure or solve:
+        what the other runs leave, in equal shares (a run waiting at the gate
+        uses none). A run takes its new share between two reports - its own
+        threads and its solve pool's - so the cores of a finished run go to
+        the others, and a run that starts solving beside one already solving
+        does not get one core while the first keeps all of them."""
+        run = self.running()
+        active = [j for j in run if j.grant is not None and j.phase in ("structure", "solve")]
+        if not active:
+            return
+        cores = os.cpu_count() or 2
+        fixed = sum(int(j.threads or 0) for j in run if j.grant is None)
+        avail = max(len(active), cores - fixed)
+        q, r = divmod(avail, len(active))
+        for k, j in enumerate(sorted(active, key=lambda x: x.started or 0.0)):
+            share = max(1, q + (1 if k < r else 0))
+            if int(j.threads or 0) != share:
+                j.threads = share
+                try:
+                    j.grant[1].value = share
+                except Exception:                              # noqa: BLE001
+                    pass
+
+    def _grant(self, job):
+        """Open the gate: the run solves from now on, on its equal share of
+        the cores (_rebalance)."""
+        job.phase = "solve"
+        self._rebalance()
+        if job.grant is not None:
+            ev, val = job.grant
+            if not val.value:
+                val.value = int(job.threads or 1)
+            ev.set()
 
     def _threads_for(self, job):
         """The cores a starting run gets. Automatic: the machine's share for
@@ -646,7 +826,12 @@ class JobQueue:
         out_q = ctx.Queue()
         stop_ev = ctx.Event()
         job.threads = self._threads_for(job)
-        proc = ctx.Process(target=_child, args=(job.spec, job.out_dir, out_q, stop_ev, job.threads),
+        job.phase = self._first_phase(job)
+        gate = None
+        if job.phase == "structure":
+            gate = (ctx.Event(), ctx.Value("i", 0))
+            job.grant = gate
+        proc = ctx.Process(target=_child, args=(job.spec, job.out_dir, out_q, stop_ev, job.threads, gate),
                            daemon=False)
         job.proc = proc
         job.stop_ev = stop_ev
@@ -689,6 +874,11 @@ class JobQueue:
 
     @staticmethod
     def _apply(job, kind, payload):
+        if kind == "gate":
+            # the structure is built: the run waits for the memory of its solves
+            job.phase = "gate"
+            job.gate_t = time.time()
+            return
         if kind == "line":
             job.lines.append(payload.get("text", ""))
             if len(job.lines) > 3000:

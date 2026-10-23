@@ -135,7 +135,10 @@ class DOEStore:
         case's own, planned for its particles at the Domain's level
         ('adaptive'), on that voxel size."""
         base = copy.deepcopy(payload.get("form") or {})
-        base.pop("_limits", None)
+        # the machine's grid limits (Home -> Machine) go with every case; the
+        # stored base form leaves them out, so a later change applies to
+        # retries and optimum runs
+        limits = base.pop("_limits", None)
         g = payload.get("grid") or {}
         edge = g.get("edge") or ("adaptive" if g.get("mode") == "adaptive" else "fixed")
         if plan is None:
@@ -198,9 +201,15 @@ class DOEStore:
         for form, case in zip(forms, cases):
             meta = {"name": form["name"], "analyses": study["analyses"], "doe": sid,
                     "mem_gb": estimate(form) if estimate else 0.0,
+                    # the structure phase's memory: structures are built side by
+                    # side, the solves wait for their memory (jobs.JobQueue)
+                    "mem_struct_gb": getattr(estimate, "last_struct", None) if estimate else None,
+                    "gated": True,
                     # the variable values of this case, for the run list
                     "doe_label": case["label"], "kind": "analysis" if study["analyses"] else "structure"}
             # `case` here is the design point; the folder the run lands in is case_name
+            if limits:
+                form["_limits"] = limits
             job = queue.submit(owner, form, runs_dir, meta, folder=folder, case=case_name)
             study["cases"].append({"job_id": job.id, "values": case["values"], "label": case["label"]})
         self.save(study)

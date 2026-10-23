@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.5.1-0b62c4" alt="version 5.5.1">
+  <img src="https://img.shields.io/badge/version-5.6.0-0b62c4" alt="version 5.6.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-78%20checks-2da44e" alt="78 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-83%20checks-2da44e" alt="83 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -68,7 +68,15 @@ The main capabilities are listed below.
   viscosity, the filler spheres rigid, the pores a compressible gas), the spheres move as rigid bodies and the resins
   and pores as material markers that keep the volume of an incompressible resin. The result is the compressed box,
   solved by every analysis, with the strain and von Mises stress of each region, how far the pores close and whether
-  particles pass into another resin, shown step by step in 3D.
+  particles pass into another resin, shown step by step in 3D. The resins can cure meanwhile: Kamal–Sourour kinetics,
+  the Castro–Macosko viscosity rise to the gel point and a lumped energy balance with the mould, closing at a set strain
+  rate or no faster than a set axial stress.
+- **Coupled analyses of a thin film.** Thermal stress and warpage: the steady temperature field of the heat flowing
+  through the film, every voxel's thermal strain at its own temperature (α1 or α2 and the glassy or rubbery modulus by
+  its Tg), and classical laminate theory for the curvature of the film free, on a substrate or held flat. Joule heating:
+  the potential with every voxel's conductivity at its temperature, the heat of the current split exactly between voxels,
+  and the temperature, solved in turn to a steady state at each step of a current or voltage sweep, up to thermal
+  runaway.
 - **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
   in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
   packing follows the requested density by Monte-Carlo moves weighted against the crowding of hard spheres, and the
@@ -152,6 +160,9 @@ workspace in detail.
 | | EMI shielding | Complex homogenisation → scikit-rf; openEMS FDTD check | SE(f) with reflection, absorption and multiple-reflection terms, validity limits |
 | Mechanics | Elasticity and thermal expansion | FANS voxel FE (default), NASA PuMA FE | C\*, S\*, E, G, ν, Hill moduli, anisotropy index, α tensor, thermal stress per region; optionally α2 and E above Tg |
 | | Mechanical test (tension or compression) | Effective stiffness + one FANS solve at the test load | Force-displacement line, apparent modulus, Poisson's ratio or lateral stress, von Mises and axial stress and strain fields, load at the matrix strength |
+| Multiphysics | Thermal stress and warpage (thin film) | Film FV heat flow → FANS voxel FE with a thermal eigenstrain per voxel → laminate theory | Temperature field, curvature and warpage, in-plane stress through the film, largest principal and peeling stress per region, substrate stress |
+| | Joule heating (thin film) | Film FV potential and heat solved in turn with σ(T) | Voltage, peak and face temperatures per step, runaway estimate, current-density and Joule-heat fields |
+| | Cure during the compression | Kamal–Sourour + Castro–Macosko in the 3D compression | Conversion, viscosity, stress and temperature against time, gel stop |
 | Rheology | Viscosity and flowability | FANS creeping flow; particle dynamics (lubrication DEM); Krieger–Dougherty with Farr–Groot φm | Relative viscosity, flow curve, φm, underfill filling time, settling, local shear-rate field |
 | Reliability | Moisture uptake and swelling | Periodic FV on the water activity; FANS eigenstrain | D_eff tensor, saturated uptake, uptake curve, swelling strain and CME |
 | Porous media | Permeability | NASA PuMA Stokes FE | K tensor, Kozeny–Carman constant, hydraulic tortuosity |
@@ -347,9 +358,93 @@ y held (a closed mould), on 60³ voxels in four steps of the three-dimensional r
 - The stress concentrates in the resin films between the spheres and around the closing pores; the axial stress rises
   from 66 to 147 Pa as the pores flatten. The compressed box conducts 0.331 W/m·K through z.
 
+## Application examples: coupled analyses
+
+Three presets show the coupled analyses of version 5.6.0; each was run as loaded on an 18-thread laptop.
+
+### Thermal stress and warpage of a moulded underfill on a die
+
+A 300 µm moulded underfill (8 µm silica, 50 vol%, in epoxy) on a 300 µm Si die, stress-free at the cure temperature of
+175 °C, in operation with the die side at 125 °C and the top at 95 °C. The heat flowing through the film sets the
+temperature of every voxel, the thermal strain of every voxel follows from it, and laminate theory releases the film
+bonded to the die (70 × 70 × 375 voxels of 0.8 µm, 168 s).
+
+<p align="center">
+  <img src="docs/images/warpage_fields.png" alt="Temperature and largest principal stress in the film on its faces" width="72%">
+</p>
+<p align="center">
+  <img src="docs/images/warpage_charts.png" alt="In-plane stress through the film, held and released, and the temperature through the film" width="100%">
+</p>
+
+| Quantity | Value |
+|---|---|
+| Warpage over 10 mm (κ) | −12.89 µm (−1.03 1/m), edges up |
+| The same film at its uniform mean temperature | −11.97 µm: the gradient adds −0.92 µm |
+| Heat through the film, k_z | 51.4 kW/m², 0.514 W/m·K |
+| Epoxy: largest principal / peeling stress (99.9 %) | 27.2 / 25.9 MPa |
+| Silica: von Mises (99.9 %) | 160 MPa |
+| Die: top / bottom face | −36.9 / +26.5 MPa |
+
+Checks: a free film with a linear temperature bends without stress (κ −149.97 against αΔT/t = −150 1/m); a film on a
+substrate bends as Timoshenko's bimetal (−20.002 against −19.994 1/m); a film held flat and cooled through its Tg carries
+E/(1−ν)[α1(Tg − T) + α2(E_r/E)(T_ref − Tg)] exactly.
+
+### Joule heating of an Ag-filled adhesive joint up to thermal runaway
+
+A 25 µm joint of 5 µm silver spheres (45 vol%) in epoxy touching both electrodes, a current density stepped from 5·10⁷
+to 3·10⁸ A/m², the joint's path to ambient 10⁻⁴ K·m²/W. The temperature coefficient of silver (0.0038 1/K) is taken
+from the recommended resistivities of R. A. Matula, *J. Phys. Chem. Ref. Data* **8** (4), 1147–1298 (1979),
+[doi:10.1063/1.555614](https://doi.org/10.1063/1.555614). 70 × 70 × 50 voxels of 0.5 µm, 81 s.
+
+<p align="center">
+  <img src="docs/images/joule_fields.png" alt="Current density and Joule heat on the faces of the joint (log scales)" width="80%">
+</p>
+<p align="center">
+  <img src="docs/images/joule_charts.png" alt="Voltage and temperature against the current density" width="100%">
+</p>
+
+| J (A/m²) | V (mV) | σ through the joint (MS/m) | Faces / peak (°C) | State |
+|---|---|---|---|---|
+| 5·10⁷ | 1.32 | 0.95 | 31.6 / 31.6 | settled |
+| 1·10⁸ | 2.84 | 0.88 | 53.4 / 53.5 | settled |
+| 2·10⁸ | 8.33 | 0.60 | 191.5 / 192.2 | settled |
+| 2.5·10⁸ | 16.0 | 0.39 | 424.8 / 426.5 | settled |
+| 3·10⁸ | — | — | — | steady state above 1000 °C (1697 °C extrapolated) |
+
+The path to ambient sets the temperature: inside the joint the current crowds through the particle contacts, but
+silver conducts the heat away and the film adds only 1.7 K at 2.5·10⁸ A/m². As one resistor the joint has the
+coefficient of silver and 25 µΩ·mm² at 20 °C, so a set current runs away above 1/√(TCR·R₂₀·R_th) = 3.2·10⁸ A/m².
+Checks: the parabola of a uniform conductor exactly; with a TCR, a separate one-dimensional solve to 1.5·10⁻⁴ K; the
+energy balance to 10⁻⁵.
+
+### A moulded underfill that gels before the mould closes
+
+Silica 5 µm (40 vol%) in epoxy pressed at 1 %/s towards 55 % in a mould at 175 °C while the resin cures. The kinetics
+are those of an epoxy moulding compound fitted to DSC (E. Franieck, M. Fleischmann, O. Hölck, L. Kutuzova,
+A. Kandelbauer, *Polymers* **13** (11), 1734 (2021), [doi:10.3390/polym13111734](https://doi.org/10.3390/polym13111734));
+the Castro–Macosko constants of the viscosity rise were measured on a neat epoxy, not on a moulding compound
+(S. K. Romberg, P. Roberts, C. R. Snyder, A. P. Kotula, *ACS Appl. Polym. Mater.* **6** (8), 4874–4884 (2024),
+[doi:10.1021/acsapm.4c00607](https://doi.org/10.1021/acsapm.4c00607)). 70³ voxels of 0.5 µm, 20 steps, 230 s.
+
+<p align="center">
+  <img src="docs/images/cure_charts.png" alt="Conversion, viscosity, compression and temperature against time" width="100%">
+</p>
+
+| Time (s) | Compression | Conversion α | Axial stress (Pa) |
+|---|---|---|---|
+| 0 | 0 % | 0 | 0.95 |
+| 48 | 38.3 % | 0.47 | 14 |
+| 58 | 44.0 % | 0.59 | 114 |
+| 65 | 47.8 % | 0.67 | 2847 |
+| 69.2 | 49.9 % | 0.709 (gel) | — |
+
+The compound gels with the mould closed by 49.9 % of the 55 % asked; the temperature of the RVE stays within 0.66 K of
+the mould (exchange time 0.32 s for a 1 mm part). Checks: n-th order kinetics against the closed form to 10⁻⁶; a resin
+pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 against 0.86746).
+
 ## Verification
 
-`5_SELF_TEST.bat` solves **78 problems with known solutions** (51 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **83 problems with known solutions** (56 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -390,6 +485,11 @@ reference values. A selection:
 | Arrangement after compression: resin A against resin B with 40 vol% silica, 30 % | each resin keeps its share; spheres stay in their resin | shares kept; 0 of 48 spheres in the other resin |
 | Acoustic mismatch across epoxy / alumina | detailed balance Γ₁₂/v₁² = Γ₂₁/v₂² | within 4e-5 |
 | Calibration with touching particles, R_c = 2·R_int | known value 5e-9 m²K/W | 5.01e-9 (95 % 3.8–6.3e-9); R_int alone flagged as not reaching |
+| Thermal stress of a film: linear temperature, bimetal, cooling through Tg | αΔT/t; Timoshenko; E/(1−ν)[α1(Tg−T) + α2(E_r/E)(T_ref−Tg)] | −149.97 vs −150 1/m; −20.002 vs −19.994 1/m; 34.8231 MPa exact |
+| Joule heating: uniform conductor, with a TCR, two layers in series | parabola; 1D solve; L₁/σ₁ + L₂/σ₂ | exact; within 1.5e-4 K; within 1e-6 |
+| Cure kinetics and creep at a constant stress up to the gel point | n-th order closed form; ∫P/3η dt | within 1e-6; 0.86747 vs 0.86746 |
+| Conductor joining the two faces of a film | spans the film (not a periodic wrap) | recognised; kept conducting |
+| Queue: structures side by side, solves through the memory gate | a light solve passes a heavy one only while the heavy one still fits | passed |
 
 Two presets also verify the solver against an exact solution. Copper vias that pass straight through a laminate conduct
 heat as parallel paths, k_z = f·k_Cu + (1 − f)·k_laminate for a copper area fraction f. The presets *PCB thermal vias*
@@ -595,7 +695,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.5.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.6.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 
