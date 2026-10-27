@@ -35,7 +35,9 @@ the faces and middle sections of the box for the viewer.
 """
 from __future__ import annotations
 
+import gzip
 import math
+import os
 import time
 
 import numpy as np
@@ -308,7 +310,7 @@ class Compress:
 
     def __init__(self, base, h, mu, pore, centres, radii, sphere_label, raster, lateral="xy", compression=0.3,
                  rate=1.0, steps=None, log=None, should_stop=None, progress=None, tol=1e-4, frames=True,
-                 cure=None, stress_limit=None, t_max=None):
+                 cure=None, stress_limit=None, t_max=None, frame_dir=None):
         base = np.ascontiguousarray(base, np.uint8)
         self.h = float(h)
         self.L0 = np.array(base.shape, float) * self.h
@@ -354,6 +356,9 @@ class Compress:
         self.progress = progress or (lambda *a: None)
         self.tol = tol
         self.keep_frames = frames
+        # every step's whole box (labels and the von Mises stress of the
+        # resins, gzip) for the 3D view's step player, written as it comes
+        self.frame_dir = frame_dir
         self.has_pores = bool(self.pore[self.cls_lab].any())
         # the cure: viscosities that rise with conversion; the closing rate
         # set, or limited by an axial stress the press can apply
@@ -703,7 +708,13 @@ class Compress:
             # load it is given; a pore none)
             vm_r = np.where(self.resin[lab] & (owner == 0), vm, np.float32(np.nan)).astype(np.float32)
             if self.keep_frames:
-                frames.append(self.frame(lab, vm_r))
+                fr = self.frame(lab, vm_r)
+                if self.frame_dir:
+                    try:
+                        fr["vol"] = self.write_step(len(frames), lab, vm_r)
+                    except OSError as e:
+                        self.log(f"    (step {len(frames)} not kept for the 3D view: {e})")
+                frames.append(fr)
             self.progress(step, self.n_steps, comp, flow["sigma"][2])
             cure_txt = ""
             if self.cure is not None:
@@ -776,6 +787,23 @@ class Compress:
                "around0": around0.tolist(), "around1": around1.tolist(),
                "max_overlap": max_ov, "steps": step, "seconds": time.time() - t0, "stop": stop_why}
         return out
+
+    def write_step(self, k, lab, vm):
+        """Step k's whole box for the 3D view: the labels (x fastest, as the
+        voxel volume) and the von Mises stress of the resins as codes 1..255
+        of its 99.9th percentile (0: no resin there), both gzip."""
+        os.makedirs(self.frame_dir, exist_ok=True)
+        nl, nv = f"step_{k:03d}_lab.u8.gz", f"step_{k:03d}_vm.u8.gz"
+        with gzip.open(os.path.join(self.frame_dir, nl), "wb", compresslevel=1) as fh:
+            fh.write(np.asarray(lab, np.uint8).ravel(order="F").tobytes())
+        ok = np.isfinite(vm)
+        m = float(np.percentile(vm[ok], 99.9)) if ok.any() else 0.0
+        q = np.zeros(lab.shape, np.uint8)
+        if m > 0:
+            q[ok] = (1.0 + np.clip(np.round(vm[ok] / m * 254.0), 0, 254)).astype(np.uint8)
+        with gzip.open(os.path.join(self.frame_dir, nv), "wb", compresslevel=1) as fh:
+            fh.write(q.ravel(order="F").tobytes())
+        return {"lab": nl, "vm": nv, "vm_max": m}
 
     def frame(self, lab, vm):
         """The three visible faces of the box (top z, front y = 0, side

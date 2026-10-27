@@ -106,6 +106,27 @@ def _rescale(size_um, d_new):
 LEGACY_GAP_VOX = 2.0
 
 
+def _overlap_steps(opts):
+    """Progressive overlap (Structure - Gap between particles): a loading the
+    packing cannot reach with no overlap is packed again with an overlap of 1
+    voxel allowed, then 2, ... up to max_vox, `tries` packings at each step
+    (generate.escalate_overlap). On by default; off, the particles are drawn
+    smaller instead, as before 5.6.1."""
+    o = opts.get("overlap_steps")
+    o = o if isinstance(o, dict) else {}
+    return {"on": bool(o.get("on", True)),
+            "tries": int(_num(o.get("tries", 2), "packings per overlap step", 1, 50)),
+            "max_vox": int(_num(o.get("max_vox", 3), "largest overlap (voxels)", 1, 20))}
+
+
+def _realisations(r):
+    r = r if isinstance(r, dict) else {}
+    mode = "settle" if r.get("mode") == "settle" else "fixed"
+    n_min = int(_num(r.get("n_min", 3), "fewest realisations", 2, 200))
+    return {"mode": mode, "target_pct": float(_num(r.get("target_pct", 2.0), "confidence interval target (%)", 0.05, 50.0)),
+            "n_min": n_min, "n_max": max(n_min, int(_num(r.get("n_max", 20), "most realisations", 2, 200)))}
+
+
 def _contacts(opts):
     """{contacts, particle_gap_vox} from the options.
 
@@ -527,6 +548,11 @@ def normalize(form):
         # an RVE entered by hand is used as entered unless enlarging it is asked for
         "auto_enlarge": bool(rv.get("auto_enlarge", False)),
         "n_seeds": int(_num(rv.get("n_seeds", 0) or 0, "number of realisations", 0, 10)),
+        # realisations until the mean settles (a statistical RVE): smaller
+        # volumes, as many realisations as the 95 % confidence interval of
+        # the mean needs to fall below target_pct, between n_min and n_max
+        # (Kanit et al. 2003); "fixed": n_seeds realisations
+        "realisations": _realisations(rv.get("realisations")),
         "seed": int(_num(rv.get("seed", 1) or 1, "random seed", 0, 2**31 - 1)),
         "stat_enlarge": bool(rv.get("stat_enlarge", False)),
         # a thin film: x and y periodic, z the real thickness, every particle
@@ -649,6 +675,7 @@ def normalize(form):
         # particle_gap_vox voxels apart wherever the loading allows;
         # "separate" trims touching voxels to matrix as v3 did
         **_contacts(opts),
+        "overlap_steps": _overlap_steps(opts),
         # independent solves (properties x directions, elastic load cases) side
         # by side on the run's cores; "off" solves them one after another
         "parallel_solves": "off" if opts.get("parallel_solves") == "off" else "auto",
@@ -824,8 +851,8 @@ def normalize(form):
             errors.append(f"{what} with both sides held needs room: the volume lost "
                           f"({out['rve']['press_compression']:g} % of the RVE) must come from pores, and the structure "
                           f"has {100 * pore_vf:.3g} vol% - add pores (Structure tab) or let a side expand")
-        if out["rve"]["n_seeds"] > 1:
-            errors.append(f"{what} makes one realisation (set the realisations to 1)")
+        if out["rve"]["n_seeds"] > 1 or out["rve"]["realisations"]["mode"] == "settle":
+            errors.append(f"{what} makes one realisation (set the realisations to 1, a fixed number)")
         if "viscosity" in chosen:
             errors.append("Viscosity is that of the uncured compound: run it with the random arrangement, not on "
                           "the pressed film")

@@ -1736,6 +1736,131 @@ def t_stop_now():
         return f"stopped in {dt:.1f} s during '{stage or 'start-up'}', {len(kids)} child process(es) ended with it"
 
 
+@check("Statistical RVE: realisations of a small box until the 95 % interval of the mean is within the target; "
+       "the seed is a DOE variable with whole-number levels", quick=False)
+def t_settle():
+    import json
+    from mpsim import doe as DOE
+    from mpsim import pipeline as PL
+    lv = DOE.expand([{"path": "rve.seed", "min": 1, "max": 4, "steps": 4}])
+    expect([c["values"]["rve.seed"] for c in lv] == [1.0, 2.0, 3.0, 4.0], f"full: {lv}")
+    lh = DOE.expand([{"path": "rve.seed", "min": 1, "max": 50}], design="lhs", samples=6)
+    expect(all(float(c["values"]["rve.seed"]).is_integer() for c in lh), f"lhs: {lh}")
+    form = {"name": "settle", "matrix": {"material_id": "epoxy"},
+            "phases": [{"material_id": "al2o3", "name": "Al2O3", "shape": "sphere", "size": {"d": 4, "unit": "um"},
+                        "fraction": {"value": 40, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 16, "voxel_um": 0.5, "quality": "fast",
+                    "realisations": {"mode": "settle", "target_pct": 3.0, "n_min": 3, "n_max": 8}},
+            "analyses": {"thermal": True}, "options": {"directions": "z"}}
+    lines = []
+    with tempfile.TemporaryDirectory() as d:
+        PL.run(form, d, log=lines.append)
+        with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
+            r = json.load(fh)
+    n = len(r["realisations"])
+    expect(3 <= n <= 8, f"{n} realisations")
+    ck = {c["id"]: c for c in r["checks"]}
+    expect("settle" in ck and "thermal_stat" in ck, "no statistics checks")
+    rel = ck["thermal_stat"]["value"]
+    expect(rel <= 0.03 or n == 8, f"stopped at {n} with a {100 * rel:.2f} % interval")
+    seeds = [x["seed"] for x in r["realisations"]]
+    expect(len(set(seeds)) == n, f"seeds {seeds}")
+    k = r["properties"]["thermal"]["diag"][2]
+    return (f"{n} realisations of a 16 µm box, k_z {k:.3f} ± {100 * rel:.2f} % (95 %); "
+            f"{ck['thermal_stat']['note'].split(';')[1].strip()}")
+
+
+@check("Progressive overlap: spheres at 66 vol% (above random close packing) reach the loading with an overlap of "
+       "at most the voxels allowed; off, they are drawn smaller and fall short", quick=False)
+def t_overlap_steps():
+    from mpsim import generate as GEN
+    ph = [{"shape": "sphere", "size_um": {"d": 4.0}, "dist": {"type": "mono"}, "vf": 0.66,
+           "orientation": {"mode": "iso"}, "overlap": False, "gap_frac": 0.0, "name": "spheres"}]
+    lab0, i0 = GEN.generate(60, 0.5, ph, seed=3, log=lambda *a: None, contacts="keep", gap_vox=0.0, overlap_steps=None)
+    lab1, i1 = GEN.generate(60, 0.5, ph, seed=3, log=lambda *a: None, contacts="keep", gap_vox=0.0,
+                            overlap_steps={"tries": 2, "max_vox": 3})
+    v0, v1 = float(np.mean(lab0 == 1)), float(np.mean(lab1 == 1))
+    expect(i0["pack_scale"] < 1.0 and i0["overlap_vox"] == 0 and v0 < 0.645, f"off: scale {i0['pack_scale']}, vf {v0}")
+    expect(1 <= i1["overlap_vox"] <= 3 and abs(v1 / 0.66 - 1.0) < 0.01, f"on: overlap {i1['overlap_vox']}, vf {v1}")
+    # the overlap is bounded: no two sphere centres closer than the sum of
+    # the drawn radii less the overlap allowed
+    p = i1["particles"]
+    r = np.asarray(p["P"])[:, 0]
+    i, j, d = GEN._sphere_pairs(np.asarray(p["centers"]), r, np.array([30.0, 30.0, 30.0]))
+    depth = float(np.max(r[i] + r[j] - d)) if d.size else 0.0
+    expect(depth <= i1["overlap_vox"] * 0.5 * (1 + 1e-6), f"deepest overlap {depth:.3f} µm")
+    return (f"off: {100 * v0:.2f} vol% (size scale {i0['pack_scale']:.3f}); on: {100 * v1:.2f} vol% with up to "
+            f"{i1['overlap_vox']} voxel(s) of overlap (deepest {depth / 0.5:.2f} voxel)")
+
+
+@check("Runs: the Terminal sees the run's processes; a stopped run starts again in its own folder and uses the "
+       "structure it had finished; a run folder copied elsewhere opens into the list; a run folder ZIP imports with its "
+       "3D view", quick=False)
+def t_restart_open():
+    import io
+    import json
+    import shutil
+    from web.server import create_app
+    form = {"name": "selftest restart", "matrix": {"material_id": "epoxy"},
+            "phases": [{"material_id": "al2o3", "name": "Al2O3", "shape": "sphere", "size": {"d": 4, "unit": "um"},
+                        "fraction": {"value": 40, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 40, "voxel_um": 0.4, "auto_enlarge": False, "quality": "fast"},
+            "analyses": {"thermal": True, "electrical": True, "dielectric": True}, "options": {"directions": "xyz"}}
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as elsewhere:
+        app = create_app(workspace=d, concurrency=1)
+        c = app.test_client()
+        jid = json.loads(c.post("/api/jobs", json=form).data)["id"]
+        job = app.queue.get(jid)
+        t0 = time.time()
+        # stopped once its structure is kept, while it solves
+        while time.time() - t0 < 300 and job.state in ("queued", "running"):
+            sd = os.path.join(job.out_dir, "structure")
+            if os.path.isdir(sd) and any(n.endswith(".pkl") for n in os.listdir(sd)):
+                break
+            time.sleep(0.2)
+        expect(job.state == "running", f"the run ended before it could be stopped ({job.state})")
+        # the Terminal tab's view of the process: alive, its tree, its memory
+        pr = json.loads(c.get(f"/api/jobs/{jid}/proc").data)
+        expect(pr.get("alive") and pr.get("n_procs", 0) >= 1 and pr.get("rss_gb", 0) > 0 and pr.get("since_s") is not None,
+               f"proc: {pr}")
+        c.post(f"/api/jobs/{jid}/stop")
+        while time.time() - t0 < 320 and job.state == "running":
+            time.sleep(0.2)
+        expect(job.state == "stopped", f"state {job.state} after the stop")
+        r = json.loads(c.post(f"/api/jobs/{jid}/restart", json={}).data)
+        expect(r.get("ok"), f"restart: {r}")
+        new = app.queue.get(r["id"])
+        expect(new.out_dir == job.out_dir and app.queue.get(jid) is None, "the restart is not in the run's place")
+        while time.time() - t0 < 900 and new.state in ("queued", "running"):
+            time.sleep(0.5)
+        expect(new.state == "done", f"the restarted run is {new.state}")
+        log = open(os.path.join(new.out_dir, "run.log"), encoding="utf-8").read()
+        expect("Started again" in log and "generated earlier is used" in log.split("Started again")[1],
+               "the restart generated the structure again")
+        res = json.loads(c.get(f"/api/jobs/{new.id}/result").data)
+        k = res["properties"]["thermal"]["diag"]
+        # a copy of the folder elsewhere opens into the list with an id of its own
+        cp = os.path.join(elsewhere, "copied_run")
+        shutil.copytree(new.out_dir, cp)
+        o = json.loads(c.post("/api/runs/open", json={"path": cp}).data)
+        expect(o.get("ok") and o.get("ids") and o["ids"][0] != new.id, f"open: {o}")
+        expect(app.queue.get(o["ids"][0]).state == "done", "the opened run is not done")
+        listed = {row["id"] for row in json.loads(c.get("/api/jobs").data)}
+        expect(o["ids"][0] in listed, "the opened run is not listed")
+        app2 = create_app(workspace=d, concurrency=1)
+        listed2 = {row["id"] for row in json.loads(app2.test_client().get("/api/jobs").data)}
+        expect(o["ids"][0] in listed2, "the opened run is not listed after a restart of the server")
+        # the run folder ZIP: everything, imported as a run of its own
+        z = c.get(f"/api/jobs/{new.id}/download/run").data
+        imp = json.loads(c.post("/api/runs/import", data={"file": (io.BytesIO(z), "run.zip")},
+                                content_type="multipart/form-data").data)
+        expect(imp.get("ok") and imp["state"] == "done" and imp["view"] and imp["id"] != new.id, f"import: {imp}")
+        res2 = json.loads(c.get(f"/api/jobs/{imp['id']}/result").data)
+        expect(res2["properties"]["thermal"]["diag"] == k, "the imported result differs")
+        return (f"stopped while solving, started again with its structure ({new.ended - new.started:.0f} s), k "
+                f"{k[0]:.3f}; the copy opened and kept after a server restart; ZIP of {len(z) / 1e6:.1f} MB imported")
+
+
 @check("Compression of a periodic RVE: a resin alone gives Trouton's 3 eta (sides free) and 4 eta (plane strain) with "
        "their von Mises stress, and keeps its volume")
 def t_compress_resin():
@@ -1788,7 +1913,8 @@ def t_compress_pores():
 
 
 @check("Arrangement after compression: resin A | resin B with silica compressed 30 % in 3D, sides free; each resin keeps "
-       "its volume, the filled one widens less, the box is solved as it is, the 3D record written", quick=False)
+       "its volume, the filled one widens less, the box is solved as it is, the 3D record written; every step's whole "
+       "box kept for the 3D step player and brought along when the structure is reused", quick=False)
 def t_pressed():
     import json
     from mpsim import pipeline as PL
@@ -1800,13 +1926,33 @@ def t_pressed():
          "rve": {"auto": False, "L_um": 25, "voxel_um": 0.625, "quality": "fast", "arrangement": "pressed",
                  "press_compression": 30, "press_rate": 1.0, "press_lateral": "xy"},
          "analyses": {"thermal": True}, "options": {"directions": "z"}}
-    with tempfile.TemporaryDirectory() as d:
+    import gzip
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as d2:
         PL.run(f, d, log=lambda *a: None)
         with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
             r = json.load(fh)
         with open(os.path.join(d, "view", "meta.json"), encoding="utf-8") as fh:
             meta = json.load(fh)
         files = os.listdir(os.path.join(d, "view"))
+        st3 = (meta.get("press") or {}).get("steps3d") or []
+        expect(st3 and len(st3) == len(meta["press"]["frames"]), f"{len(st3)} steps in 3D for {len(meta['press']['frames'])} steps")
+        for st in (st3[0], st3[-1]):
+            with gzip.open(os.path.join(d, "view", st["lab"])) as fh:
+                lab = np.frombuffer(fh.read(), np.uint8)
+            with gzip.open(os.path.join(d, "view", st["vm"])) as fh:
+                vmq = np.frombuffer(fh.read(), np.uint8)
+            expect(lab.size == vmq.size == int(np.prod(st["dims"])), f"step volume {lab.size} for {st['dims']}")
+            expect(vmq.max() > 200 and (vmq == 0).any(), f"stress codes {vmq.min()}..{vmq.max()}")
+        expect(st3[-1]["dims"] == r["realisations"][0]["pressed"]["shape"], "the last step is not the compressed box")
+        # the same structure in another folder: no new compression, its steps come along
+        f2 = dict(f, _reuse={"from": [d]})
+        logs = []
+        PL.run(f2, d2, log=logs.append)
+        with open(os.path.join(d2, "view", "meta.json"), encoding="utf-8") as fh:
+            meta2 = json.load(fh)
+        expect(any("generated earlier is used" in x for x in logs), "the structure was not reused")
+        expect(len((meta2.get("press") or {}).get("steps3d") or []) == len(st3)
+               and os.path.exists(os.path.join(d2, "view", st3[-1]["lab"])), "the steps did not come with the reused structure")
     pr = r["realisations"][0].get("pressed") or {}
     expect(pr, "no compression record")
     shp = pr["shape"]
@@ -1822,7 +1968,8 @@ def t_pressed():
     expect("press" in meta and "press_lab.u8" in files and "field_press_vm.f32" in files, "the 3D record was not written")
     return (f"box 40³ -> {' × '.join(str(v) for v in shp)}; strain x of A {A['strain_all'][0]:+.3f}, of B with its "
             f"spheres {B['strain_all'][0]:+.3f}; resin B alone z {B['strain'][2]:+.3f} (region {B['strain_all'][2]:+.3f}); "
-            f"{pr['crossed_resin']} of {pr['n_spheres']} spheres in another resin; k_z {kz:.3f} W/m·K; {pr['seconds']:.0f} s")
+            f"{pr['crossed_resin']} of {pr['n_spheres']} spheres in another resin; k_z {kz:.3f} W/m·K; {pr['seconds']:.0f} s; "
+            f"{len(st3)} steps kept in 3D")
 
 
 @check("Arrangement after shear flow: contents kept, periodic, close pairs tilted by the flow; spheres only", quick=False)
@@ -2608,6 +2755,75 @@ def t_queue_gate():
         q.jobs.clear()
         q.order.clear()
     return "A solves, H (6 GB) waits, L1 (1 GB) passes it, L2 (3.5 GB) does not; H solves when A is done"
+
+
+def _flag_waiter(flag):
+    while not flag.wait(0.3):
+        pass
+
+
+@check("Stop at the memory gate: a run stopped while it waits for the memory of its solves is not granted, and the "
+       "queue goes on answering (it hung in 5.6.0)", quick=False)
+def t_stop_at_gate():
+    import multiprocessing as mp
+    import threading
+    from web.jobs import Flag, JobQueue
+    # the cause: a multiprocessing Event's set() waits for a process killed
+    # in its wait() - for ever; the Flag that replaces it does not
+    ctx = mp.get_context("spawn")
+    hung = {}
+    for name, make in (("Event", lambda: ctx.Event()), ("Flag", lambda: Flag(ctx))):
+        f = make()
+        pr = ctx.Process(target=_flag_waiter, args=(f,))
+        pr.start()
+        time.sleep(3.0)
+        pr.kill()
+        pr.join()
+        th = threading.Thread(target=f.set, daemon=True)
+        th.start()
+        th.join(5.0)
+        hung[name] = th.is_alive()
+    expect(not hung["Flag"], "the Flag's set() blocks after its waiter was killed")
+    big = {"name": "selftest gate A", "matrix": {"material_id": "epoxy"},
+           "phases": [{"material_id": "al2o3", "name": "Al2O3", "shape": "sphere", "size": {"d": 4, "unit": "um"},
+                       "fraction": {"value": 40, "basis": "vol"}}],
+           "rve": {"auto": False, "L_um": 64, "voxel_um": 0.4, "auto_enlarge": False, "quality": "fast"},
+           "analyses": {"thermal": True, "electrical": True, "dielectric": True, "cte": True}, "options": {"directions": "xyz"}}
+    small = dict(big, name="selftest gate B", rve=dict(big["rve"], L_um=16), analyses={"thermal": True},
+                 options={"directions": "z"})
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+        # 1 GB to solve each, 1.5 GB for both: B builds its structure beside
+        # A's solves, then waits at the gate
+        q = JobQueue(concurrency=2, mem_budget_gb=1.5)
+        q.MEM_SCALE, q.MEM_BASE = 1.0, 0.0
+        q.check_free = False
+        meta = lambda n, a: {"name": n, "analyses": a, "mem_gb": 1.0, "mem_struct_gb": 0.01, "gated": True}  # noqa: E731
+        ja = q.submit(None, big, d, meta("A", ["thermal", "electrical", "dielectric", "cte"]))
+        t0 = time.time()
+        while time.time() - t0 < 120 and ja.phase != "solve":
+            time.sleep(0.2)
+        jb = q.submit(None, small, d, meta("B", ["thermal"]))
+        while time.time() - t0 < 240 and not (jb.state == "running" and jb.phase == "gate"):
+            time.sleep(0.2)
+        if not (jb.phase == "gate" and ja.state == "running"):
+            for j in (ja, jb):
+                q.stop(j)
+            time.sleep(3)
+        expect(jb.phase == "gate" and ja.state == "running", f"B is not waiting at the gate ({jb.state}, {jb.phase}; A {ja.state})")
+        time.sleep(1.5)                      # B sleeps in its wait for the grant
+        q.stop(jb)
+        while time.time() - t0 < 600 and ja.state == "running":
+            time.sleep(0.5)
+        time.sleep(3.0)                      # the queue's loop opens the gates again
+        got = q.lock.acquire(timeout=10)
+        if got:
+            q.lock.release()
+        expect(got, "the queue's lock is held: the loop hung")
+        expect(jb.state == "stopped" and jb.phase == "gate", f"B ended {jb.state} in phase {jb.phase}")
+        expect(ja.state == "done", f"A ended {ja.state}")
+    return (f"a killed waiter {'hangs' if hung['Event'] else 'does not hang'} a multiprocessing Event's set(), not the "
+            f"Flag's; A solved and finished ({ja.ended - ja.started:.0f} s); B, stopped at the gate, was not granted; "
+            f"the queue answers")
 
 
 def main():

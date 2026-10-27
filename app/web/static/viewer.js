@@ -46,6 +46,12 @@
     // "smooth": SurfaceNets skins, one per particle; "voxels": the voxel faces
     // the solver sees, flat shaded and coloured voxel by voxel
     surfStyle: "voxels", voxels: {}, voxLoaded: false,
+    // the Voxels style drawn crisp (default): every voxel face flat, from the
+    // face the view ray entered, at the full resolution of the screen also
+    // while the view moves; off, the earlier soft look (normals from the
+    // smoothed gradient, a reduced image while moving). voxGrid: a thin line
+    // along every voxel edge, for a close look
+    voxCrisp: true, voxGrid: false,
     // the RVE faces and the structure sections at the solver's resolution
     // (the browser volume is a quarter of it on a 640-voxel grid)
     faceData: {}, lslices: {}, fslices: {},
@@ -354,22 +360,7 @@
       omw.setMinPixelSize(70);
       omw.setMaxPixelSize(130);
     } catch (e) { console.warn("axes widget", e); }
-    // A light on the camera axis gives the three faces of a box seen from a
-    // corner the same brightness, so flat-shaded voxels read as one solid
-    // block. A key light above and to the left of the view, with a weak fill
-    // from the other side, lets every face orientation read differently; both
-    // move with the camera.
-    try {
-      const Light = ns("Rendering.Core.vtkLight");
-      if (Light && renderer.addLight) {
-        if (renderer.setAutomaticLightCreation) renderer.setAutomaticLightCreation(false);
-        if (renderer.removeAllLights) renderer.removeAllLights();
-        const key = Light.newInstance(), fill = Light.newInstance();
-        key.setLightTypeToCameraLight(); key.setPosition(-0.5, 0.75, 1.0); key.setFocalPoint(0, 0, 0); key.setIntensity(0.85);
-        fill.setLightTypeToCameraLight(); fill.setPosition(0.7, -0.35, 1.0); fill.setFocalPoint(0, 0, 0); fill.setIntensity(0.35);
-        renderer.addLight(key); renderer.addLight(fill);
-      }
-    } catch (e) { console.warn("lights", e); }
+    try { cameraLights(renderer); } catch (e) { console.warn("lights", e); }
     R = { grw, renderer, rw, interactor, omw, image: null, slices: {}, faces: null, surf: {}, vox: {}, outline: null,
           ctf: null, net: null, volume: null, vec: null, path: null, animId: null };
     new ResizeObserver(() => { try { grw.resize(); rw.render(); } catch (e) { } }).observe(container);
@@ -650,6 +641,52 @@
   // nearest neighbour and shaded. Coloured by phase, or by the field (its
   // 8-bit copy as a second component; a shader mix takes the colour from the
   // field and the opacity and the shading normal from the structure).
+  // The colour of a voxel sample in the crisp style: flat shading from the
+  // face of the voxel the ray entered - the exposed face (its neighbour more
+  // transparent) nearest to the sample - so every voxel reads as a cube with
+  // sharp edges; the smoothed gradient only inside a translucent body. cOp:
+  // the component that holds the structure (opacity, faces), cCol: the one
+  // that holds the colour (the structure, or the field).
+  function crispMix(cOp, cCol, grid) {
+    const side = (axis, sgn) => {
+      const v = axis === 0 ? "vec3(iD.x, 0.0, 0.0)" : axis === 1 ? "vec3(0.0, iD.y, 0.0)" : "vec3(0.0, 0.0, iD.z)";
+      const c = "xyz"[axis];
+      const dist = sgn > 0 ? `1.0 - f.${c}` : `f.${c}`;
+      // vtk.js lights along the gradient of the scalar, which points into
+      // the body: the normal of a face points inwards, away from its open side
+      const n = [0, 1, 2].map((k) => (k === axis ? (sgn > 0 ? "-1.0" : "1.0") : "0.0")).join(", ");
+      return `    ox = getOpacityFromTexture(getTextureValue(posIS ${sgn > 0 ? "+" : "-"} ${v})[${cOp}], ${cOp}, hS);
+    if (o0 - ox > 0.02 && ${dist} < best) { best = ${dist}; nIS = vec3(${n}); }`;
+    };
+    return `
+    float hS = volume.transferFunctionsSampleHeight[${cOp}];
+    float o0 = getOpacityFromTexture(tValue[${cOp}], ${cOp}, hS);
+    vec3 col = getColorFromTexture(tValue[${cCol}], ${cCol}, volume.transferFunctionsSampleHeight[${cCol}]);
+    vec3 iD = volume.inverseDimensions;
+    vec3 f = fract(posIS / iD);
+    float best = 9.0;
+    float ox = 0.0;
+    vec3 nIS = vec3(0.0);
+${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
+    vec4 nrm;
+    if (best < 9.0) {
+      nrm = vec4(normalize(normalISToVC(nIS)), 1.0);
+    } else {
+      mat4 nm = computeMat4Normal(posIS, tValue);
+      nrm = nm[${cOp}];
+    }
+    #if vtkNumberOfLights > 0
+      col = applyLighting(col, nrm);
+    #endif
+    ${grid ? `if (best < 9.0) {
+      vec2 q = abs(nIS.x) > 0.5 ? f.yz : (abs(nIS.y) > 0.5 ? f.xz : f.xy);
+      float e = min(min(q.x, 1.0 - q.x), min(q.y, 1.0 - q.y));
+      col *= mix(0.55, 1.0, smoothstep(0.03, 0.06, e));
+    }` : ""}
+    return vec4(col, o0);`;
+  }
+  V.crispMix = crispMix;
+
   async function buildVoxVolume() {
     const vv = S.meta.voxel_volume;
     const want = !!vv && S.particles && S.surfStyle === "voxels";
@@ -669,38 +706,59 @@
       const mapper = VolumeMapper.newInstance();
       mapper.setInputData(img);
       mapper.setSampleDistance(0.5 * h);
-      if (mapper.setMaximumSamplesPerRay) mapper.setMaximumSamplesPerRay(4 * Math.max(nx, ny, nz) + 64);
+      if (mapper.setMaximumSamplesPerRay) mapper.setMaximumSamplesPerRay(8 * Math.max(nx, ny, nz) + 64);
       const actor = Volume.newInstance();
       actor.setMapper(mapper);
       R.renderer.addVolume(actor);
-      R.vvol = { img, mapper, actor, key: null };
+      R.vvol = { img, mapper, actor, key: null, dataKey: null,
+                 isf: mapper.getInteractionSampleDistanceFactor ? mapper.getInteractionSampleDistanceFactor() : null };
     }
     const { img, mapper, actor } = R.vvol;
-    const key = fv ? fv.key : "";
+    const crisp = S.voxCrisp !== false, grid = crisp && !!S.voxGrid;
+    const key = `${fv ? fv.key : ""}|${crisp}|${grid}`;
     const pr = actor.getProperty();
+    // crisp: the full screen resolution also while the view moves (vtk.js
+    // otherwise draws a reduced image during an interaction and may leave
+    // the last one of a wheel zoom on screen), and a finer step along the
+    // ray, so that a voxel's edge falls on its pixel
+    if (mapper.setAutoAdjustSampleDistances) mapper.setAutoAdjustSampleDistances(!crisp);
+    if (crisp && mapper.setImageSampleDistance) mapper.setImageSampleDistance(1.0);
+    if (mapper.setInteractionSampleDistanceFactor && R.vvol.isf !== null) mapper.setInteractionSampleDistanceFactor(crisp ? 1.0 : R.vvol.isf);
+    mapper.setSampleDistance((crisp ? 0.25 : 0.5) * h);
     if (R.vvol.key !== key) {
+      const dataKey = fv ? fv.key : "";
+      if (R.vvol.dataKey !== dataKey) {
+        if (fv) {
+          const two = new Uint8Array(2 * lab.length);
+          for (let i = 0; i < lab.length; i++) { two[2 * i] = fv.data[i]; two[2 * i + 1] = lab[i]; }
+          img.getPointData().setScalars(DataArray.newInstance({ name: "v", numberOfComponents: 2, values: two }));
+        } else {
+          img.getPointData().setScalars(DataArray.newInstance({ name: "v", numberOfComponents: 1, values: lab }));
+        }
+        img.modified();
+        R.vvol.dataKey = dataKey;
+      }
+      pr.setIndependentComponents(true);
+      let repl = null;
       if (fv) {
-        const two = new Uint8Array(2 * lab.length);
-        for (let i = 0; i < lab.length; i++) { two[2 * i] = fv.data[i]; two[2 * i + 1] = lab[i]; }
-        img.getPointData().setScalars(DataArray.newInstance({ name: "v", numberOfComponents: 2, values: two }));
-        pr.setIndependentComponents(true);
         pr.setColorMixPreset(3);
-        mapper.getViewSpecificProperties().OpenGL = { ShaderReplacements: [{ shaderType: "Fragment", originalValue: "//VTK::CustomColorMix",
-          replaceFirst: false, replaceAll: false, replacementValue: `
+        repl = crisp ? crispMix(1, 0, grid) : `
     mat4 normalMat = computeMat4Normal(posIS, tValue);
     float op = getOpacityFromTexture(tValue[1], 1, volume.transferFunctionsSampleHeight[1]);
     vec3 col = getColorFromTexture(tValue[0], 0, volume.transferFunctionsSampleHeight[0]);
     #if vtkNumberOfLights > 0
       col = applyLighting(col, normalMat[1]);
     #endif
-    return vec4(col, op);` }] };
+    return vec4(col, op);`;
+      } else if (crisp) {
+        pr.setColorMixPreset(3);
+        repl = crispMix(0, 0, grid);
       } else {
-        img.getPointData().setScalars(DataArray.newInstance({ name: "v", numberOfComponents: 1, values: lab }));
-        pr.setIndependentComponents(true);
         pr.setColorMixPreset(0);
-        mapper.getViewSpecificProperties().OpenGL = { ShaderReplacements: [] };
       }
-      img.modified();
+      mapper.getViewSpecificProperties().OpenGL = { ShaderReplacements: repl ? [{ shaderType: "Fragment", originalValue: "//VTK::CustomColorMix",
+        replaceFirst: false, replaceAll: false, replacementValue: repl }] : [] };
+      mapper.modified();
       R.vvol.key = key;
     }
     // opacity by phase: the matrix and hidden phases transparent
@@ -799,8 +857,16 @@
       const m = Mapper.newInstance(); m.setInputConnection(src.getOutputPort());
       const a = Actor.newInstance(); a.setMapper(m);
       const p = a.getProperty();
-      p.setColor(...c); p.setOpacity(0.15);
-      p.setEdgeVisibility(true); p.setEdgeColor(...c.map((v) => v * 0.75)); p.setLineWidth(2.5);
+      if (S.surfStyle === "voxels" && S.meta.voxel_volume) {
+        // over the voxel volume the region is its outline only: a translucent
+        // face ends the volume's rays where it is drawn, hiding every voxel
+        // inside the region (and fighting over the depth in stripes where
+        // the voxels reach the box face)
+        p.setRepresentationToWireframe(); p.setColor(...c.map((v) => v * 0.75)); p.setLineWidth(2.5);
+      } else {
+        p.setColor(...c); p.setOpacity(0.15);
+        p.setEdgeVisibility(true); p.setEdgeColor(...c.map((v) => v * 0.75)); p.setLineWidth(2.5);
+      }
       R.renderer.addActor(a); R.slabs.push(a);
     });
   }
@@ -1190,6 +1256,46 @@
     }
     R.volume.actor.setVisibility(want);
   }
+
+  // A light on the camera axis gives the three faces of a box seen from a
+  // corner the same brightness, so flat-shaded voxels read as one solid
+  // block. A key light above and to the left of the view, with a weak fill
+  // from the other side, lets every face orientation read differently; both
+  // move with the camera. They are scene lights aimed again whenever the
+  // camera moves: vtk.js's volume mapper turns the direction of a camera
+  // light by the view as if it were a scene direction, which left the side
+  // faces of the voxels unlit.
+  function cameraLights(renderer) {
+    const Light = ns("Rendering.Core.vtkLight");
+    if (!Light || !renderer.addLight) return;
+    if (renderer.setAutomaticLightCreation) renderer.setAutomaticLightCreation(false);
+    if (renderer.removeAllLights) renderer.removeAllLights();
+    // camera axes: x right, y up, z towards the viewer
+    const spec = [[[-0.5, 0.75, 1.0], 0.85], [[0.7, -0.35, 1.0], 0.35]];
+    const lights = spec.map(([, i]) => {
+      const l = Light.newInstance();
+      l.setLightTypeToSceneLight(); l.setPositional(false); l.setIntensity(i);
+      renderer.addLight(l);
+      return l;
+    });
+    const cam = renderer.getActiveCamera();
+    const aim = () => {
+      const f = cam.getFocalPoint(), d = cam.getDirectionOfProjection(), u0 = cam.getViewUp();
+      const cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      let r = cr(d, u0);
+      const n = Math.hypot(...r) || 1;
+      r = r.map((v) => v / n);
+      const u = cr(r, d);
+      spec.forEach(([p], k) => {
+        const w = [0, 1, 2].map((a) => p[0] * r[a] + p[1] * u[a] - p[2] * d[a]);
+        lights[k].setFocalPoint(...f);
+        lights[k].setPosition(f[0] + w[0], f[1] + w[1], f[2] + w[2]);
+      });
+    };
+    aim();
+    cam.onModified(aim);
+  }
+  V.cameraLights = cameraLights;
 
   function camera(which) {
     if (!R || !S.meta) return;

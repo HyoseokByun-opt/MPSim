@@ -103,6 +103,15 @@ button,input,select,textarea{font:inherit}
 .dpage.on{display:block}
 #console{margin:0;padding:8px 14px;font:12px/1.5 var(--mono);color:#24292f;white-space:pre-wrap;background:#fff;min-height:100%}
 #console .st{color:var(--accent);font-weight:700}
+#d-term{display:none;flex-direction:column}#d-term.on{display:flex}
+.termbar{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--line);background:#f6f8fa;font:12px var(--mono);position:sticky;top:0;z-index:1}
+.termbar .lv{display:inline-flex;align-items:center;gap:6px;font-weight:700}
+.termbar .lv i{width:9px;height:9px;border-radius:50%;display:inline-block;background:#8c959f}
+.termbar .lv.ok i{background:#1a7f37;box-shadow:0 0 0 3px rgba(26,127,55,.18)}.termbar .lv.wait i{background:#bf8700}.termbar .lv.bad i{background:#cf222e}
+.termbar .lv.ok{color:#1a7f37}.termbar .lv.wait{color:#9a6700}.termbar .lv.bad{color:#cf222e}
+.termbar label{display:inline-flex;gap:4px;align-items:center;font-family:var(--font, system-ui);color:#57606a}
+.term{margin:0;padding:8px 14px;font:12px/1.5 var(--mono);color:#d0d7de;background:#0d1117;white-space:pre-wrap;flex:1;min-height:0;overflow:auto}
+.term .t{color:#6e7681}.term .s{color:#58a6ff;font-weight:700}.term .v{color:#3fb950}.term .h{color:#8b949e}.term .w{color:#d29922}.term .e{color:#f85149}
 #d-conv{padding:6px 10px}
 #convChart{height:170px}
 .dtoggle{margin-left:auto}
@@ -198,6 +207,9 @@ label.f .u{color:var(--muted);font-weight:400;margin-left:4px}
 .livefigs{flex:1;min-height:0;display:flex;flex-direction:column}
 .vdem{position:absolute;inset:0;z-index:12;background:#fff;display:flex;flex-direction:column;padding:8px 10px}
 .vdem[hidden]{display:none}
+.runtools{display:flex;gap:6px;margin:2px 0 8px;flex-wrap:wrap}
+.runopen{margin:0 0 10px}.runopen[hidden]{display:none}
+.runopen input{width:100%;margin-bottom:6px}
 .livemain{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 12px 4px}
 .livehead{font-size:13px;margin-bottom:4px}
 .livemain img{flex:1;min-height:0;object-fit:contain;width:100%;border:1px solid var(--line,#d0d7de);border-radius:6px;background:#fff}

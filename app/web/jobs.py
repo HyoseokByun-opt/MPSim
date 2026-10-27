@@ -32,6 +32,34 @@ STOPPED_FILE = "stopped.json"
 TMP_DIR = "_tmp"                 # a run's scratch files (see _child)
 
 
+class Flag:
+    """A flag between the server and a run's process that never blocks
+    either side (the stop of a run, the memory gate's grant).
+
+    A multiprocessing Event's set() waits until every process sleeping in its
+    wait() has woken, and a process killed while it waited - a run stopped at
+    the memory gate - never wakes: the queue's loop then hung in set() with
+    its lock held, and the run list and every submission with it (5.6.0).
+    A shared int without a lock cannot be left held by a killed process."""
+
+    def __init__(self, ctx):
+        self._v = ctx.RawValue("i", 0)
+
+    def set(self):
+        self._v.value = 1
+
+    def is_set(self):
+        return self._v.value != 0
+
+    def wait(self, timeout=None):
+        end = None if timeout is None else time.time() + timeout
+        while not self.is_set():
+            if end is not None and time.time() >= end:
+                return False
+            time.sleep(0.05)
+        return True
+
+
 def kill_tree(pid):
     """End a process and every process it started (pool workers, the
     particle dynamics' process, their managers)."""
@@ -193,6 +221,7 @@ class Job:
         self.stage_detail = ""
         self.progress = 0.0
         self.solver = None             # {name, it, res, target, frac}
+        self.last_t = None             # when its process last reported anything (the Terminal tab)
         self.history = {}              # solve name -> [(t, res)] in the current stage
         self.figures = []              # figures drawn while the run goes on
         self.partial = {}              # property -> headline numbers as they land
@@ -292,20 +321,21 @@ class JobQueue:
         base = re.sub(r"[^A-Za-z0-9_+.-]+", "-", base).strip("-+.")[:60]
         return base or "run"
 
-    def submit(self, owner, spec, out_dir, meta, folder=None, case="", into=None, replaces=None):
+    def submit(self, owner, spec, out_dir, meta, folder=None, case="", into=None, replaces=None, rename=True):
         """Start a run. `out_dir` is the case directory it is written into;
         `folder` is the work folder that case belongs to.
 
         `into` continues an existing run directory instead of making one (its
         structure and results are reused; see pipeline.run), and `replaces` is
-        the id of the finished run whose place in the list the new one takes."""
+        the id of the finished run whose place in the list the new one takes.
+        rename=False keeps the directory's name (a stopped run started again)."""
         jid = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         base = self._dirname(meta)
         out = None
         if into:
             out = into
             # named after everything it now holds ("thermal" -> "thermal+dielectric")
-            if os.path.basename(into) != base:
+            if rename and os.path.basename(into) != base:
                 parent = os.path.dirname(into)
                 for i in range(1, 1000):
                     cand = os.path.join(parent, base if i == 1 else f"{base}-{i:02d}")
@@ -765,7 +795,7 @@ class JobQueue:
         the others, and a run that starts solving beside one already solving
         does not get one core while the first keeps all of them."""
         run = self.running()
-        active = [j for j in run if j.grant is not None and j.phase in ("structure", "solve")]
+        active = [j for j in run if j.grant is not None and j.phase in ("structure", "solve") and not j.stopping]
         if not active:
             return
         cores = os.cpu_count() or 2
@@ -783,7 +813,9 @@ class JobQueue:
 
     def _grant(self, job):
         """Open the gate: the run solves from now on, on its equal share of
-        the cores (_rebalance)."""
+        the cores (_rebalance). A run being stopped is not granted."""
+        if job.stopping:
+            return
         job.phase = "solve"
         self._rebalance()
         if job.grant is not None:
@@ -824,12 +856,12 @@ class JobQueue:
     def _start(self, job):
         ctx = mp.get_context("spawn")
         out_q = ctx.Queue()
-        stop_ev = ctx.Event()
+        stop_ev = Flag(ctx)
         job.threads = self._threads_for(job)
         job.phase = self._first_phase(job)
         gate = None
         if job.phase == "structure":
-            gate = (ctx.Event(), ctx.Value("i", 0))
+            gate = (Flag(ctx), ctx.RawValue("i", 0))
             job.grant = gate
         proc = ctx.Process(target=_child, args=(job.spec, job.out_dir, out_q, stop_ev, job.threads, gate),
                            daemon=False)
@@ -874,6 +906,7 @@ class JobQueue:
 
     @staticmethod
     def _apply(job, kind, payload):
+        job.last_t = time.time()
         if kind == "gate":
             # the structure is built: the run waits for the memory of its solves
             job.phase = "gate"

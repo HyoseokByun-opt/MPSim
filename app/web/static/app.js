@@ -324,7 +324,7 @@
   function defaultForm() {
     return {
       name: "New case", defaults: FORM_DEFAULTS, matrix: matEntry("epoxy"), phases: [phaseEntry("al2o3", "sphere")],
-      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, press_cure: false, press_mold_C: 175, press_control: "rate", press_stress_Pa: 100, press_part_mm: 1, press_time_s: 600, dispersion: { mode: "uniform" } },
+      rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, realisations: { mode: "fixed", target_pct: 2, n_min: 3, n_max: 20 }, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, press_cure: false, press_mold_C: 175, press_control: "rate", press_stress_Pa: 100, press_part_mm: 1, press_time_s: 600, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
         directions: "z", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: false, reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
@@ -338,6 +338,7 @@
           underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 },
           dem: { on: true, n: 500, strain: 10, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
+        overlap_steps: { on: true, tries: 2, max_vox: 3 },
         mechtest: { mode: "compression", axis: "z", lateral: "free", control: "force", value: 100, length_mm: null, area_mm2: 10, strength_MPa: null },
         thermomech: { T_ref: 175, T_bottom: 25, T_top: 25, support: "free", substrate: { material_id: "si", E: null, nu: null, alpha: null, thickness_um: 775 }, span_mm: 10, compare_uniform: true },
         joule: { control: "current", values: "1e6, 1e7, 3e7, 1e8", T_amb: 25, R_th: 0.001 },
@@ -494,7 +495,7 @@
       ],
       results: [
         { group: "Views", items: [RB("c:vis", "view3d", "3D / 2D view", { on: state.center === "vis" }), RB("c:res", "table", "Result Viewer", { on: state.center === "res" }), RB("c:rep", "report", "Report", { on: state.center === "rep" })] },
-        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob })] },
+        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob }), RB("dl:run", "zip", "Run folder ZIP", { dis: !state.resultJob, tip: "The whole run folder - results, 3D view, structure, report - to open in MPSim on another PC (Runs - Import ZIP)" })] },
         { group: "Figures", items: [RB("shot", "camera", "Screen capture"), RB("render", "image", "Hi-res figure", { tip: "High-resolution figure rendered on the server (PyVista)" })] },
       ],
     };
@@ -829,14 +830,14 @@
           <div><label class="f">Installed RAM</label><div class="mono" style="padding:6px 0">${s.ram_gb ? fmt(s.ram_gb) + " GB" : "—"}</div></div>
         </div>
         ${(() => {
-          const nmax = s.max_voxels ?? 500, n3 = nmax > 0 ? nmax ** 3 : 0;
+          const nmax = s.max_voxels ?? 0, n3 = nmax > 0 ? nmax ** 3 : 0;
           const gb = (b) => fmt(Math.round(n3 * b / 1e8) / 10);
           return `<div class="g2" style="margin-top:6px">
           <div><label class="f">Largest grid <span class="u">voxels per edge</span></label>
-            <input type="number" min="0" step="10" data-set="max_voxels" value="${nmax}" placeholder="500"></div>
+            <input type="number" min="0" step="10" data-set="max_voxels" value="${nmax}" placeholder="0"></div>
           <div><label class="f">Memory at that grid</label><div class="hint" style="padding:4px 0 2px;line-height:1.5">${n3 ? `Conduction <b>${gb(230)} GB</b><br>Elasticity <b>${gb(300)} GB</b>` : "no limit"}</div></div>
         </div>
-        <div class="hint">The largest RVE edge in voxels for every solver (default 500; 0: no limit). A plan that needs more is held at this edge and says so; the memory shown is one solve on a grid of that size (Stokes flow takes about eight times the elasticity).</div>`;
+        <div class="hint">The largest RVE edge in voxels for every solver (default 0: no limit, the memory check warns instead). A number caps the edge: a plan that needs more is held at it and says so; the memory shown is one solve on a grid of that size (Stokes flow takes about eight times the elasticity).</div>`;
         })()}
         <div class="hint">The runs in progress share this memory budget (empty: 70 % of the RAM; 0: no limit), so that parallel runs never page to disk. A run takes a place and builds its structure beside the others with only the structure's memory, then waits before its first solve until the memory of its solves fits: structures are built side by side, and the solves go together while they fit - a heavy one beside light ones, or one after another (an Accurate RVE of 470³ voxels reserves about 35 GB). A light solve may go ahead of a heavy one that does not fit yet, but never so far that the heavy one would not fit once the solves before it are done. A run that starts solving takes the cores the other solving runs leave free. The run list says which phase each run is in and what it waits for.</div>
         <div class="hint">A change applies to the next analysis to start; nothing running is disturbed. An analysis splits its cores between its independent solves (properties, directions, elastic load cases) and the threads inside each solve, and takes the split that finishes first: a PuMA FE solve runs about 4× faster on 14 threads, several solves side by side do more work per core.</div>
@@ -1261,7 +1262,12 @@
         <input type="number" min="0" max="50" step="0.5" data-k="options.particle_gap_vox" data-num placeholder="0">
         <div class="hint" style="margin-top:4px">${+((f.options || {}).particle_gap_vox) > 0
           ? `Particles are moved (never trimmed) so that their surfaces stay ${fmt(+f.options.particle_gap_vox)} voxel${+f.options.particle_gap_vox === 1 ? "" : "s"} apart (from 2 voxels on, no voxel of one is even a corner neighbour of a voxel of another) wherever the loading allows - as with a dispersant or a coating. A loading too dense for the gap lets particles touch only where needed. The gap is measured in voxels, so it shrinks with the voxel size.`
-          : "Particles never overlap but may touch, as they do in a filled compound. The touching voxel faces are counted and can carry a contact resistance R<sub>c</sub>; heat and current cross a contact face, so a dense, conductive filler forms paths. A value above 0 keeps the particles that many voxels apart instead."}</div></div></div>
+          : "Particles never overlap but may touch, as they do in a filled compound. The touching voxel faces are counted and can carry a contact resistance R<sub>c</sub>; heat and current cross a contact face, so a dense, conductive filler forms paths. A value above 0 keeps the particles that many voxels apart instead."}</div>
+        <label class="chk" style="margin-top:8px"><span class="switch"><input type="checkbox" data-k="options.overlap_steps.on"><span></span></span> Allow overlap step by step when the loading does not pack</label>
+        ${(f.options.overlap_steps || {}).on !== false ? `<div class="g2"><div><label class="f">Packings per step</label><input type="number" min="1" max="50" step="1" data-k="options.overlap_steps.tries" data-num></div><div><label class="f">Largest overlap <span class="u">voxels</span></label><input type="number" min="1" max="20" step="1" data-k="options.overlap_steps.max_vox" data-num></div></div>` : ""}
+        <div class="hint">${(f.options.overlap_steps || {}).on !== false
+          ? `On (default). When the particles cannot be packed to the loading without overlapping, the packing is made again with an overlap of 1 voxel allowed, then 2, and so on up to the largest overlap; at each step it is tried the given number of times (the first from where the last one stopped, the others from new random positions) before the next voxel is allowed. The first packing that reaches the loading is kept; a voxel two particles share belongs to one of them, and the RVE checks report the overlap that was needed. A loading that packs without overlap is not affected.`
+          : "Off: a loading that cannot be packed without overlap is reached as far as it goes, and every particle is drawn smaller by the same factor (the RVE checks report the volume fraction short of the target)."}</div></div></div>
       <div class="sec"><div class="sh">${I("morphology")}Composition</div><div class="sb" id="compBody"></div></div>`;
   }
   /* R_c for every pair of fillers. The diagonal is each filler's own R_c
@@ -1325,8 +1331,14 @@
           <div class="hint">The grid size follows from the two: edge length ÷ voxel size, rounded to an even number of voxels. A grid-size variable remains in the DOE tab for convergence studies.</div>` : ""}
         <label class="chk"><input type="checkbox" data-k="rve.auto_enlarge"> Enlarge the RVE when the criteria are not met</label>
         <div class="hint">Off by default: the RVE is used as entered, and the criteria below report whether it meets them.</div>
-        <div class="g2"><div><label class="f">Realisations <span class="u">0 = level default</span></label><input type="number" min="0" max="10" data-k="rve.n_seeds" data-num></div><div><label class="f">Random seed</label><input type="number" min="0" data-k="rve.seed" data-num></div></div>
-        <div class="hint">With two or more realisations, results carry a 95 % confidence interval.</div></div></div>
+        <label class="f">Realisations</label>
+        <select data-k="rve.realisations.mode"><option value="fixed">A fixed number</option><option value="settle">Until the mean settles (statistical RVE)</option></select>
+        ${(f.rve.realisations || {}).mode === "settle"
+          ? `<div class="g3"><div><label class="f">Interval target <span class="u">%</span></label><input type="number" min="0.05" max="50" step="0.1" data-k="rve.realisations.target_pct" data-num></div><div><label class="f">At least</label><input type="number" min="2" max="200" step="1" data-k="rve.realisations.n_min" data-num></div><div><label class="f">At most</label><input type="number" min="2" max="200" step="1" data-k="rve.realisations.n_max" data-num></div></div>
+          <div><label class="f">Random seed <span class="u">of the first; each next one adds 1000</span></label><input type="number" min="0" data-k="rve.seed" data-num></div>
+          <div class="hint">For an RVE too large to solve: a smaller box, solved again with a new random arrangement until the 95 % confidence interval of every mean is within the target. The interval of n realisations is t·s/√n (s the scatter between them, t Student's), so the count follows from the scatter the first ones show: four times more realisations halve the interval. A box of at least six particle diameters is advisable (four biased the mean by 9 % in guide 6.7). The approach and its limit follow Kanit et al. (2003): small volumes give the effective property as the mean of enough realisations, but a volume that is too small biases the mean itself - with every boundary condition, least with periodic ones - so a larger RVE should be run once to confirm it. The RVE checks report the realisations used and how many a ±1 % and a ±2 % interval would need.</div>`
+          : `<div class="g2"><div><label class="f">Number <span class="u">0 = level default</span></label><input type="number" min="0" max="10" data-k="rve.n_seeds" data-num></div><div><label class="f">Random seed</label><input type="number" min="0" data-k="rve.seed" data-num></div></div>
+          <div class="hint">With two or more realisations, results carry a 95 % confidence interval. The random seed is also a DOE variable (Domain), for a study over realisations.</div>`}</div></div>
       <div class="sec"><div class="sh">${I("cube")}Recommended RVE</div><div class="sb" data-live="domrec">${domRecHtml()}</div></div>
       <div class="sec"><div class="sh">${I("checks")}Criteria before solving</div><div class="sb" data-live="domchecks">${domChecksHtml()}</div></div>`;
   }
@@ -1539,7 +1551,8 @@
         <div class="rtags">${chips(j)}${j.grid ? `<span class="rgrid">${esc(j.grid)}</span>` : ""}</div>
         ${j.doe_label ? `<small class="rvars">${esc(j.doe_label)}</small>` : (j.structure ? `<small class="rstruct" title="${esc(j.structure)}">${esc(j.structure)}</small>` : "")}
         <small>${STATE[j.state]}${j.state === "running" ? (j.phase === "gate" ? ` · ${esc(j.wait || "structure built, waiting for memory to solve")}` : " · " + Math.round(100 * j.progress) + " %" + (j.phase === "structure" ? " · structure" : j.phase === "solve" ? " · solving" : "") + (j.threads ? ` · ${j.threads} cores` : "")) : ""}${j.state === "queued" ? " · " + esc(j.wait || "position " + j.queue_position) : ""} · ${secs(j.elapsed_s)}</small></div>
-      <div class="acts">${["running", "queued"].includes(j.state) ? `<button class="btn sm danger" data-stop="${j.id}" title="Stop">${I("stop")}</button>` : `<button class="btn sm" data-del="${j.id}" title="Delete">${I("delete")}</button>`}</div></div>`;
+      <div class="acts">${["running", "queued"].includes(j.state) ? `<button class="btn sm danger" data-stop="${j.id}" title="Stop">${I("stop")}</button>`
+        : `${["stopped", "failed"].includes(j.state) ? `<button class="btn sm" data-restart="${j.id}" title="Start this run again: its own inputs in its own folder; a structure it had finished is used again">${I("play")}</button>` : ""}<button class="btn sm" data-del="${j.id}" title="Delete">${I("delete")}</button>`}</div></div>`;
     // A study queues up to 64 cases. Listed one by one they bury every earlier
     // result, so a study collapses into a single row that opens on a click.
     const seen = new Set(), out = [];
@@ -1606,7 +1619,7 @@
       }
     });
   }
-  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|rve\.press_cure|rve\.press_control|rve\.press_lateral|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|fraction\.value|size\.d|section\.(?:from|to))$/;
+  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|rve\.press_cure|rve\.press_control|rve\.press_lateral|rve\.realisations\.mode|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|overlap_steps\.on|fraction\.value|size\.d|section\.(?:from|to))$/;
   function onField(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
@@ -1825,8 +1838,96 @@
     if (state.resultJob && state.resultJob !== id) { state.result = null; state.resultJob = null; }
     try { localStorage.setItem("mpsim.active", id); } catch (e) { }
     $("#console").textContent = "";
+    termReset();
     setDock("console", true);
     pollActive();
+  }
+  /* The Terminal tab: the run being followed as a terminal shows it - every
+     line it writes, each stage, the iterations of the solvers as they go
+     (a line per solve every few seconds) and, every 15 s or after a quiet
+     spell, a heartbeat with its process tree's CPU use and memory - and on
+     top whether the process is alive, working, waiting or silent. */
+  const term = { lastSolve: {}, lastLine: 0, lastBeat: 0, follow: true, proc: null, busy: false };
+  const hhmmss = () => new Date().toTimeString().slice(0, 8);
+  function termPut(html) {
+    const t = $("#term");
+    if (!t) return;
+    const pane = t;
+    const near = pane.scrollTop + pane.clientHeight > pane.scrollHeight - 40;
+    t.insertAdjacentHTML("beforeend", html);
+    if (t.innerHTML.length > 600000) t.innerHTML = t.innerHTML.slice(-350000);
+    if (term.follow && near) pane.scrollTop = pane.scrollHeight;
+    term.lastLine = Date.now();
+  }
+  function termReset() {
+    const t = $("#term");
+    if (t) t.textContent = "";
+    term.lastSolve = {}; term.lastLine = Date.now(); term.lastBeat = 0; term.lastStageName = null; term.endState = null;
+  }
+  function termEvents(ev) {
+    let html = "";
+    const ts = `<span class="t">[${hhmmss()}]</span> `;
+    for (const e of ev.events) {
+      if (e.kind === "line") {
+        const tx = e.data.text || "";
+        html += ts + `<span class="${/^\s*!!/.test(tx) ? "w" : ""}">${esc(tx)}</span>\n`;
+      } else if (e.kind === "stage" && e.data.name !== term.lastStageName) {
+        html += ts + `<span class="s">▶ ${esc(e.data.name)}</span> ${esc(e.data.detail || "")}\n`;
+        term.lastStageName = e.data.name;
+      }
+    }
+    // the solver's iteration, once every 3 s for each solve
+    const sv = ev.solver;
+    if (sv && sv.name && ev.state === "running") {
+      const k = sv.name, last = term.lastSolve[k] || { t: 0, it: -1 };
+      if (Date.now() - last.t > 3000 && sv.it !== last.it) {
+        html += ts + `<span class="v">${esc(sv.name)}</span> · iteration ${sv.it} · residual ${fmt(sv.res)}${sv.target ? ` (target ${fmt(sv.target)})` : ""}\n`;
+        term.lastSolve[k] = { t: Date.now(), it: sv.it };
+      }
+    }
+    if (["done", "failed", "stopped"].includes(ev.state) && term.endState !== ev.state + state.active) {
+      html += ts + `<span class="${ev.state === "done" ? "v" : "e"}">== ${STATE[ev.state] || ev.state}</span>\n`;
+      term.endState = ev.state + state.active;
+    }
+    if (html) termPut(html);
+  }
+  async function pollProc() {
+    const bar = $("#termBar");
+    if (!bar || term.busy || !state.active) return;
+    term.busy = true;
+    try {
+      const p = await api("GET", `/api/jobs/${state.active}/proc`);
+      term.proc = p;
+      const job = (state.jobs || []).find((j) => j.id === state.active);
+      const nm = esc((job && job.name) || state.active);
+      let lv = "", cls = "";
+      const quiet = p.since_s || 0, cpu = p.cpu_pct || 0;
+      if (p.state === "queued") { lv = "Queued"; cls = "wait"; }
+      else if (p.state !== "running") { lv = STATE[p.state] || p.state; cls = p.state === "done" ? "ok" : "bad"; }
+      else if (!p.alive) { lv = "Process not found"; cls = "bad"; }
+      else if (p.phase === "gate") { lv = "Waiting for memory to solve"; cls = "wait"; }
+      else if (cpu >= 20 || quiet < 20) { lv = "Working"; cls = "ok"; }
+      else if (quiet < 180) { lv = "Quiet"; cls = "wait"; }
+      else { lv = "No CPU use and no output"; cls = "bad"; }
+      const cores = p.cpus || 1;
+      bar.innerHTML = `<span class="lv ${cls}"><i></i>${lv}</span><span>${nm}</span>`
+        + (p.state === "running" && p.alive ? `<span title="CPU use of the run's process tree, 100 % = one core">CPU ${Math.round(cpu)} % <span class="hint">of ${100 * cores} %</span></span>
+          <span title="Memory of the run's processes">${(p.rss_gb || 0).toFixed(2)} GB <span class="hint">· ${(p.mem_free_gb || 0).toFixed(1)} GB free</span></span>
+          <span>${p.n_procs} process${p.n_procs === 1 ? "" : "es"} · ${p.n_threads} threads</span>
+          <span title="Seconds since the run last reported a line, a stage or a solver iteration">last output ${quiet < 1 ? "now" : secs(quiet) + " ago"}</span>` : "")
+        + `<span>${esc(p.stage || "")}${p.solver && p.solver.name ? ` · ${esc(p.solver.name)} it ${p.solver.it}` : ""}</span>`
+        + `<label style="margin-left:auto"><input type="checkbox" id="termFollow" ${term.follow ? "checked" : ""}> Follow</label>`;
+      const fl = $("#termFollow");
+      if (fl) fl.onchange = (e) => { term.follow = e.target.checked; };
+      if (p.state === "running" && p.alive) {
+        const since = Date.now() - term.lastLine;
+        if (Date.now() - term.lastBeat > 15000 && since > 4000) {
+          termPut(`<span class="t">[${hhmmss()}]</span> <span class="h">· alive: CPU ${Math.round(cpu)} % · ${(p.rss_gb || 0).toFixed(2)} GB · ${p.n_procs} processes · ${esc(p.stage || "")}${quiet > 30 ? ` · no output for ${secs(quiet)}` : ""}</span>\n`);
+          term.lastBeat = Date.now();
+        }
+      }
+    } catch (e) { /* the run's record is gone */ }
+    finally { term.busy = false; }
   }
   let polling = false;
   async function pollActive() {
@@ -1851,6 +1952,7 @@
         else if (e.kind === "partial_result") partialDirty = true;
       }
       if (text) { con.insertAdjacentHTML("beforeend", text); if (con.innerHTML.length > 500000) con.innerHTML = con.innerHTML.slice(-300000); if (nearBottom) pane.scrollTop = pane.scrollHeight; }
+      termEvents(ev);
       state.seq = ev.seq;
       state.history = ev.history || {};
       const prev = state.activeState;
@@ -1869,7 +1971,12 @@
       if (running) pollLive();
       if (partialDirty && running) loadPartialResult(state.active);
       if (["done", "failed", "stopped"].includes(ev.state) && prev !== ev.state && prev !== null) {
-        if (ev.state === "done") {
+        const viewingOther = !!(state.resultJob && state.resultJob !== state.active && state.result && !state.result.partial);
+        if (ev.state === "done" && viewingOther) {
+          // another run is on display: it stays, the finished one waits in Runs
+          const jj = (state.jobs || []).find((x) => x.id === state.active);
+          toast(`"${esc((jj && jj.name) || "The run")}" is complete; a click on it in Runs opens its results.`, 6000);
+        } else if (ev.state === "done") {
           await loadResult(state.active);
           if (state.cal && state.cal.resultJob === state.active) toast("The calibration is complete.");
           else if (state.activePreview) { toast("The structure has been generated."); setCenter("vis"); }
@@ -1894,7 +2001,10 @@
     if (!box) return;
     const running = ["running", "queued"].includes(st || state.activeState);
     const figs = state.liveFigs || [];
-    const showing = !!(running && state.active);
+    // a finished run opened from Runs while another one runs: its own 3D
+    // view, not the live solve of the run the console follows
+    const other = !!(state.resultJob && state.resultJob !== state.active && state.result && !state.result.partial);
+    const showing = !!(running && state.active) && !other;
     if (!showing) { box.hidden = true; liveStop(); return; }
     const url = (f) => `/api/jobs/${state.active}/figures/${encodeURIComponent(f.name)}?t=${f.seconds || 0}`;
     const pick = figs.find((f) => f.name === state.livePick) || figs[figs.length - 1];
@@ -2091,7 +2201,12 @@
   }
   async function openJob(id) {
     const j = state.jobs.find((x) => x.id === id);
-    if (j && j.state === "done") { await loadResult(id); setCenter(state.center === "rep" ? "rep" : state.center); if (state.center === "vis") openViewer(); return; }
+    if (j && j.state === "done") {
+      await loadResult(id);
+      renderLive();                         // the live solve of another run gives way
+      setCenter(state.center === "rep" ? "rep" : state.center);
+      return;
+    }
     // queued, running, stopped or failed: the console follows it and the
     // Result Viewer shows its inputs (the analyses it finishes replace them)
     attach(id, j && !(j.analyses || []).length);
@@ -2236,7 +2351,12 @@
       if (state.pressPlayer) { state.pressPlayer.stop(); state.pressPlayer = null; }
       try {
         const m = await (await fetch(`/api/jobs/${state.resultJob}/view/meta.json`, { cache: "no-store" })).json();
-        if (m.press) state.pressPlayer = await window.PressPlayer(host, state.resultJob, m.press);
+        if (m.press && m.press.steps3d && window.Press3D) {
+          state.pressPlayer = await window.Press3D(host, state.resultJob, m, { name: state.result && state.result.name });
+          const t = $("#pressPlayerHint");
+          if (t) t.textContent = "every step of the compression, the whole box in 3D: play, step or scrub; whole box, cut at the middle or the particles alone; materials or von Mises stress";
+        }
+        if (!state.pressPlayer && m.press) state.pressPlayer = await window.PressPlayer(host, state.resultJob, m.press);
       } catch (e) { host.innerHTML = `<div class="hint">The compression could not be shown: ${esc(String(e))}</div>`; }
     });
     const cure = p.cure && s.time_s ? cureBox(p) : "";
@@ -2251,7 +2371,7 @@
       <p class="hint">Strains are true (logarithmic) strains of each region with the spheres in it (a sphere belongs to the resin around it); the resin alone strains more where rigid spheres take none of the deformation. Resins: ${resins} at the equivalent shear rate ${fmt(p.gd_eq)} 1/s; compression viscosity ${fmt(p.eta_compression_Pa_s)} Pa·s at the end (−σzz over the strain rate${p.lateral === "none" ? "" : `; the plain resin's is ${p.lateral === "x" ? 4 : 3} times its viscosity, ${fmt((p.lateral === "x" ? 4 : 3) * Math.min(...Object.values(p.resins || { a: 1 })))} Pa·s`}). Where the spheres crowd closer than a voxel or two the resin films between them are not resolved and the stress comes out high, as in the voxel viscosity.
         ${p.n_spheres} spheres, ${p.crossed_resin} now surrounded by another resin than at the start${pores ? `; pores ${fmt(100 * p.pore_fraction[0])} → ${fmt(100 * p.pore_fraction[1])} vol%` : ""}. In a periodic RVE an incompressible resin keeps its volume share, and a sphere moves with the resin around it: the regions change shape, not size.</p>
       ${cure}
-      <div class="bt" style="margin-top:10px">The compression in 3D <span class="hint">the box at every step: its three outer faces, or the three middle sections; materials or von Mises stress</span></div><div id="pressPlayer"></div></div>`;
+      <div class="bt" style="margin-top:10px">The compression in 3D <span class="hint" id="pressPlayerHint">the box at every step: its three outer faces, or the three middle sections; materials or von Mises stress</span></div><div id="pressPlayer"></div></div>`;
   }
   // the compression with cure: each resin's conversion and viscosity, the
   // closing and the temperature against time
@@ -3998,7 +4118,7 @@
   /* ================================================================ viewer */
   function syncViewerControls() {
     const S = V.state;
-    $("#vField").value = state.demShown ? "@dem" : S.field;
+    $("#vField").value = state.demShown ? "@dem" : state.pressShown ? "@press" : S.field;
     $("#vLog").checked = S.log;
     $("#vRange").value = S.range;
     $("#vFaces").checked = S.faces;
@@ -4034,6 +4154,9 @@
       if (el) { el.value = S.light[k]; if (out) out.textContent = S.light[k].toFixed(2); }
     });
     const sh = $("#vShade"); if (sh) sh.checked = !!S.light.shade;
+    const vc = $("#vVoxCrisp"); if (vc) vc.checked = S.voxCrisp !== false;
+    const vg = $("#vVoxGrid"); if (vg) { vg.checked = !!S.voxGrid; vg.disabled = S.voxCrisp === false; }
+    ["vVoxCrispRow", "vVoxGridRow"].forEach((id) => { const r = $("#" + id); if (r) r.style.display = S.surfStyle === "voxels" ? "" : "none"; });
     const ed = $("#vEdges"); if (ed) ed.checked = !!S.light.edges;
     // arrows exist only for a quantity that was solved as a vector
     const vm = V.vectorFor ? V.vectorFor(S.field) : null;
@@ -4074,6 +4197,27 @@
       demView = await window.DemPlayer(host, id, m.dem, m.built, state.result && state.result.name, { fill: true });
     } catch (e) { host.innerHTML = `<div class="hint" style="margin:auto">The particle dynamics could not be shown: ${esc(e.message)}</div>`; }
   }
+  /* The compression step by step in the 3D/2D View: the whole box of every
+     step (a run that kept them), chosen in the displayed-quantity list like a
+     field or with the switch of its Display section. */
+  let pressView = null;
+  async function showPressInView(on) {
+    const host = $("#vPress");
+    if (!host) return;
+    state.pressShown = !!on;
+    const sw = $("#vPressOn");
+    if (sw) sw.checked = !!on;
+    if (!on) { if (pressView) { pressView.stop(); pressView = null; } host.hidden = true; host.innerHTML = ""; return; }
+    if (state.demShown) await showDemInView(false);
+    host.hidden = false;
+    const id = state.resultJob;
+    try {
+      const m = await (await fetch(`/api/jobs/${id}/view/meta.json`, { cache: "no-store" })).json();
+      if (pressView) { pressView.stop(); pressView = null; }
+      pressView = await window.Press3D(host, id, m, { fill: true, name: state.result && state.result.name });
+      if (!pressView) host.innerHTML = `<div class="hint" style="margin:auto">This run kept no steps of a compression in 3D.</div>`;
+    } catch (e) { host.innerHTML = `<div class="hint" style="margin:auto">The compression could not be shown: ${esc(e.message)}</div>`; }
+  }
   const hasDem = (r) => !!(r && r.properties && r.properties.viscosity && r.properties.viscosity.dem && r.properties.viscosity.dem.anim);
   async function openViewer(prefer) {
     // a finished run followed here whose result the page has not loaded yet
@@ -4097,6 +4241,7 @@
       return;
     }
     if (state.demShown && state.viewerJob !== id) await showDemInView(false);
+    if (state.pressShown && state.viewerJob !== id) await showPressInView(false);
     if (!id || !state.result || !state.result.view) {
       V.showEmpty(`${I("cube")}<div><b>No structure is displayed.</b><br>A preset is selected on the Home tab; <i>Generate structure</i> or <i>Run analyses</i> then fills this view.</div>`);
       info.textContent = "";
@@ -4114,8 +4259,10 @@
         const groups = {};
         meta.fields.forEach((f) => { (groups[f.group] = groups[f.group] || []).push(f); });
         $("#vField").innerHTML = `<option value="">Structure (phases)</option>` + Object.entries(groups).map(([g, fs]) => `<optgroup label="${esc(g)}">${fs.map((f) => `<option value="${f.key}">${esc(f.label)}</option>`).join("")}</optgroup>`).join("")
-          + (meta.dem ? `<optgroup label="Particle dynamics"><option value="@dem">Sheared particles (the particle-dynamics box)</option></optgroup>` : "");
+          + (meta.dem ? `<optgroup label="Particle dynamics"><option value="@dem">Sheared particles (the particle-dynamics box)</option></optgroup>` : "")
+          + (meta.press && meta.press.steps3d ? `<optgroup label="Compression"><option value="@press">The compression step by step (the whole box)</option></optgroup>` : "");
         $("#vDemSec").style.display = meta.dem ? "" : "none";
+        $("#vPressSec").style.display = meta.press && meta.press.steps3d ? "" : "none";
         $("#vPhaseToggles").innerHTML = meta.surfaces.map((sf) => { const l = meta.labels[sf.label]; return `<label class="phtog"><input type="checkbox" data-hide="${sf.label}" checked><i style="background:${l.color}"></i>${esc(l.name)}</label>`; }).join("") || '<div class="hint">No surfaces.</div>';
         $("#vNetworkRow").style.display = meta.network ? "" : "none";
         $("#vVolumeRow").style.display = V.can.volume() ? "" : "none";
@@ -4225,8 +4372,10 @@
     $("#vAxis2d").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.axis2d = b.dataset.a; syncViewerControls(); V.syncSliders(); V.refresh(false); });
     $("#v2dSlice").addEventListener("input", (e) => { S.slices[S.axis2d] = +e.target.value; sliceMoved(); });
     $("#vField").addEventListener("change", (e) => {
-      if (e.target.value === "@dem") { showDemInView(true); return; }
+      if (e.target.value === "@dem") { showPressInView(false); showDemInView(true); return; }
+      if (e.target.value === "@press") { showPressInView(true); return; }
       if (state.demShown) showDemInView(false);
+      if (state.pressShown) showPressInView(false);
       S.field = e.target.value;
       const f = S.meta && S.meta.fields.find((x) => x.key === S.field);
       // a field reads best on the RVE faces; surfaces return for the structure
@@ -4250,6 +4399,7 @@
     // a control missing from an older cached page must not stop the rest of the UI
     const tog = (id, key) => { const el = $("#" + id); if (el) el.addEventListener("change", (e) => { S[key] = e.target.checked; V.refresh(true); }); };
     tog("vFaces", "faces"); tog("vClip", "clip"); tog("vParticles", "particles"); tog("vColorParticles", "colorParticles");
+    tog("vVoxCrisp", "voxCrisp"); tog("vVoxGrid", "voxGrid");
     const styleSeg = $("#vSurfStyle");
     if (styleSeg) styleSeg.addEventListener("click", (e) => {
       const b = e.target.closest("[data-style]");
@@ -4363,9 +4513,48 @@
     $("#rptabs [data-r=runs]").innerHTML = `${I("runs")}Runs`;
     $("#hScene").innerHTML = `${I("view3d")}Scene`;
     $("#hDem").innerHTML = `${I("permeability")}Particle dynamics`;
+    // runs kept on disk: a folder path, or a run saved as a ZIP
+    $("#runsOpen").innerHTML = `${I("open")}Open folder`;
+    $("#runsImport").innerHTML = `${I("zip")}Import ZIP`;
+    $("#runsOpen").addEventListener("click", () => { const r = $("#runsOpenRow"); r.hidden = !r.hidden; if (!r.hidden) $("#runsOpenPath").focus(); });
+    const openRuns = async () => {
+      const p = $("#runsOpenPath").value.trim();
+      if (!p) return;
+      try {
+        const r = await api("POST", "/api/runs/open", { path: p });
+        toast(r.kind === "run" ? "The run is in the list." : `${r.runs} run${r.runs === 1 ? "" : "s"} of ${r.folder} are in the list (under Other work folders).`);
+        $("#runsOpenRow").hidden = true; $("#runsOpenPath").value = "";
+        await pollRuns();
+        if (r.kind === "run" && r.ids && r.ids[0]) openJob(r.ids[0]);
+      } catch (err) { toast(err.message, 8000); }
+    };
+    $("#runsOpenGo").addEventListener("click", openRuns);
+    $("#runsOpenPath").addEventListener("keydown", (e) => { if (e.key === "Enter") openRuns(); });
+    $("#runsImport").addEventListener("click", () => $("#runsImportFile").click());
+    $("#runsImportFile").addEventListener("change", async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!f) return;
+      const fd = new FormData();
+      fd.append("file", f);
+      toast(`Unpacking ${f.name} …`);
+      try {
+        const r = await (await fetch("/api/runs/import", { method: "POST", body: fd })).json();
+        if (!r.ok) throw new Error(r.error || "the import failed");
+        toast(r.view ? "The run is in the list, with its 3D view." : "The run is in the list (results, figures and report; a Complete ZIP holds no 3D view - Export - Run folder ZIP does).", 7000);
+        await pollRuns();
+        openJob(r.id);
+      } catch (err) { toast("The ZIP could not be imported: " + err.message, 8000); }
+    });
     $("#vDemOn").addEventListener("change", async (e) => {
+      if (e.target.checked && state.pressShown) await showPressInView(false);
       await showDemInView(e.target.checked);
       $("#vField").value = state.demShown ? "@dem" : V.state.field;
+    });
+    $("#hPress").innerHTML = `${I("view3d")}Compression steps`;
+    $("#vPressOn").addEventListener("change", async (e) => {
+      await showPressInView(e.target.checked);
+      $("#vField").value = state.pressShown ? "@press" : V.state.field;
     });
     $("#hPhases").innerHTML = `${I("grains")}Surfaces`;
     $("#hSections").innerHTML = `${I("matrix")}Section planes`;
@@ -4589,7 +4778,7 @@
     });
 
     document.body.addEventListener("click", async (e) => {
-      const b = e.target.closest("[data-open],[data-stop],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel],[data-doestop],[data-fgroup]");
+      const b = e.target.closest("[data-open],[data-stop],[data-restart],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel],[data-doestop],[data-fgroup]");
       if (!b) return;
       if (b.dataset.fgroup) {
         e.stopPropagation();
@@ -4627,6 +4816,17 @@
       if (b.dataset.optopen) { state.opt.data = null; await openDoe(b.dataset.optopen); renderLeft(); return; }
       if (b.dataset.optqueue) { await queueOptPoint(b.dataset.optqueue); return; }
       if (b.dataset.stop) { e.stopPropagation(); await api("POST", `/api/jobs/${b.dataset.stop}/stop`); pollRuns(); }
+      else if (b.dataset.restart) {
+        // the run starts again in its place and is followed like a new one
+        e.stopPropagation();
+        try {
+          const r = await api("POST", `/api/jobs/${b.dataset.restart}/restart`, {});
+          if (state.resultJob === b.dataset.restart) { state.result = null; state.resultJob = null; state.viewerJob = null; }
+          toast("The run is started again in its own folder; a structure it had finished is used again.");
+          attach(r.id);
+        } catch (err) { toast("The run could not be started again: " + err.message, 8000); }
+        pollRuns();
+      }
       else if (b.dataset.doestop) {
         e.stopPropagation();
         try { const r = await api("POST", `/api/doe/${b.dataset.doestop}/stop`); toast(`The DOE study is stopped: ${r.stopped} case${r.stopped === 1 ? "" : "s"}.`); }
@@ -4755,6 +4955,7 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
     $("#runsList").innerHTML = runsHTML();
     setInterval(pollRuns, 4000);
     setInterval(pollActive, 1000);
+    setInterval(() => { if (state.active && (state.dtab === "term" || state.activeState === "running")) pollProc(); }, 2000);
     setInterval(pollDoe, 5000);
     const last = localStorage.getItem("mpsim.active");
     const lj = last && state.jobs.find((j) => j.id === last);

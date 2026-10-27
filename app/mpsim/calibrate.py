@@ -430,6 +430,7 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
             gen_labels, ginfo = GEN.generate(plan["N"], plan["h_um"], gen_phases, seed=spec["rve"]["seed"],
                                              log=log, should_stop=should_stop, contacts=spec["options"]["contacts"],
                                              gap_vox=spec["options"].get("particle_gap_vox") or 2.0,
+                                             overlap_steps=PL.overlap_steps(spec["options"]),
                                              want_contact_faces=want_cf, nz=int(plan["Nz"]) if film else None,
                                              skin=plan.get("skin"), dispersion=spec["rve"].get("dispersion"),
                                              shear=PL.shear_packing(spec, log, lambda *a, **k: None,

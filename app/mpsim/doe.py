@@ -88,6 +88,10 @@ def _fmt(v):
     return f"{round(v, 6):g}"
 
 
+# entries a DOE sets to whole numbers
+INTEGER_PATHS = ("rve.seed", "rve.N")
+
+
 def expand(parameters, design="full", samples=12, seed=1):
     """-> list of {values: {path: value}, label: str}"""
     parameters = [p for p in parameters if p.get("path")]
@@ -119,6 +123,8 @@ def expand(parameters, design="full", samples=12, seed=1):
         combos = list(itertools.product(*[levels(p) for p in parameters]))
     out = []
     for c in combos[:MAX_CASES]:
+        # a seed or a grid size is a whole number
+        c = tuple(float(round(v)) if path in INTEGER_PATHS else v for path, v in zip(paths, c))
         values = {path: float(v) for path, v in zip(paths, c)}
         label = " · ".join(f"{lab} {_fmt(v)}" for lab, v in zip(labels, c))
         out.append({"values": values, "label": label})
@@ -223,6 +229,8 @@ def parameter_catalogue(form):
         {"path": "rve.voxel_um", "label": "Voxel size", "unit": "µm", "group": "Domain"},
         {"path": "rve.L_um", "label": "RVE edge length", "unit": "µm", "group": "Domain"},
         {"path": "rve.N", "label": "Grid size", "unit": "voxels", "group": "Domain"},
+        {"path": "rve.seed", "label": "Random seed (one realisation of the structure)", "unit": "-", "group": "Domain",
+         "integer": True},
         {"path": "rve.T_um", "label": "Film thickness (thin-film domain)", "unit": "µm", "group": "Domain"},
         {"path": "rve.shear_strain", "label": "Strain of the shear flow (arrangement after shear flow)", "unit": "-",
          "group": "Domain"},

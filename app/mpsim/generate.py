@@ -581,6 +581,8 @@ def _generate_sections(N, h, phases, seed=0, log=print, **kw):
                        "mean": (shr["mean"] * shr["n"] + s_["mean"] * s_["n"]) / tot,
                        "below_90": int(shr.get("below_90", 0)) + int(s_.get("below_90", 0))}
         info["gap_vox"] = ig.get("gap_vox")
+        info["overlap_vox"] = max(int(info.get("overlap_vox") or 0), int(ig.get("overlap_vox") or 0))
+        info["overlap_steps"] = ig.get("overlap_steps")
         secs.append({"axis": sec["axis"], "from": sec["from"], "to": sec["to"],
                      "phases": [phases[i].get("name", str(i)) for i in idx],
                      "vf_in_section": float(sum(ig["phases"][k]["vf_voxel"] for k in range(len(idx))))
@@ -1166,12 +1168,14 @@ def _conflict_records(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, pl
 
 
 def raster_track_par(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces,
-                     phase_arr, pid0, csum, ccnt, fsum, tsum, size, fac, floor, loser, buf, zwall=False):
-    """_raster_track on all cores: the same owner map, sums and count."""
+                     phase_arr, pid0, csum, ccnt, fsum, tsum, size, fac, floor, loser, buf, zwall=False, inset=0.0):
+    """_raster_track on all cores: the same owner map, sums and count.
+    inset > 0: every shape drawn that much smaller (an overlap of twice it
+    allowed between the full shapes)."""
     n = len(codes)
     phase_of[pid0:pid0 + n] = phase_arr
     rec_m, rec = _conflict_records(owner, phase_of, overlap_of, h, codes, centers, Rs, Ps, planes, nfaces,
-                                   np.zeros(n), phase_arr, pid0, zwall, True)
+                                   np.full(n, float(inset)), phase_arr, pid0, zwall, True)
     return int(_track_replay(rec_m, rec, float(h), centers, pid0, csum, ccnt, fsum, tsum, size, fac, float(floor),
                              loser, owner.shape[0] * float(h), owner.shape[2] * float(h), zwall))
 
@@ -1278,7 +1282,7 @@ SHRINK_FLOOR = 0.92
 
 def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nfaces, ph_arr, pid0,
                     log=None, max_rounds=160, net_of=None, apart=False, apart_rounds=300, zwall=False,
-                    rotmode=None, shrink=True, names=None):
+                    rotmode=None, shrink=True, names=None, inset=0.0):
     """Push and turn particles off the voxels they share until no voxel is
     claimed twice; what pushing cannot clear is cleared by shrinking.
 
@@ -1308,6 +1312,9 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
     most `apart_rounds` rounds (counted, not timed, so that the structure does
     not depend on the speed of the PC), and the overlap-free state with the
     fewest touching pairs is kept.
+    inset > 0 (progressive overlap): the shapes are pushed apart as drawn
+    `inset` smaller, so that the full shapes may overlap by up to twice it;
+    the owner map then holds the smaller shapes (the caller draws the full ones).
     Returns (owner filled, remaining shared voxels, rounds, touching pairs or
     -1, shrink {"n": particles shrunk, "min": smallest size factor, "mean":
     mean factor of those shrunk})."""
@@ -1341,7 +1348,7 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
         ts = np.zeros((n, 3))
         lo = np.zeros(n, np.int64)
         c_ = raster_track_par(owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces,
-                              ph_arr, pid0, cs, cc, fs, ts, size, fac, SHRINK_FLOOR, lo, buf, zwall)
+                              ph_arr, pid0, cs, cc, fs, ts, size, fac, SHRINK_FLOOR, lo, buf, zwall, inset)
         lost[0] = lo
         return c_, cs, cc, fs, ts
 
@@ -1893,14 +1900,45 @@ def separate_spheres(pos, rad, L, Lz=None, Wt=0.0, max_iter=200, tol=1e-6):
     return pos, left, worst
 
 
-def contact_ratio(pos, rad, L, Lz=None):
-    """Smallest centre distance over the sum of radii (inf with no pair in
-    reach): the factor all spheres can grow by before two of them meet."""
+def contact_ratio(pos, rad, L, Lz=None, slack=0.0):
+    """Smallest centre distance (plus `slack`, an overlap allowed) over the
+    sum of radii (inf with no pair in reach): the factor all spheres can grow
+    by before two of them meet - or overlap by more than `slack`."""
     Lz = float(L if Lz is None else Lz)
     i, j, d = _sphere_pairs(pos, rad, np.array([L, L, Lz]))
     if d.size == 0:
         return math.inf
-    return float(np.min(d / (rad[i] + rad[j])))
+    return float(np.min((d + slack) / (rad[i] + rad[j])))
+
+
+def escalate_overlap(pack, scale, steps, log=None, should_stop=None):
+    """Progressive overlap (Structure - Gap between particles): a packing
+    that falls short of its target with no overlap is packed again with
+    particles allowed to overlap by 1 voxel, then 2, ... up to
+    steps["max_vox"], making steps["tries"] packings at each level - the first
+    from the best state so far, the others from new random positions - until
+    one reaches the target. pack(k, t) -> (state, size scale reached). Returns
+    (state or None, scale, k): the first state that reached the target, else
+    the one that came closest (k its level, None when no level beat the
+    packing without overlap)."""
+    log = log or (lambda *a: None)
+    tries = max(1, int(steps.get("tries") or 2))
+    kmax = max(1, int(steps.get("max_vox") or 3))
+    best = (None, scale, 0)
+    log(f"  the target packing was not reached without overlap (size scale {scale:.4f}): progressive overlap, "
+        f"up to {kmax} voxel(s), {tries} tr{'y' if tries == 1 else 'ies'} per step")
+    for k in range(1, kmax + 1):
+        for t in range(tries):
+            if should_stop is not None and should_stop():
+                raise InterruptedError
+            state, s = pack(k, t)
+            log(f"  overlap up to {k} voxel{'s' if k > 1 else ''}, try {t + 1}/{tries}: size scale {s:.4f}")
+            if s > best[1]:
+                best = (state, s, k)
+            if s >= 1.0:
+                return state, 1.0, k
+    return best
+
 
 
 def force_biased_spheres(L, d_excl, rng, growth=1.03, max_outer=20000,
@@ -2671,7 +2709,8 @@ def rasterize_owner(N, h, info, phases, nz=None, offset_um=0.0, shape=None):
 
 
 def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart",
-             want_contact_faces=False, nz=None, skin=0, shear=None, dispersion=None, gap_vox=SEP_APART):
+             want_contact_faces=False, nz=None, skin=0, shear=None, dispersion=None, gap_vox=SEP_APART,
+             overlap_steps=None):
     """Build one realisation.
 
     `phases` items: shape, size_um, dist, vf, orientation {mode, spread_deg},
@@ -2698,6 +2737,12 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     gap_vox: the surface gap, in voxels, that contacts="apart" keeps between
     particles wherever the loading allows.
 
+    overlap_steps: {"tries", "max_vox"} or None - progressive overlap. A
+    loading the packing cannot reach with no overlap is packed again with an
+    overlap of 1 voxel allowed, then 2, ... (escalate_overlap) instead of
+    drawing every particle smaller; info["overlap_vox"] is the overlap the
+    structure needed (0: none).
+
     skin: voxels of matrix kept at each face of a film. A particle that
     touches a face touches the electrode plate there, through a contact whose
     area is set by the voxel size: on one 40 vol% film, 0.6 % of the face
@@ -2709,10 +2754,11 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         dispersion = None
     if nz is None and any(ph.get("section") for ph in phases):
         return _generate_sections(N, h, phases, seed=seed, log=log, should_stop=should_stop, contacts=contacts,
-                                  want_contact_faces=want_contact_faces, gap_vox=gap_vox)
+                                  want_contact_faces=want_contact_faces, gap_vox=gap_vox, overlap_steps=overlap_steps)
     if dispersion is not None and dispersion["mode"] == "region" and nz is None:
         return _generate_region(N, h, phases, dispersion, seed=seed, log=log, should_stop=should_stop,
-                                contacts=contacts, want_contact_faces=want_contact_faces, gap_vox=gap_vox)
+                                contacts=contacts, want_contact_faces=want_contact_faces, gap_vox=gap_vox,
+                                overlap_steps=overlap_steps)
     if nz is not None and skin and int(nz) - 2 * int(skin) >= 2:
         ks = int(skin)
         inner = int(nz) - 2 * ks
@@ -2720,7 +2766,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         lab, info = generate(N, h, [dict(ph, vf=float(ph["vf"]) * grow) for ph in phases], seed=seed,
                              log=log, should_stop=should_stop, contacts=contacts,
                              want_contact_faces=want_contact_faces, nz=inner, skin=0, dispersion=dispersion,
-                             gap_vox=gap_vox)
+                             gap_vox=gap_vox, overlap_steps=overlap_steps)
         pad = ((0, 0), (0, 0), (ks, ks))
         lab = np.pad(lab, pad)
         if info.get("contact_mask") is not None:
@@ -2765,7 +2811,9 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     n_placed = np.zeros(nph + 1, np.int64)
     jammed = np.zeros(nph + 1, np.bool_)
     sep = float(gap_vox) if contacts == "apart" else 0.0          # voxels
-    info = {"route": None, "phases": [dict() for _ in phases], "contacts_mode": contacts, "gap_vox": sep}
+    info = {"route": None, "phases": [dict() for _ in phases], "contacts_mode": contacts, "gap_vox": sep,
+            "overlap_vox": 0, "overlap_steps": dict(overlap_steps) if overlap_steps else None}
+    ov_k = 0                                  # the overlap the packing needed, in voxels
     nominal, planes, nfaces, poly_meta = phase_templates(phases, rng, V=V)
     info["poly_meta"] = poly_meta
 
@@ -2955,6 +3003,37 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             pos, scale = mc_compress(pos, d_excl, L, scale, rng, log=log, should_stop=should_stop,
                                      Lz=Lz_pack, Wt=Wt, rho=rho)
             log(f"  growth stopped at size scale {s0:.4f}; Monte-Carlo compression reached {scale:.4f}")
+        if scale < 1.0 and overlap_steps:
+            # progressive overlap: the exclusion diameters k voxels smaller,
+            # so that two spheres may overlap by up to k voxels
+            d_ex0, pos0_, sc0 = d_excl.copy(), pos.copy(), scale
+
+            def pack_k(k, t):
+                d_k = np.maximum(d_ex0 - k * h, 0.5 * diam)
+                if t == 0:
+                    p0, g = pos0_, 0.999 * sc0 * float(np.min(d_ex0 / d_k))
+                else:
+                    p0 = sample_positions(n, rho, L, T, rng) if rho is not None else rng.random((n, 3)) * box
+                    if film:
+                        p0[:, 2] = np.clip(p0[:, 2], 0.5 * d_k, T - 0.5 * d_k)
+                    g = 0.55
+                p, _, s_ = clump_pack(float(L), np.ascontiguousarray(p0, float), np.tile(np.eye(3), (n, 1, 1)),
+                                      d_k.copy(), np.zeros(n, np.int64), [(np.zeros((1, 3)), np.array([0.5]))],
+                                      np.zeros(n), ph_arr, overlap_of.astype(np.int64), np.full(n, -1, np.int64),
+                                      np.full(n, 0.5), log=None, should_stop=should_stop, tol=1e-3, Lz=Lz_pack,
+                                      Wt=Wt, g0=min(max(g, 0.05), 0.999))
+                p = np.ascontiguousarray(p)
+                if s_ < 1.0 and rho is None:
+                    p, s_ = mc_compress(p, d_k, L, 0.999 * s_, rng, should_stop=should_stop, Lz=Lz_pack, Wt=Wt)
+                return (np.ascontiguousarray(p), d_k), float(s_)
+
+            st_, sc_, k_ = escalate_overlap(pack_k, scale, overlap_steps, log=log, should_stop=should_stop)
+            if st_ is not None:
+                pos, d_excl = st_
+                scale, ov_k = sc_, k_
+                log(f"  particles may overlap by up to {k_} voxel{'s' if k_ > 1 else ''} ({k_ * h:.3g} µm): "
+                    + ("the target loading is reached" if scale >= 1.0
+                       else f"the closest the packing came (size scale {scale:.4f})"))
         if scale < 1.0:
             log(f"  !! the target packing fraction was not reached; packing stopped at a size scale of {scale:.3f}")
             diam *= scale
@@ -3016,25 +3095,37 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         want = float(sum(target[i] for i in part_idx))
         # the radius correction below may grow the spheres only until two of
         # them would touch: never into each other
-        f_cap = contact_ratio(pos, 0.5 * diam, float(L), float(Lz_pack)) * (1.0 - 1e-9)
-        f = min(1.0, f_cap)
-        # A sphere a few voxels across rasterises to less than its analytic
-        # volume; scale the radius until the voxel fraction (what the solvers
-        # see) matches the target.
-        for it in range(8):
-            owner[owner >= pid] = 0
-            Ps = np.zeros((n, 6))
-            Ps[:, 0] = 0.5 * diam * f
-            _, conf = raster_all(owner, phase_of, overlap_of, net_of, float(h), codes, pos, Rs, Ps,
-                                 planes, nfaces, np.zeros(n), ph_arr, pid, buf, film)
-            got = float(np.count_nonzero(owner >= pid))
-            if want <= 0 or abs(got / want - 1.0) < 0.002:
-                break
-            f *= (want / max(got, 1.0)) ** (1.0 / 3.0)
-            # when the packing fell short, growing the radii to make up the
-            # fraction would push the spheres into each other: only the
-            # discretisation correction is allowed then
-            f = min(max(f, 0.75), 1.35 if scale >= 1.0 else 1.0, max(f_cap, 0.75))
+        f = None
+        while True:
+            f_cap = contact_ratio(pos, 0.5 * diam, float(L), float(Lz_pack), slack=ov_k * h) * (1.0 - 1e-9)
+            f = min(1.0, f_cap) if f is None else min(max(f, min(1.0, f_cap)), f_cap)
+            # A sphere a few voxels across rasterises to less than its analytic
+            # volume; scale the radius until the voxel fraction (what the solvers
+            # see) matches the target.
+            for it in range(8):
+                owner[owner >= pid] = 0
+                Ps = np.zeros((n, 6))
+                Ps[:, 0] = 0.5 * diam * f
+                _, conf = raster_all(owner, phase_of, overlap_of, net_of, float(h), codes, pos, Rs, Ps,
+                                     planes, nfaces, np.zeros(n), ph_arr, pid, buf, film)
+                got = float(np.count_nonzero(owner >= pid))
+                if want <= 0 or abs(got / want - 1.0) < 0.002:
+                    break
+                f *= (want / max(got, 1.0)) ** (1.0 / 3.0)
+                # when the packing fell short, growing the radii to make up the
+                # fraction would push the spheres into each other: only the
+                # discretisation correction is allowed then
+                f = min(max(f, 0.75), 1.35 if scale >= 1.0 else 1.0, max(f_cap, 0.75))
+            # overlapping spheres share voxels, so the loading in voxels comes
+            # out short of the packed one: one voxel more of overlap lets the
+            # radii make it up (the positions stay; they are clean for it)
+            if (ov_k and overlap_steps and want > 0 and got < 0.998 * want
+                    and ov_k < int(overlap_steps.get("max_vox") or 3)):
+                ov_k += 1
+                log(f"  the shared voxels leave the loading {100 * (1 - got / want):.2f} % short: overlap up to "
+                    f"{ov_k} voxels for the radii to make it up")
+                continue
+            break
         conflicts = int(conf)
         info["radius_factor"] = f
         if want > 0 and got < 0.998 * want and f >= f_cap * (1.0 - 1e-6) and f_cap < 1.349:
@@ -3210,6 +3301,35 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 C, Rs, scale = clump_pack(float(L), C, Rs, s, tpl, templates, gap_user, ph_arr,
                                           overlap_of.astype(np.int64), rotm, circ, log=log,
                                           should_stop=should_stop, Lz=Lz_pack, Wt=Wt, recover=True)
+            if scale < 1.0 and overlap_steps:
+                # progressive overlap: the clump spheres' gap k voxels below
+                # the gap asked for (never below half the smallest sphere of
+                # a clump), so that two particles may overlap by up to k voxels
+                C0_, Rs0_, sc0 = C.copy(), Rs.copy(), scale
+                rmin = np.array([float(np.min(templates[t_][1])) for t_ in tpl]) * s
+
+                def pack_k(k, t):
+                    g_k = np.maximum(gap_user - k * h, -rmin)
+                    if t == 0:
+                        c0, r0, g = C0_, Rs0_, 0.999 * sc0
+                    else:
+                        c0 = (sample_positions(len(codes), rho, L, T, rng) if rho is not None
+                              else rng.random((len(codes), 3)) * box)
+                        if film:
+                            he = 0.5 * circ * s
+                            c0[:, 2] = np.minimum(he, 0.5 * T) + rng.random(len(codes)) * np.maximum(T - 2.0 * he, 0.0)
+                        r0, g = Rs0_.copy(), 0.55
+                    c_, r_, s_ = clump_pack(float(L), np.ascontiguousarray(c0, float), np.ascontiguousarray(r0), s, tpl,
+                                            templates, g_k, ph_arr, overlap_of.astype(np.int64), rotm, circ, log=None,
+                                            should_stop=should_stop, Lz=Lz_pack, Wt=Wt, recover=True, g0=g)
+                    return (c_, r_), float(s_)
+
+                st_, sc_, k_ = escalate_overlap(pack_k, scale, overlap_steps, log=log, should_stop=should_stop)
+                if st_ is not None:
+                    (C, Rs), scale, ov_k = st_, sc_, k_
+                    log(f"  particles may overlap by up to {k_} voxel{'s' if k_ > 1 else ''} ({k_ * h:.3g} µm) at "
+                        f"their packing spheres; corners the spheres do not cover may overlap more, and a voxel "
+                        f"two particles share belongs to the first")
             info["pack_scale"] = scale
             if scale < 1.0:
                 log(f"  !! the target could not be packed without overlap; particles are {scale:.3f} x the "
@@ -3223,12 +3343,48 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 grown = np.full(int(need * 1.5), -1, np.int32)
                 grown[:len(phase_of)] = phase_of
                 phase_of = grown
-            owner, conflicts, rounds, touch, shr = repair_overlaps(
-                owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces, ph_arr, pid, log=log,
-                net_of=net_of, apart=contacts == "apart", zwall=film, rotmode=rotm,
-                names=[ph.get("name") or f"phase {i}" for i, ph in enumerate(phases)])
-            log(f"  exact-shape overlap repair (push and turn): {rounds} round(s), {conflicts:,} shared voxels left"
-                + (f", {touch:,} touching voxel pairs" if touch >= 0 else ""))
+            if ov_k:
+                # overlap allowed: drawn where the packing put them, no repair
+                _, conflicts = raster_all(owner, phase_of, overlap_of, net_of, float(h), codes, C, Rs, Ps, planes,
+                                          nfaces, np.zeros(len(codes)), ph_arr, pid, buf, film)
+                shr = {"n": 0, "min": 1.0, "mean": 1.0, "below_90": 0}
+                log(f"  drawn with the overlap allowed: {conflicts:,} voxels shared by two particles")
+            else:
+                names_ = [ph.get("name") or f"phase {i}" for i, ph in enumerate(phases)]
+                C_pre, Rs_pre, Ps_pre = C.copy(), Rs.copy(), Ps.copy()
+                owner, conflicts, rounds, touch, shr = repair_overlaps(
+                    owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces, ph_arr, pid, log=log,
+                    net_of=net_of, apart=contacts == "apart", zwall=film, rotmode=rotm,
+                    names=names_, shrink=not overlap_steps)
+                log(f"  exact-shape overlap repair (push and turn): {rounds} round(s), {conflicts:,} shared voxels "
+                    f"left" + (f", {touch:,} touching voxel pairs" if touch >= 0 else ""))
+                if overlap_steps and conflicts:
+                    # progressive overlap: pushing and turning could not clear
+                    # every shared voxel, which would otherwise shrink the
+                    # particles involved - repaired again from the packing with
+                    # an overlap of 1 voxel allowed, then 2, ... (shapes drawn
+                    # half of it smaller while they are pushed); the last step
+                    # shrinks what is still caught
+                    kmax = max(1, int(overlap_steps.get("max_vox") or 3))
+                    for k in range(1, kmax + 1):
+                        log(f"  {conflicts:,} shared voxels could not be cleared by pushing and turning: repaired "
+                            f"again with an overlap of up to {k} voxel{'s' if k > 1 else ''} allowed")
+                        C, Rs, Ps = C_pre.copy(), Rs_pre.copy(), Ps_pre.copy()
+                        owner, conflicts, rounds, touch, shr = repair_overlaps(
+                            owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces, ph_arr, pid,
+                            log=log, net_of=net_of, apart=False, zwall=film, rotmode=rotm, names=names_,
+                            shrink=k == kmax, inset=0.5 * k * h)
+                        log(f"  overlap up to {k} voxel{'s' if k > 1 else ''}: {rounds} round(s), {conflicts:,} shared "
+                            f"voxels left")
+                        if conflicts == 0:
+                            break
+                    ov_k = k
+                    # the full shapes, a voxel two of them share to the first
+                    owner[:] = 0
+                    _, conflicts = raster_all(owner, phase_of, overlap_of, net_of, float(h), codes, C, Rs, Ps, planes,
+                                              nfaces, np.zeros(len(codes)), ph_arr, pid, buf, film)
+                    log(f"  particles may overlap by up to {k} voxel{'s' if k > 1 else ''} ({k * h:.3g} µm): "
+                        f"{conflicts:,} voxels shared by two particles, each given to one of them")
             info["shrunk"] = shr
             if shr["n"]:
                 log(f"  !! {shr['n']} of {len(codes)} particles were caught in each other at their corners and "
@@ -3238,12 +3394,13 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             for i in part_idx:
                 n_placed[i] = int(np.count_nonzero(ph_arr == i))
             keep(codes, Ps, Rs, C, ph_arr)
-            if conflicts:
+            if conflicts and not ov_k:
                 log(f"  !! {conflicts:,} voxels claimed by two particles (corners the clumps do not cover) "
                     f"were kept by the first particle")
     else:
         info["route"] = "random-field network" if any(net_of[:nph]) else "matrix only"
     info["voxel_conflicts"] = int(conflicts)
+    info["overlap_vox"] = int(ov_k)
 
     # ---- v3-style separation (option) ------------------------------------
     removed = 0

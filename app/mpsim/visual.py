@@ -604,7 +604,7 @@ class ViewWriter:
                             "colors": list(colors), "speed_p99": float(np.percentile(sp, 99)) if sp.size else 1.0,
                             "mu_r": mu_r, "n_total": n_total, "slab_um": slab}
 
-    def add_press_anim(self, pressed, table):
+    def add_press_anim(self, pressed, table, steps_dir=None):
         """The compression for the Result Viewer's player: per step the three
         visible faces of the box (top z, front y = 0, side x = end) and the
         three middle sections, their labels (press_lab.u8) and von Mises
@@ -638,6 +638,29 @@ class ViewWriter:
         self.meta["press"] = {"frames": frames, "lab": "press_lab.u8", "vm": "press_vm.f32", "colors": colors,
                               "legend": legend, "vm_max": vmax, "compression": [float(c) for c in s_["compression"]],
                               "sigma_zz_Pa": [float(c) for c in s_["sigma_zz_Pa"]], "box0_um": pressed["box0_um"]}
+        # every step's whole box, for the 3D view's step player
+        vols = [f.get("vol") for f in pressed["frames"]]
+        if steps_dir and vols and all(vols) and os.path.isdir(steps_dir):
+            import shutil
+            dst = os.path.join(self.dir, "press_steps")
+            shutil.rmtree(dst, ignore_errors=True)
+            shutil.copytree(steps_dir, dst)
+            steps = []
+            for k, (f, v) in enumerate(zip(pressed["frames"], vols)):
+                st = {"lab": "press_steps/" + v["lab"], "vm": "press_steps/" + v["vm"], "vm_max": float(v["vm_max"]),
+                      "dims": [int(n) for n in f["shape"]], "L_um": [float(x) for x in f["L_um"]],
+                      "compression": float(s_["compression"][k]) if k < len(s_["compression"]) else None,
+                      "sigma_zz_Pa": float(s_["sigma_zz_Pa"][k]) if k < len(s_["sigma_zz_Pa"]) else None}
+                if k < len(s_.get("time_s") or []):
+                    # a cure in the mould: its time, temperature and the
+                    # conversion of every resin
+                    st["time_s"] = float(s_["time_s"][k])
+                    st["T_C"] = float(s_["T_C"][k])
+                    st["alpha"] = {table[int(li)]["name"]: float(a_[k]) for li, a_ in (s_.get("alpha") or {}).items()
+                                   if k < len(a_)}
+                steps.append(st)
+            self.meta["press"]["steps3d"] = steps
+            self.meta["press"]["vm_max3d"] = float(max([s["vm_max"] for s in steps] + [0.0]))
 
     def add_network(self, view):
         if not view:

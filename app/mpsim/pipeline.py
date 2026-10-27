@@ -26,6 +26,7 @@ import json
 import math
 import os
 import pickle
+import shutil
 import time
 import traceback
 
@@ -106,6 +107,27 @@ def _dump(path, obj):
         os.remove(tmp)
     except OSError:
         pass
+
+
+def settle_worst(samples):
+    """The widest relative 95 % confidence interval of a mean over the
+    realisations so far, and what it belongs to: (value, name) or (None, None)
+    with fewer than two realisations."""
+    worst, which = None, None
+    for key, rows in samples.items():
+        a = np.asarray(rows, float)
+        if a.ndim == 1:
+            a = a[:, None]
+        if a.shape[0] < 2:
+            continue
+        mean, _std, ci = _mean_ci(a)
+        for k, (m, c) in enumerate(zip(np.atleast_1d(mean), np.atleast_1d(ci))):
+            if not np.isfinite(m) or abs(m) < 1e-300 or not np.isfinite(c):
+                continue
+            rel = float(c / abs(m))
+            if worst is None or rel > worst:
+                worst, which = rel, f"{key}" + (f" component {k + 1}" if a.shape[1] > 1 else "")
+    return worst, which
 
 
 def _mean_ci(samples):
@@ -217,13 +239,26 @@ def _generator_phases(spec):
 STRUCTURE_VERSION = 5
 
 
+def overlap_steps(opts):
+    """The generator's progressive overlap setting, None when it is off."""
+    o = opts.get("overlap_steps") or {}
+    if not o.get("on", True):
+        return None
+    return {"tries": int(o.get("tries", 2)), "max_vox": int(o.get("max_vox", 3))}
+
+
 def contacts_key(opts):
     """The contact handling as it identifies a structure: the mode, and for
     "apart" a gap other than the 2 voxels it always had (older keys stay)."""
     c = opts.get("contacts", "keep")
     g = opts.get("particle_gap_vox")
     if c == "apart" and g not in (None, "") and abs(float(g) - 2.0) > 1e-9:
-        return f"apart:{float(g):g}"
+        c = f"apart:{float(g):g}"
+    # progressive overlap other than its default (on, 2 packings per step,
+    # up to 3 voxels): the keys of the default stay those of 5.6.0
+    o = overlap_steps(opts)
+    if o != {"tries": 2, "max_vox": 3}:
+        c += "|ov:off" if o is None else f"|ov:{o['tries']}x{o['max_vox']}"
     return c
 
 
@@ -298,6 +333,22 @@ CURE_KEYS = ("cure_E1", "cure_logA1", "cure_E2", "cure_logA2", "cure_m", "cure_n
 CURE_NEEDED = ("cure_E1", "cure_logA1", "cure_E2", "cure_logA2", "cure_m", "cure_n", "gel_alpha", "cm_A", "cm_B")
 
 
+# every step of the compression in 3D (the 3D view's step player): the
+# first realisation's, written beside the run while it compresses, marked
+# with the key of its structure, copied into the run's view
+PRESS_STEPS = "press_steps"
+
+
+def press_steps_ok(d, skey):
+    """The folder of the compression's steps in `d` if it belongs to the structure `skey`."""
+    p = os.path.join(d, PRESS_STEPS)
+    try:
+        with open(os.path.join(p, "key.txt"), encoding="utf-8") as fh:
+            return p if fh.read().strip() == skey else None
+    except OSError:
+        return None
+
+
 def press_cure(spec, base, mu, log):
     """The Cure of a compression with cure (solvers/compress.Cure), or
     (None, reason): every resin whose material carries the cure constants,
@@ -368,7 +419,7 @@ def press_viscosities(spec, rate):
     return out, gd
 
 
-def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop):
+def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop, steps_dir=None):
     """The RVE compressed along z while its resin flows (solvers/compress.py):
     a periodic three-dimensional creeping-flow solve per step on the structure
     as it deforms - the resins with their viscosities, the spheres rigid, the
@@ -453,7 +504,10 @@ def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop
                       steps=rv.get("press_steps"), log=log, should_stop=should_stop, progress=cb, cure=cure,
                       stress_limit=(rv["press_stress_Pa"] if (cure is not None and rv["press_control"] == "stress")
                                     else None),
-                      t_max=rv["press_time_s"] if cure is not None else None)
+                      t_max=rv["press_time_s"] if cure is not None else None,
+                      frame_dir=steps_dir)
+    if steps_dir:
+        shutil.rmtree(steps_dir, ignore_errors=True)
     out = cpr.run()
     shape = tuple(out["shape"])
     owner, fld = out["owner"], out["field"]
@@ -3434,6 +3488,11 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                                                      "film", "Nz", "T_um")}))
 
     seeds = plan["seeds"]
+    settle = plan.get("settle")
+    settled = (None, None)
+    if settle:
+        log(f"   Realisations until the means settle: at least {settle['n_min']}, at most {settle['n_max']}, until "
+            f"every 95 % confidence interval is within {settle['target_pct']:g} % of its mean")
     dirs = opts["directions"]
     per_seed_units = 1.0 + sum(len(dirs) for k in COND if k in need) \
         + (7.0 if "cte" in need else 0.0) \
@@ -3954,10 +4013,34 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 rel = [c / abs(m) for c, m in zip(ci, e["diag"]) if m and np.isfinite(m) and c is not None]
                 if rel:
                     worst = float(max(rel))
+                    tgt = (settle["target_pct"] / 100.0) if settle else 0.02
+                    # Kanit et al. (2003), n = 4 D_Z(V)^2 / (Z^2 e^2): the
+                    # realisations of this size a 1 % and a 2 % interval need
+                    covs = [float(s_) / abs(float(m)) for s_, m in zip(e.get("std") if e.get("std") is not None
+                                                                         else [0.0], e["diag"])
+                            if m and np.isfinite(m) and s_ is not None and np.isfinite(s_)]
+                    cov = max(covs) if covs else 0.0
+                    n_for = lambda eps: max(2, int(math.ceil(4.0 * cov ** 2 / eps ** 2)))  # noqa: E731
                     checks.append({"id": f"{key}_stat", "group": "Statistics", "label": f"{e['title']}: relative 95 % confidence interval",
-                                   "value": worst, "target": 0.02, "unit": "rel",
-                                   "status": "pass" if worst <= 0.02 else ("warn" if worst <= 0.05 else "fail"),
-                                   "note": f"{seeds} independent realisations"})
+                                   "value": worst, "target": tgt, "unit": "rel",
+                                   "status": "pass" if worst <= tgt else ("warn" if worst <= 2.5 * tgt else "fail"),
+                                   "note": f"{seeds} independent realisations; scatter between them {100 * cov:.2f} % "
+                                           f"(standard deviation over the mean): about {n_for(0.01)} realisations of this "
+                                           f"size give ±1 %, {n_for(0.02)} give ±2 % (Kanit et al. 2003, n = 4 D²/(Z² e²))"
+                                           + ("; the realisations stopped at the target" if settle and worst <= tgt else
+                                              "; the most realisations allowed were reached first" if settle else "")})
+            if settle:
+                checks.append({"id": "settle", "group": "Statistics",
+                               "label": "Statistical RVE: a smaller volume, realisations until the means settle",
+                               "value": seeds, "target": settle["n_max"], "unit": "realisations",
+                               "status": "pass" if (settled[0] is not None and settled[0] <= settle["target_pct"] / 100.0)
+                               else "warn",
+                               "note": (f"widest interval {100 * settled[0]:.2f} % ({settled[1]}) after {seeds} realisations, "
+                                        f"target {settle['target_pct']:g} %. " if settled[0] is not None else "")
+                                       + "A mean over small volumes estimates the effective property only when the "
+                                         "volume is large enough not to bias it (Kanit et al. 2003 found a bias for "
+                                         "too small volumes with every boundary condition, least with periodic ones): "
+                                         "compare once with a larger RVE (Standard or Accurate) before relying on it."})
         return props, composition, rho, cp
 
     if direct:
@@ -3987,16 +4070,34 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             log(f"   realisation {r+1}: the structure generated earlier is used "
                 f"({'this run' if os.path.abspath(src) == os.path.abspath(out_dir) else os.path.basename(src)}); "
                 f"no new generation")
+            if (overlap_steps(opts) and (ginfo.get("pack_scale") or 1.0) < 1.0 and not ginfo.get("overlap_steps")
+                    and first):
+                log(f"   !! this structure was packed before progressive overlap existed and fell short of the "
+                    f"loading (size scale {ginfo['pack_scale']:.3f}); untick 'Reuse the structure of a matching "
+                    f"run' (Simulation) to pack it again with overlap allowed")
             if os.path.abspath(src) != os.path.abspath(out_dir):
                 save_structure(out_dir, skey, gen_labels, ginfo, ginfo.get("contact_mask"))
+                # the compression's steps in 3D come with its structure
+                ps = press_steps_ok(src, skey) if (pressed and first) else None
+                if ps and not press_steps_ok(out_dir, skey):
+                    try:
+                        shutil.rmtree(os.path.join(out_dir, PRESS_STEPS), ignore_errors=True)
+                        shutil.copytree(ps, os.path.join(out_dir, PRESS_STEPS))
+                    except OSError:
+                        pass
         else:
             gen_labels, ginfo = GEN.generate(N, h, gen_phases, seed=seed, log=log, should_stop=should_stop,
                                              contacts=opts["contacts"], gap_vox=opts.get("particle_gap_vox") or 2.0,
+                                             overlap_steps=overlap_steps(opts),
                                              want_contact_faces=want_cf, nz=Nz,
                                              skin=skin, shear=shear_packing(spec, log, event, prog, should_stop),
                                              dispersion=spec["rve"].get("dispersion"))
             if pressed:
-                gen_labels, ginfo = press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop)
+                gen_labels, ginfo = press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop,
+                                                    steps_dir=os.path.join(out_dir, PRESS_STEPS) if first else None)
+                if first and os.path.isdir(os.path.join(out_dir, PRESS_STEPS)):
+                    with open(os.path.join(out_dir, PRESS_STEPS, "key.txt"), "w", encoding="utf-8") as fh:
+                        fh.write(skey)
             try:
                 save_structure(out_dir, skey, gen_labels, ginfo, ginfo.get("contact_mask"))
             except Exception as e:                                   # noqa: BLE001
@@ -4019,6 +4120,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         rinfo = {"seed": seed, "route": ginfo["route"], "seconds": ginfo["seconds"],
                  "contact_pairs": pair_faces,
                  "contacts_mode": ginfo.get("contacts_mode"), "gap_vox": ginfo.get("gap_vox"),
+                 "overlap_vox": ginfo.get("overlap_vox", 0),
                  "contacts_removed": ginfo["contacts_removed"],
                  "contact_faces": ginfo.get("contact_faces", 0), "touching_pairs": ginfo.get("touching_pairs", 0),
                  "voxel_conflicts": ginfo.get("voxel_conflicts", 0),
@@ -4048,7 +4150,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 viewer.adopt(keep=lambda key: True)
             if (ginfo.get("pressed") or {}).get("frames"):
                 try:
-                    viewer.add_press_anim(ginfo["pressed"], table)
+                    viewer.add_press_anim(ginfo["pressed"], table, steps_dir=press_steps_ok(out_dir, skey))
                     pr_ = ginfo["pressed"]
                     viewer.add_field("press_vm", pr_["von_mises"], "von Mises stress in the resins at the end of the compression",
                                      "Pa", "Compression", in_matrix=True,
@@ -4859,6 +4961,20 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         if first:
             results_first = res_r
         del void_mask, open_mask, flow_labels
+        if settle and not direct:
+            # a statistical RVE: realisations until the 95 % confidence
+            # interval of every mean is within the target (Kanit et al. 2003,
+            # e_rel = 2 D_Z(V) / (Z sqrt(n)); here with Student's t)
+            worst, which = settle_worst(samples)
+            if worst is not None:
+                log(f"   after {r + 1} realisations: the widest relative 95 % confidence interval of a mean is "
+                    f"{100 * worst:.2f} % ({which}); target {settle['target_pct']:g} %")
+            if r + 1 >= settle["n_min"] and worst is not None and worst <= settle["target_pct"] / 100.0:
+                log(f"   the means are settled after {r + 1} realisations")
+                break
+    if settle and not direct:
+        seeds = len(realisations)
+        settled = settle_worst(samples)
 
     # ------------------------------------------------------------------ view
     meta = None

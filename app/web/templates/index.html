@@ -93,6 +93,7 @@
           </div>
           <div class="vtip" id="vTip" hidden></div>
           <div class="vdem" id="vDem" hidden></div>
+          <div class="vdem" id="vPress" hidden></div>
           <div class="livebox" id="liveBox" hidden></div>
         </div>
       </section>
@@ -165,11 +166,17 @@
           <label class="chk"><span class="switch"><input type="checkbox" id="vDemOn"><span></span></span> Show the sheared particles</label>
           <div class="hint">The viscosity's particle dynamics in its own box, played frame by frame (colour by speed or by filler, GIF). Off: the RVE returns.</div>
         </div></div>
+        <div class="sec" id="vPressSec" style="display:none"><div class="sh" id="hPress"></div><div class="sb">
+          <label class="chk"><span class="switch"><input type="checkbox" id="vPressOn"><span></span></span> Show the compression step by step</label>
+          <div class="hint">The whole box at every step of the compression, each voxel as the solver had it: play, step or scrub; the whole box, the box cut at its middle or the particles alone; materials or the von Mises stress of the resins; GIF. Off: the RVE returns.</div>
+        </div></div>
         <div class="sec"><div class="sh" id="hScene"></div><div class="sb">
           <label class="chk"><span class="switch"><input type="checkbox" id="vFaces"><span></span></span> Field on the RVE faces</label>
           <label class="chk"><span class="switch"><input type="checkbox" id="vParticles" checked><span></span></span> Particle and pore surfaces</label>
           <div class="seg sm" id="vSurfStyle" title="How particles and pores are drawn"><button data-style="voxels" class="on">Voxels</button><button data-style="smooth">Smooth</button></div>
-          <div class="hint" id="vSurfStyleHint">Voxels (default): every voxel the solver used (GPU volume rendering), each in the colour of its own value - the whole RVE at any size. Smooth: a surface per particle, smoothed within a voxel of the voxel boundary; an RVE with more particles than the browser can draw so is shown as a corner region.</div>
+          <div class="hint" id="vSurfStyleHint">Voxels (default): every voxel the solver used (GPU volume rendering), each in the colour of its own value - the whole RVE at any size; crisp draws every voxel face flat at the full screen resolution, unticked the faces are shaded softly from the smoothed gradient. Smooth: a surface per particle, smoothed within a voxel of the voxel boundary; an RVE with more particles than the browser can draw so is shown as a corner region.</div>
+          <label class="chk" id="vVoxCrispRow"><span class="switch"><input type="checkbox" id="vVoxCrisp" checked><span></span></span> Crisp voxels (flat faces, sharp edges)</label>
+          <label class="chk" id="vVoxGridRow"><input type="checkbox" id="vVoxGrid"> Voxel grid lines (for a close look)</label>
           <div class="note warn" id="vRegionNote" hidden></div>
           <label class="chk"><span class="switch"><input type="checkbox" id="vColorParticles" checked><span></span></span> Colour surfaces by the field</label>
           <div class="slrow"><span class="hint" style="text-align:left">Opacity</span><input type="range" id="vOpacity" min="0.05" max="1" step="0.05" value="1"><span id="vOpacityV">1.00</span></div>
@@ -216,7 +223,18 @@
         </div></div>
         <div class="hint" id="vInfo"></div>
       </div>
-      <div class="pscroll rpage" id="r-runs"><div id="runsList"></div></div>
+      <div class="pscroll rpage" id="r-runs">
+        <div class="runtools">
+          <button class="btn sm" id="runsOpen" title="Bring runs kept on disk into this list: a run folder, or a work or case folder holding runs (also one copied from another PC)"></button>
+          <button class="btn sm" id="runsImport" title="Unpack a run saved as a ZIP (Export - Run folder ZIP, or the Complete ZIP) into the open case"></button>
+          <input type="file" id="runsImportFile" accept=".zip" hidden>
+        </div>
+        <div class="runopen" id="runsOpenRow" hidden>
+          <input type="text" id="runsOpenPath" placeholder="full path, e.g. D:\SimData\MPSim\2026-10-27 or a run folder">
+          <button class="btn sm primary" id="runsOpenGo">Open</button>
+          <div class="hint">A run folder (it holds job.json) joins the list on its own; a work or case folder brings every run in it. Runs already in this workspace are listed without this.</div>
+        </div>
+        <div id="runsList"></div></div>
     </aside>
   </div>
 
@@ -224,12 +242,14 @@
   <section class="dock" id="dock">
     <div class="dtabs" id="dtabs">
       <button data-d="console" class="on">Console</button>
+      <button data-d="term">Terminal</button>
       <button data-d="conv">Solver convergence</button>
       <button data-d="checks">RVE checks <span id="chkBadge"></span></button>
       <button data-d="partial">Intermediate results</button>
       <button class="dtoggle" id="dockToggle" title="Collapse or expand the dock"></button>
     </div>
     <div class="dpage on" id="d-console"><pre id="console"></pre></div>
+    <div class="dpage" id="d-term"><div class="termbar" id="termBar"><span class="hint">The run being followed: whether its process works, and everything it reports as it comes.</span></div><pre class="term" id="term"></pre></div>
     <div class="dpage" id="d-conv"><canvas id="convChart" class="chart"></canvas></div>
     <div class="dpage" id="d-checks"><table class="grid" id="rveChecks"></table></div>
     <div class="dpage" id="d-partial" style="padding:8px 12px"><div id="partialBox"></div></div>
@@ -255,6 +275,7 @@
 <script src="/static/gif_rec.js?v={{ version }}"></script>
 <script src="/static/dem_player.js?v={{ version }}"></script>
 <script src="/static/press_player.js?v={{ version }}"></script>
+<script src="/static/press3d.js?v={{ version }}"></script>
 <script src="/static/app.js?v={{ version }}"></script>
 </body>
 </html>

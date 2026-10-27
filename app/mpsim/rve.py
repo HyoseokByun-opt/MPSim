@@ -57,10 +57,11 @@ QUALITY = {
 # --max-voxels-flow), after which only the memory estimate warns. Elasticity
 # keeps the lowest ceiling because it solves seven load cases, flow the next
 # because Stokes carries four fields per node.
-# 500^3 by default for every solver. Beyond this a solve is
-# rarely practical on a workstation; the planner still warns with the memory
-# estimate rather than refusing smaller machines.
-DEFAULT_LIMITS = {"N_max": 500, "N_max_elastic": 500, "N_max_flow": 500}
+# No ceiling by default (5.6.1; 500^3 before): the PCs this runs on take
+# grids beyond 500 voxels per edge, and the planner warns with the memory
+# estimate (a share of the RAM) instead of holding a grid back. A number set
+# in Home -> Machine (or --max-voxels) caps every solver again.
+DEFAULT_LIMITS = {"N_max": 0, "N_max_elastic": 0, "N_max_flow": 0}
 
 _NICE = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0]
 
@@ -448,7 +449,9 @@ def plan(phases, rve=None, props=None, limits=None):
         "film": film, "Nz": int(Nz), "T_um": float(T),
         "recommended": {"h_um": float(h_rec), "L_um": float(L_req), "reason": why},
         "quality": rve.get("quality", "standard"), "quality_label": q["label"],
-        "seeds": int(rve.get("n_seeds") or q["seeds"]),
+        "seeds": (int((rve.get("realisations") or {}).get("n_max") or 20)
+                  if (rve.get("realisations") or {}).get("mode") == "settle" else int(rve.get("n_seeds") or q["seeds"])),
+        "settle": (dict(rve["realisations"]) if (rve.get("realisations") or {}).get("mode") == "settle" else None),
         "vf_tol": q["vf_tol"],
         "features": feats, "checks": checks, "notes": notes,
         # None rather than math.inf: Infinity is not valid JSON and would reach
@@ -562,6 +565,16 @@ def post_checks(plan_, gen_info, quality="standard"):
                            "status": "pass" if dsp.get("share_in_region", 1.0) >= 0.999 else "warn",
                            "note": f"{100 * dsp.get('vf_in_region', 0.0):.1f} vol% inside the region, matrix "
                                    "elsewhere"})
+    if gen_info.get("overlap_vox"):
+        k = int(gen_info["overlap_vox"])
+        st = gen_info.get("overlap_steps") or {}
+        checks.append({"id": "overlap_steps", "group": "Generated structure",
+                       "label": "Particle overlap allowed by the packing (progressive overlap)",
+                       "value": k, "target": 0, "unit": "vox", "status": "warn",
+                       "note": f"the loading could not be packed without overlap; particles overlap by up to {k} "
+                               f"voxel{'s' if k > 1 else ''} (steps of 1 voxel, {st.get('tries', '?')} packings per "
+                               f"step, at most {st.get('max_vox', '?')}). A voxel two particles share belongs to one "
+                               "of them, so the loading is met with particles slightly merged where they overlap."})
     if gen_info.get("contacts_mode") == "separate":
         checks.append({"id": "contacts", "group": "Generated structure", "label": "Particle contacts separated by a matrix voxel",
                        "value": gen_info.get("contacts_removed", 0), "target": 0, "unit": "", "status": "pass",
@@ -585,10 +598,15 @@ def post_checks(plan_, gen_info, quality="standard"):
     if conf:
         nvox = gen_info.get("N", 1) ** 3
         rel = conf / nvox
+        allowed = int(gen_info.get("overlap_vox") or 0)
         checks.append({"id": "overlap", "group": "Generated structure", "label": "Voxels claimed by two particles",
                        "value": rel, "target": 1e-3, "unit": "rel",
-                       "status": "pass" if rel <= 1e-3 else ("warn" if rel <= 5e-3 else "fail"),
-                       "note": f"{conf:,} voxels; kept by the first particle (clump packing does not cover sharp corners)"})
+                       # the overlap the progressive overlap allowed is reported by its own check
+                       "status": "pass" if (allowed or rel <= 1e-3) else ("warn" if rel <= 5e-3 else "fail"),
+                       "note": (f"{conf:,} voxels: the overlap of up to {allowed} voxel{'s' if allowed > 1 else ''} the "
+                                f"packing needed (progressive overlap); each belongs to one of the two particles"
+                                if allowed else
+                                f"{conf:,} voxels; kept by the first particle (clump packing does not cover sharp corners)")})
     shr = gen_info.get("shrunk") or {}
     if shr.get("n"):
         n_all = sum(int(p.get("n_particles", 0)) for p in gen_info.get("phases", [])) or 1

@@ -38,7 +38,7 @@ from mpsim import rve as R
 from mpsim import spec as S
 
 from .doe import DOEStore
-from .jobs import JobQueue
+from .jobs import STOPPED_FILE, JobQueue
 from .render_worker import RenderService
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -200,7 +200,9 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         except (OSError, ValueError):
             d = {}
         return {"current": d.get("current") or "",
-                "recent": [p for p in (d.get("recent") or []) if isinstance(p, str)]}
+                "recent": [p for p in (d.get("recent") or []) if isinstance(p, str)],
+                # single runs opened from elsewhere (Runs - Open)
+                "opened": [p for p in (d.get("opened") or []) if isinstance(p, str)]}
 
     def wf_save(state):
         try:
@@ -343,12 +345,16 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                 n += app.queue.restore(row["path"])
             except OSError:
                 pass
+        # single runs opened from elsewhere (Runs - Open)
+        for d in wf_load()["opened"]:
+            if os.path.isdir(d):
+                n += app.queue._restore_one(d, os.path.basename(d), os.path.dirname(d), "")
         return n
 
     def ws_folders():
         """The work folders whose runs the list shows: the open one, the
         recent ones and every folder in the workspace that holds runs."""
-        return [row["path"] for row in wf_info()["folders"]]
+        return [row["path"] for row in wf_info()["folders"]] + [os.path.dirname(d) for d in wf_load()["opened"]]
 
     def shared():
         """A server started with an access token is shared by several people:
@@ -880,9 +886,233 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                                             "partial_result")],
                         "history": {k: v[-400:] for k, v in job.history.items()}})
 
+    # psutil handles of the runs' processes, kept between calls: a process's
+    # CPU share is measured from one call to the next
+    _ps = {}
+
+    @app.get("/api/jobs/<jid>/proc")
+    def api_proc(jid):
+        """Whether a run's process is alive and working (the Terminal tab):
+        its process tree's CPU use (100 % = one core), memory, processes and
+        threads, the seconds since it last reported anything, its stage and
+        the solver iteration it is at."""
+        job = job_or_404(jid)
+        now = time.time()
+        out = {"state": job.state, "phase": job.phase, "cores": job.threads, "alive": False,
+               "stage": job.stage, "detail": job.stage_detail, "solver": job.solver,
+               "since_s": (now - (job.last_t or job.started or now)) if job.state == "running" else None,
+               "elapsed_s": ((job.ended or now) - job.started) if job.started else 0.0}
+        p = job.proc
+        if job.state == "running" and p is not None and getattr(p, "pid", None):
+            try:
+                import psutil
+                root = _ps.get(p.pid)
+                if root is None or not root.is_running():
+                    root = _ps[p.pid] = psutil.Process(p.pid)
+                procs = [root] + root.children(recursive=True)
+                cpu = rss = thr = 0.0
+                for q in procs:
+                    h = _ps.get(q.pid)
+                    if h is None or not h.is_running():
+                        h = _ps[q.pid] = q
+                    try:
+                        cpu += h.cpu_percent(None)
+                        rss += h.memory_info().rss
+                        thr += h.num_threads()
+                    except psutil.Error:
+                        pass
+                out.update(alive=True, pid=p.pid, cpu_pct=cpu, rss_gb=rss / 1e9, n_procs=len(procs),
+                           n_threads=int(thr), cpus=psutil.cpu_count(), mem_free_gb=psutil.virtual_memory().available / 1e9)
+            except Exception as e:                                   # noqa: BLE001
+                out["error"] = f"{type(e).__name__}: {e}"
+            if len(_ps) > 400:
+                for k in [k for k, h in _ps.items() if not h.is_running()]:
+                    _ps.pop(k, None)
+        return jsonify(out)
+
     @app.post("/api/jobs/<jid>/stop")
     def api_stop(jid):
         return jsonify({"ok": app.queue.stop(job_or_404(jid))})
+
+    @app.post("/api/jobs/<jid>/restart")
+    def api_restart(jid):
+        """Start a stopped (or failed) run again: its own inputs, in its own
+        folder, in its place in the list. A structure the run had finished is
+        kept in the folder (pipeline.save_structure, written before the
+        solves) and is used again, so a run stopped while solving goes
+        straight to the solves; the analyses start over, since a stop leaves
+        no half-finished solve to continue from. A DOE case stays its
+        study's case."""
+        job = job_or_404(jid)
+        if shared() and job.owner is not None and job.owner != owner():
+            abort(403, "Runs of other users cannot be started again")
+        if job.state not in ("stopped", "failed"):
+            abort(409, "Only a stopped or failed run can be started again")
+        try:
+            with open(os.path.join(job.out_dir, "spec.json"), encoding="utf-8") as fh:
+                form = json.load(fh)
+        except (OSError, ValueError):
+            abort(404, "The inputs of this run (spec.json) are missing")
+        try:
+            S.normalize(copy.deepcopy(form))
+        except ValueError as e:
+            return jsonify({"ok": False, "errors": str(e).split("\n")}), 400
+        form.setdefault("_limits", app.config["LIMITS"])
+        reuse = dict(form.get("_reuse") or {})
+        reuse["append"] = True              # analyses a failed run did finish are kept
+        form["_reuse"] = reuse
+        meta = dict(job.meta or {})
+        meta["restarts"] = int(meta.get("restarts") or 0) + 1
+        try:
+            os.remove(os.path.join(job.out_dir, STOPPED_FILE))
+        except OSError:
+            pass
+        try:
+            with open(os.path.join(job.out_dir, "run.log"), "a", encoding="utf-8") as fh:
+                fh.write(f"\n== Started again ({time.strftime('%Y-%m-%d %H:%M:%S')}), restart {meta['restarts']}\n")
+        except OSError:
+            pass
+        new = app.queue.submit(job.owner, form, os.path.dirname(job.out_dir), meta, folder=job.folder,
+                               case=job.case, into=job.out_dir, replaces=jid, rename=False)
+        if meta.get("doe"):
+            s = app.doe.get(meta["doe"])
+            if s is not None:
+                for c in s.get("cases") or []:
+                    if c.get("job_id") == jid:
+                        c["job_id"] = new.id
+                app.doe.save(s)
+        return jsonify({"ok": True, "id": new.id})
+
+    @app.post("/api/runs/open")
+    def api_runs_open():
+        """Runs kept on disk into the list: a run folder, or a work or case
+        folder holding runs - anywhere, e.g. copied from another PC. A work or
+        case folder joins the recent work folders, a single run the opened
+        runs; both stay listed after a restart."""
+        b = request.get_json(force=True, silent=True) or {}
+        p = (b.get("path") or "").strip().strip('"')
+        if not p or not os.path.isabs(p):
+            return jsonify({"ok": False, "error": "Give the folder as a full path, e.g. D:\\SimData\\MPSim\\2026-10-27"}), 400
+        p = os.path.abspath(p)
+        if not os.path.isdir(p):
+            return jsonify({"ok": False, "error": f"There is no folder at {p}"}), 400
+        st = wf_load()
+        if os.path.exists(os.path.join(p, "job.json")):
+            # a copy of a run listed already (the same id in another folder)
+            # gets an id of its own, so both are listed
+            try:
+                with open(os.path.join(p, "job.json"), encoding="utf-8") as fh:
+                    info = json.load(fh)
+                other = app.queue.get(info.get("id"))
+                if other is not None and os.path.normcase(os.path.abspath(other.out_dir)) != os.path.normcase(p):
+                    info["id"] = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
+                    with open(os.path.join(p, "job.json"), "w", encoding="utf-8") as fh:
+                        json.dump(info, fh, ensure_ascii=False)
+            except (OSError, ValueError):
+                pass
+            before = set(app.queue.jobs)
+            app.queue._restore_one(p, os.path.basename(p), os.path.dirname(p), "")
+            ids = [j for j in app.queue.jobs if j not in before]
+            if not ids:
+                # listed already: the run that lives there
+                ids = [j.id for j in app.queue.jobs.values()
+                       if os.path.normcase(os.path.abspath(j.out_dir)) == os.path.normcase(p)]
+            st["opened"] = [p] + [q for q in st["opened"] if os.path.normcase(q) != os.path.normcase(p)][:199]
+            wf_save(st)
+            return jsonify({"ok": True, "kind": "run", "ids": ids})
+        if not wf_count(p):
+            return jsonify({"ok": False, "error": f"No run was found in {p} (a run folder holds job.json)"}), 400
+        n = app.queue.restore(p)
+        st["recent"] = st["recent"][:1] + [p] + [q for q in st["recent"][1:]
+                                                if os.path.normcase(q) != os.path.normcase(p)]
+        st["recent"] = st["recent"][:12]
+        wf_save(st)
+        return jsonify({"ok": True, "kind": "folder", "added": n, "runs": wf_count(p),
+                        "folder": os.path.basename(p.rstrip("\\/"))})
+
+    @app.post("/api/runs/import")
+    def api_runs_import():
+        """A run saved as a ZIP (Export - Run folder ZIP, or the Complete ZIP)
+        unpacked into the open case as a run of its own. The Complete ZIP holds
+        the results, figures and report but not the 3D view; the run folder
+        ZIP holds everything."""
+        # a run with its 3D view and structure runs to hundreds of MB: the
+        # 8 MB limit of the other requests does not apply here
+        try:
+            request.max_content_length = 1 << 42          # None would fall back to the app limit
+        except AttributeError:
+            pass
+        f = request.files.get("file")
+        if f is None or not f.filename:
+            return jsonify({"ok": False, "error": "No file was sent"}), 400
+        stem = re.sub(r"[^\w.+-]+", "_", os.path.splitext(os.path.basename(f.filename))[0])[:60] or "imported"
+        dest_case = case_dir()
+        os.makedirs(dest_case, exist_ok=True)
+        out = None
+        for i in range(1, 1000):
+            cand = os.path.join(dest_case, stem if i == 1 else f"{stem}-{i:02d}")
+            try:
+                os.makedirs(cand, exist_ok=False)
+                out = cand
+                break
+            except FileExistsError:
+                continue
+        if out is None:
+            return jsonify({"ok": False, "error": "No free folder name for the run"}), 400
+        root = os.path.abspath(out)
+        try:
+            with zipfile.ZipFile(f.stream) as zf:
+                names = [n for n in zf.namelist() if not n.endswith("/")]
+                # a ZIP of the folder itself: one top folder around everything
+                tops = {n.split("/", 1)[0] for n in names}
+                strip = (tops.pop() + "/") if (len(tops) == 1 and names and all("/" in n for n in names)) else ""
+                for n in names:
+                    rel = n[len(strip):] if strip else n
+                    parts = rel.replace("\\", "/").split("/")
+                    if not rel or rel.startswith(("/", "\\")) or ".." in parts or ":" in rel:
+                        continue
+                    dst = os.path.abspath(os.path.join(out, *parts))
+                    if not dst.startswith(root + os.sep):
+                        continue
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    with zf.open(n) as src, open(dst, "wb") as fh:
+                        shutil.copyfileobj(src, fh)
+        except zipfile.BadZipFile:
+            shutil.rmtree(out, ignore_errors=True)
+            return jsonify({"ok": False, "error": "The file is not a ZIP archive"}), 400
+        if not os.path.exists(os.path.join(out, "result.json")) and not os.path.exists(os.path.join(out, "spec.json")):
+            shutil.rmtree(out, ignore_errors=True)
+            return jsonify({"ok": False, "error": "The ZIP holds no run (result.json or spec.json)"}), 400
+        # its job record: kept when it came along, made from the result when
+        # not; a new id when that id is listed already (imported twice)
+        info = {}
+        try:
+            with open(os.path.join(out, "job.json"), encoding="utf-8") as fh:
+                info = json.load(fh)
+        except (OSError, ValueError):
+            info = {}
+        if not info.get("id") or info.get("id") in app.queue.jobs:
+            res = {}
+            try:
+                with open(os.path.join(out, "result.json"), encoding="utf-8") as fh:
+                    res = json.load(fh)
+            except (OSError, ValueError):
+                pass
+            meta = dict(info.get("meta") or {})
+            meta.setdefault("name", res.get("name") or stem)
+            meta.setdefault("analyses", res.get("analyses") or [])
+            info = {"id": time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3), "owner": None, "meta": meta,
+                    "created": info.get("created") or time.time()}
+        info["dir"] = os.path.basename(out)
+        info["case"] = app.config.get("CASE") or ""
+        info["meta"] = dict(info.get("meta") or {}, imported=os.path.basename(f.filename))
+        with open(os.path.join(out, "job.json"), "w", encoding="utf-8") as fh:
+            json.dump(info, fh, ensure_ascii=False)
+        app.queue._restore_one(out, os.path.basename(out), os.path.abspath(app.config["RUNS_DIR"]),
+                               app.config.get("CASE") or "")
+        job = app.queue.get(info["id"])
+        return jsonify({"ok": True, "id": info["id"], "state": job.state if job else None,
+                        "view": os.path.exists(os.path.join(out, "view", "meta.json"))})
 
     @app.delete("/api/jobs/<jid>")
     def api_delete(jid):
@@ -1416,6 +1646,23 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             buf.seek(0)
             return send_file(buf, as_attachment=True, download_name=f"{base}_structure.zip",
                              mimetype="application/zip")
+        if what == "run":
+            # the whole run folder (results, 3D view, structure, report), to
+            # open on another PC (Runs - Import ZIP); written to a temporary
+            # file, as a run with its view can be large
+            import tempfile
+            tmp = tempfile.TemporaryFile()
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                for root, dirs, files in os.walk(d):
+                    if root == d:
+                        dirs[:] = [x for x in dirs if x not in ("_tmp", "live")]
+                    for n in files:
+                        if root == d and n == STOPPED_FILE:
+                            continue
+                        full = os.path.join(root, n)
+                        zf.write(full, os.path.relpath(full, d).replace(os.sep, "/"))
+            tmp.seek(0)
+            return send_file(tmp, as_attachment=True, download_name=f"{base}_run.zip", mimetype="application/zip")
         if what == "bundle":
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

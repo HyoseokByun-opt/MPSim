@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.6.0-0b62c4" alt="version 5.6.0">
+  <img src="https://img.shields.io/badge/version-5.6.1-0b62c4" alt="version 5.6.1">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-83%20checks-2da44e" alt="83 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-87%20checks-2da44e" alt="87 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -58,8 +58,10 @@ The main capabilities are listed below.
   rotation; normal and log-normal size distributions with bounds, or a measured particle-size distribution loaded from
   the analyser's file (by volume or by number); coated and hollow particles, several filler phases in one RVE, pores as
   a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression,
-  and every blend is checked so that no voxel belongs to two particles. Particles may touch, as in a filled compound
-  (the default), or are kept a set number of voxels apart. Sphere packings can be sheared in the resin by
+  and every blend that packs is checked so that no voxel belongs to two particles. Particles may touch, as in a filled compound
+  (the default), or are kept a set number of voxels apart. A loading that cannot be packed without overlap (equal spheres
+  beyond random close packing, dense cubes) is reached with the least overlap it takes, 1 voxel and then 2, rather than
+  with every particle drawn smaller (spheres at 66 vol%: 65.95 % instead of 62.6 %). Sphere packings can be sheared in the resin by
   particle dynamics before they are drawn, which yields the arrangement of a compound after flow. Fillers and further
   matrix materials can be confined to sections (slabs) of the RVE, so that two compounds, a filled layer on an unfilled
   one or a resin interlayer are modelled as one structure.
@@ -68,7 +70,7 @@ The main capabilities are listed below.
   viscosity, the filler spheres rigid, the pores a compressible gas), the spheres move as rigid bodies and the resins
   and pores as material markers that keep the volume of an incompressible resin. The result is the compressed box,
   solved by every analysis, with the strain and von Mises stress of each region, how far the pores close and whether
-  particles pass into another resin, shown step by step in 3D. The resins can cure meanwhile: Kamal–Sourour kinetics,
+  particles pass into another resin; the whole box of every step is kept and played step by step in 3D. The resins can cure meanwhile: Kamal–Sourour kinetics,
   the Castro–Macosko viscosity rise to the gel point and a lumped energy balance with the mould, closing at a set strain
   rate or no faster than a set axial stress.
 - **Coupled analyses of a thin film.** Thermal stress and warpage: the steady temperature field of the heat flowing
@@ -83,7 +85,9 @@ The main capabilities are listed below.
   arrangement realised is measured and reported.
 - **RVE sizing.** The RVE edge is 7 times (Standard) or 10 times (Accurate) the largest particle, a criterion determined
   with the statistical method of Kanit et al. (2003). The volume-fraction error, octant homogeneity, directional scatter
-  and convergence are checked on every run; several realisations provide a 95 % confidence interval.
+  and convergence are checked on every run; several realisations provide a 95 % confidence interval. An RVE too large
+  to solve can be replaced by small ones solved again with new arrangements until the 95 % interval of every mean is
+  within a target (a statistical RVE after the same paper), and the random seed is a DOE factor.
 - **Thin films.** Periodic in x and y, with the real film thickness in z and every particle inside the film.
 - **Conduction.** Thermal, electrical, dielectric and magnetic conduction with a periodic finite-volume solver
   (multi-core, FFT-preconditioned; its operator is NASA PuMA's finite-volume operator, with periodic instead of fixed
@@ -134,7 +138,7 @@ The main capabilities are listed below.
   alone takes every core of the PC by default; several runs share them. The structure is built on all cores too: the
   placement of particles, their drawing on the grid and the repair of overlaps give exactly the structure of one core
   (octahedra at 45 vol%: 23.4 s → 7.7 s; flakes with spheres on 248³: 299 s → 105–118 s).
-- **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as voxels, fields on the RVE
+- **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as crisp voxels, fields on the RVE
   faces and on sections, arrows, animated field lines and pore networks; publication figures rendered on the server
   (PyVista); animations saved as GIF; live fields during the solution; a single-file HTML report for every run.
 
@@ -146,8 +150,10 @@ The main capabilities are listed below.
 
 The ribbon follows the order of a study (Home, Material, Structure, Domain, Structure Analysis, Simulation, Results).
 The command panel on the left holds the inputs of the active tab, the centre shows the 3D/2D view, the Result Viewer
-or the report, and the inspector on the right controls the display. Chapter 3 of the user guide describes the
-workspace in detail.
+or the report, and the inspector on the right controls the display and lists every run of the workspace: a click shows a
+run in every view, a stopped run starts again from its row, and run folders or run ZIPs from another PC open into the
+list. The dock below holds the console and a terminal that shows whether a long run's processes are working. Chapter 3
+of the user guide describes the workspace in detail; chapter 33 is a tutorial for every example preset.
 
 ## Analyses
 
@@ -444,7 +450,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **83 problems with known solutions** (56 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **87 problems with known solutions** (56 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -490,6 +496,11 @@ reference values. A selection:
 | Cure kinetics and creep at a constant stress up to the gel point | n-th order closed form; ∫P/3η dt | within 1e-6; 0.86747 vs 0.86746 |
 | Conductor joining the two faces of a film | spans the film (not a periodic wrap) | recognised; kept conducting |
 | Queue: structures side by side, solves through the memory gate | a light solve passes a heavy one only while the heavy one still fits | passed |
+| A run stopped while it waits at the memory gate | the queue keeps answering (a killed waiter hangs a multiprocessing Event) | passed; the gate is a non-blocking flag |
+| Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
+| Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.95 % with ≤ 2 voxels (62.6 % without) |
+| Statistical RVE: realisations until the 95 % interval is within the target | stops at the target or the most allowed; whole-number DOE seeds | passed |
+| Every step of a compression kept in 3D, also for a reused structure | labels and stress of each step's whole box | passed |
 
 Two presets also verify the solver against an exact solution. Copper vias that pass straight through a laminate conduct
 heat as parallel paths, k_z = f·k_Cu + (1 − f)·k_laminate for a copper area fraction f. The presets *PCB thermal vias*
@@ -695,7 +706,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.6.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.6.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 
