@@ -244,7 +244,50 @@ def overlap_steps(opts):
     o = opts.get("overlap_steps") or {}
     if not o.get("on", True):
         return None
-    return {"tries": int(o.get("tries", 2)), "max_vox": int(o.get("max_vox", 3))}
+    r = {"tries": int(o.get("tries", 2)), "max_vox": int(o.get("max_vox", 3))}
+    if o.get("share", "auto") != "none" and o.get("max_pct") is not None:
+        r["max_pct"] = float(o["max_pct"])      # the largest share in two particles, %
+        if o.get("share", "auto") == "auto":
+            r["auto"] = o.get("auto_text") or "Auto"
+    return r
+
+
+def resolve_overlap_share(spec, plan, log=None):
+    """Auto for the largest share of the particle voxels in two particles
+    (overlap_share.auto_share), from the analyses, the materials, the
+    particles' size in voxels and the loading - set into the options once the
+    grid is planned."""
+    o = spec["options"].get("overlap_steps") or {}
+    if not o.get("on", True) or o.get("share", "auto") != "auto":
+        return None
+    from . import overlap_share as OS
+    a = OS.auto_share(spec, plan)
+    o["max_pct"], o["auto_text"] = float(a["pct"]), a["text"]
+    if log is not None:
+        log(f"   progressive overlap, largest share in two particles (Auto): {a['text']}")
+    return a
+
+
+def kept_share_ok(ginfo, labels, h, gen_phases, film, opts):
+    """Whether a kept structure may be used under the share in force: its
+    voxels in two particles within it, and not built under a stricter one
+    that held its overlap back (a fresh build could then go further)."""
+    o = overlap_steps(opts)
+    lim = None if o is None else o.get("max_pct")
+    if lim is None and o is not None:
+        lim = float("inf")
+    oc = ginfo.get("overlap_check")
+    if not oc or oc.get("error"):
+        try:
+            oc = ginfo["overlap_check"] = GEN.overlap_check(labels.shape, h, ginfo, gen_phases, film=film)
+        except Exception:                                            # noqa: BLE001
+            return True, None
+    share = 100.0 * float(oc.get("of_particles") or 0.0)
+    if o is None:
+        return share <= 0.0 or not ginfo.get("overlap_vox"), share
+    kl = ginfo.get("overlap_limit") or {}
+    held = bool(kl.get("without_overlap") or int(kl.get("n_builds") or 1) > 1)
+    return share <= lim + 1e-9 and not (held and float(kl.get("max_pct") or 0.0) < lim), share
 
 
 def contacts_key(opts):
@@ -255,10 +298,14 @@ def contacts_key(opts):
     if c == "apart" and g not in (None, "") and abs(float(g) - 2.0) > 1e-9:
         c = f"apart:{float(g):g}"
     # progressive overlap other than its default (on, 2 packings per step,
-    # up to 3 voxels): the keys of the default stay those of 5.6.0
+    # up to 3 voxels): the keys of the default stay those of 5.6.0. The
+    # largest share in two particles is not in the key - a kept structure is
+    # checked against the share in force when it is loaded (kept_share_ok)
     o = overlap_steps(opts)
-    if o != {"tries": 2, "max_vox": 3}:
-        c += "|ov:off" if o is None else f"|ov:{o['tries']}x{o['max_vox']}"
+    if o is None:
+        c += "|ov:off"
+    elif (o["tries"], o["max_vox"]) != (2, 3):
+        c += f"|ov:{o['tries']}x{o['max_vox']}"
     return c
 
 
@@ -1683,7 +1730,7 @@ def _dem_rates_start(radii, owner, hks, phi, vo, do, gd_ref, bodies, log):
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
     try:
-        cores = int(os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 2)
+        cores = int(os.environ.get("MPSIM_JOB_CORES") or os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 2)
     except ValueError:
         cores = os.cpu_count() or 2
     # as many at once as the free memory holds beside the reference run: a
@@ -3463,6 +3510,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         backend = "builtin"
     plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), need, limits)
     log(f"== {spec['name']}")
+    resolve_overlap_share(spec, plan, log)
     if prev is not None:
         log(f"   Continuing this run: {', '.join(sorted(kept))} kept, {', '.join(sorted(need)) or 'nothing'} added.")
     direct = prev is None and not spec.get("preview") and dem_direct(spec, need)
@@ -4066,6 +4114,12 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                              dispersion=spec["rve"].get("dispersion"), pressed=pressed)
         got = load_structure([out_dir] + list(reuse.get("from") or []), skey) if opts.get("reuse_runs", True) else None
         if got is not None:
+            ok, sh = kept_share_ok(got[1], got[0], h, gen_phases, bool(plan.get("film")), opts)
+            if not ok:
+                log(f"   realisation {r+1}: the structure generated earlier has {sh:.3g} % of its particle voxels in two "
+                    f"particles, against the share in force now; it is generated again")
+                got = None
+        if got is not None:
             gen_labels, ginfo, src = got
             log(f"   realisation {r+1}: the structure generated earlier is used "
                 f"({'this run' if os.path.abspath(src) == os.path.abspath(out_dir) else os.path.basename(src)}); "
@@ -4107,6 +4161,24 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             # voxels of the same size: every solve from here takes its shape
             shp = [int(v) for v in ginfo["shape"]]
             plan.update(N=shp[0], shape=shp, L_um=shp[0] * h, box_um=[v * h for v in shp])
+        # whatever made the structure: every particle drawn once more and the
+        # voxels two particles claim counted (the labels keep one owner per
+        # voxel, so an overlap does not show in them)
+        if "overlap_check" not in ginfo:
+            try:
+                ginfo["overlap_check"] = GEN.overlap_check(gen_labels.shape, h, ginfo, gen_phases,
+                                                           film=bool(plan.get("film")))
+            except Exception as e:                                   # noqa: BLE001
+                ginfo["overlap_check"] = {"error": f"{type(e).__name__}: {e}"}
+        oc = ginfo["overlap_check"]
+        if oc.get("error"):
+            log(f"   (the voxel overlap check could not run: {oc['error']})")
+        elif oc.get("particles"):
+            log(f"   voxel overlap check: {oc['shared']:,} voxels claimed by two particles "
+                f"({100 * oc['of_particles']:.3f} % of the {oc['particle_voxels']:,} particle voxels, "
+                f"{100 * oc['of_rve']:.3f} % of the RVE)"
+                + (f"; {oc['permitted']:,} more where overlap is permitted" if oc.get("permitted") else "")
+                + f" ({oc['seconds']:.1f} s)")
         labels, area_ratio, notes = build_labels(spec, gen_labels, ginfo, h)
         contact_mask = ginfo.pop("contact_mask", None)
         aniso_th = (thermal_aniso(spec, labels, ginfo, gen_phases, h, log if first else None)
@@ -4124,6 +4196,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "contacts_removed": ginfo["contacts_removed"],
                  "contact_faces": ginfo.get("contact_faces", 0), "touching_pairs": ginfo.get("touching_pairs", 0),
                  "voxel_conflicts": ginfo.get("voxel_conflicts", 0),
+                 "overlap_check": ginfo.get("overlap_check"),
+                 "overlap_limit": ginfo.get("overlap_limit"),
                  "shrunk": ginfo.get("shrunk"),
                  "pack_scale": ginfo.get("pack_scale"),
                  "sheared": ginfo.get("sheared"),

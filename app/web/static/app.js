@@ -338,7 +338,7 @@
           underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 },
           dem: { on: true, n: 500, strain: 10, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
-        overlap_steps: { on: true, tries: 2, max_vox: 3 },
+        overlap_steps: { on: true, tries: 2, max_vox: 3, share: "auto", max_pct: 0.5 },
         mechtest: { mode: "compression", axis: "z", lateral: "free", control: "force", value: 100, length_mm: null, area_mm2: 10, strength_MPa: null },
         thermomech: { T_ref: 175, T_bottom: 25, T_top: 25, support: "free", substrate: { material_id: "si", E: null, nu: null, alpha: null, thickness_um: 775 }, span_mm: 10, compare_uniform: true },
         joule: { control: "current", values: "1e6, 1e7, 3e7, 1e8", T_amb: 25, R_th: 0.001 },
@@ -469,7 +469,7 @@
       ],
       doe: [
         { group: "Design", items: [RB("doeAdd", "plus", "Add parameter"), RB("doeClear", "delete", "Clear parameters")] },
-        { group: "Study", items: [RB("doeCreate", "play", "Create and queue", { primary: true }), RB("c:doe", "preset", "DOE results")] },
+        { group: "Study", items: [RB("doeCreate", busy ? "plus" : "play", busy ? "Add DOE study" : "Create and queue", { primary: true, tip: busy ? "Adds the study's cases to the queue behind the runs under way: they start when a place and their memory are free" : "Creates the study and queues its cases" }), RB("c:doe", "preset", "DOE results")] },
       ],
       optimization: [
         { group: "Study", items: [RB("c:opt", "optimize", "Optimization", { on: state.center === "opt" }), RB("c:doe", "preset", "DOE results")] },
@@ -619,8 +619,20 @@
   }
 
   /* ================================================================ navigation */
+  // the header's Run button: Run, or Add while runs are under way - on the
+  // DOE tab for the study (its cases queued), elsewhere for the case
+  function headerRun() {
+    const hb = $("#btnRun");
+    if (!hb) return;
+    const inflight = state._inflight || 0, doe = state.tab === "doe";
+    hb.innerHTML = `${I(inflight ? "plus" : "play")}${inflight ? "Add" : "Run"}${doe ? " DOE" : ""}`;
+    hb.title = doe
+      ? (inflight ? "Add the DOE study to the queue: its cases start when a place and their memory are free" : "Create the DOE study and queue its cases")
+      : (inflight ? "Add this case to the queue (it starts when a place and its memory are free)" : "Generate the structure and run the selected analyses");
+  }
   function setTab(tab) {
     state.tab = tab;
+    headerRun();
     if (tab === "doe") loadDoeCatalogue().then(() => { if (state.tab === "doe") renderLeft(); });
     if (tab === "calibration") { CAL(); loadDoeCatalogue().then(() => { if (state.tab === "calibration") renderLeft(); }); calLoadTheory(); }
     renderRibbon();
@@ -1128,7 +1140,7 @@
   const LIVEF = {
     psdstats: (i) => psdStatsHtml(i), lnpar: (i) => lnParHtml(i), npar: (i) => nParHtml(i),
     domrec: () => domRecHtml(), domchecks: () => domChecksHtml(), filmgrid: () => filmGridHtml(), gridtxt: () => gridTxtHtml(),
-    doedom: () => doeDomHtml(),
+    doedom: () => doeDomHtml(), ovshare: () => ovShareAutoHtml(),
   };
   function doeDomHtml() {
     const pl = state.plan && state.plan.plan, rv = state.form.rve;
@@ -1264,9 +1276,9 @@
           ? `Particles are moved (never trimmed) so that their surfaces stay ${fmt(+f.options.particle_gap_vox)} voxel${+f.options.particle_gap_vox === 1 ? "" : "s"} apart (from 2 voxels on, no voxel of one is even a corner neighbour of a voxel of another) wherever the loading allows - as with a dispersant or a coating. A loading too dense for the gap lets particles touch only where needed. The gap is measured in voxels, so it shrinks with the voxel size.`
           : "Particles never overlap but may touch, as they do in a filled compound. The touching voxel faces are counted and can carry a contact resistance R<sub>c</sub>; heat and current cross a contact face, so a dense, conductive filler forms paths. A value above 0 keeps the particles that many voxels apart instead."}</div>
         <label class="chk" style="margin-top:8px"><span class="switch"><input type="checkbox" data-k="options.overlap_steps.on"><span></span></span> Allow overlap step by step when the loading does not pack</label>
-        ${(f.options.overlap_steps || {}).on !== false ? `<div class="g2"><div><label class="f">Packings per step</label><input type="number" min="1" max="50" step="1" data-k="options.overlap_steps.tries" data-num></div><div><label class="f">Largest overlap <span class="u">voxels</span></label><input type="number" min="1" max="20" step="1" data-k="options.overlap_steps.max_vox" data-num></div></div>` : ""}
+        ${(f.options.overlap_steps || {}).on !== false ? `<div class="g2"><div><label class="f">Packings per step</label><input type="number" min="1" max="50" step="1" data-k="options.overlap_steps.tries" data-num></div><div><label class="f">Largest overlap <span class="u">voxels</span></label><input type="number" min="1" max="20" step="1" data-k="options.overlap_steps.max_vox" data-num></div></div>${overlapShareHTML(f)}` : ""}
         <div class="hint">${(f.options.overlap_steps || {}).on !== false
-          ? `On (default). When the particles cannot be packed to the loading without overlapping, the packing is made again with an overlap of 1 voxel allowed, then 2, and so on up to the largest overlap; at each step it is tried the given number of times (the first from where the last one stopped, the others from new random positions) before the next voxel is allowed. The first packing that reaches the loading is kept; a voxel two particles share belongs to one of them, and the RVE checks report the overlap that was needed. A loading that packs without overlap is not affected.`
+          ? `On (default). When the particles cannot be packed to the loading without overlapping, the packing is made again with an overlap of 1 voxel allowed, then 2, and so on up to the largest overlap; at each step it is tried the given number of times (the first from where the last one stopped, the others from new random positions) before the next voxel is allowed. The first packing that reaches the loading is kept; a voxel two particles share belongs to one of them, and the RVE checks report the overlap that was needed. A loading that packs without overlap is not affected. Largest share: at most this percentage of the particle voxels may lie in two particles - a structure above it is built again with one voxel less of overlap, down to none (as with the option off). Auto sets it for the problem so that the overlap changes the result by no more than 1 %: from the contrast of each analysis selected (particle against matrix), the particles' size in voxels and how close the loading is to random close packing - measured with this program, after Batchelor & O'Brien (1977) on conduction through contacts. Conductive fillers allow almost none, fillers close to the matrix more. A value is used as entered (0: no overlap); No limit as in 5.6.1.`
           : "Off: a loading that cannot be packed without overlap is reached as far as it goes, and every particle is drawn smaller by the same factor (the RVE checks report the volume fraction short of the target)."}</div></div></div>
       <div class="sec"><div class="sh">${I("morphology")}Composition</div><div class="sb" id="compBody"></div></div>`;
   }
@@ -1619,7 +1631,7 @@
       }
     });
   }
-  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|rve\.press_cure|rve\.press_control|rve\.press_lateral|rve\.realisations\.mode|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|overlap_steps\.on|fraction\.value|size\.d|section\.(?:from|to))$/;
+  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|rve\.press_cure|rve\.press_control|rve\.press_lateral|rve\.realisations\.mode|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|overlap_steps\.on|overlap_steps\.share|rve\.quality|fraction\.value|size\.d|section\.(?:from|to))$/;
   function onField(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
@@ -2165,8 +2177,7 @@
     if (inflight !== state._inflight) {
       state._inflight = inflight; renderRibbon();
       // the header's button too: Run, or Add while runs are under way
-      const hb = $("#btnRun");
-      if (hb) { hb.innerHTML = inflight ? `${I("plus")}Add` : `${I("play")}Run`; hb.title = inflight ? "Add this case to the queue (it starts when a place and its memory are free)" : "Generate the structure and run the selected analyses"; }
+      headerRun();
     }
     $("#btnStop").disabled = !inflight && !["running", "queued"].includes(state.activeState || "");
     // a run going on (started in another tab, a study, or before this page
@@ -2323,7 +2334,7 @@
         <div class="row wrap"><a class="btn sm" href="${jobUrl("download/layer_card")}">${I("layers")}Layer card</a><a class="btn sm" href="${jobUrl("download/result")}">${I("json")}Result JSON</a>${r.dem_direct ? "" : `<a class="btn sm" href="${jobUrl("download/structure")}">${I("image")}Structure TIFF</a>`}<button class="btn sm" data-editspec>${I("open")}Edit this input</button></div>
         ${r.dem_direct ? `<p class="hint">No voxel RVE: viscosity alone of particles above 35 vol% — the particle dynamics packed and sheared its own particles (Viscosity section). The option <span class="ui">Also solve the resin flow on the RVE</span> builds an RVE for the 3D resin flow.</p>`
           : `<p class="hint">Grid ${gridTxt(r.plan)} · voxel ${fmt(r.plan.h_um)} µm · ${r.plan.film ? `film ${fmt(r.plan.L_um)} × ${fmt(r.plan.L_um)} µm × ${fmt(r.plan.T_um)} µm thick` : `edge ${fmt(r.plan.L_um)} µm`} · ${r.plan.seeds} realisation(s) · ${esc(r.realisations[0].route || "")}</p>`}${r.plan.notes.map((n) => `<div class="note warn">${esc(n)}</div>`).join("")}</div>
-      <div class="box"><div class="bt">Realised composition (voxels)</div>${tbl(["Region", "Kind", "vol %", "wt %"], comp)}<p class="hint">Density ${fmt(r.composition.density)} g/cm³ · specific heat ${fmt(r.composition.cp)} J/kg·K · porosity ${fmt(100 * r.composition.porosity)} %</p></div>${dispersionBox(r)}${pressBox(r)}</div>
+      <div class="box"><div class="bt">Realised composition (voxels)</div>${tbl(["Region", "Kind", "vol %", "wt %"], comp)}<p class="hint">Density ${fmt(r.composition.density)} g/cm³ · specific heat ${fmt(r.composition.cp)} J/kg·K · porosity ${fmt(100 * r.composition.porosity)} %</p>${overlapLine(r)}</div>${dispersionBox(r)}${pressBox(r)}</div>
       ${figs ? `<div class="box" style="margin-top:12px"><div class="bt">Figures (PyVista · matplotlib)</div><div class="figs">${figs}</div></div>` : ""}`;
   }
   // the arrangement after compression: the stresses over the compression,
@@ -2372,6 +2383,46 @@
         ${p.n_spheres} spheres, ${p.crossed_resin} now surrounded by another resin than at the start${pores ? `; pores ${fmt(100 * p.pore_fraction[0])} → ${fmt(100 * p.pore_fraction[1])} vol%` : ""}. In a periodic RVE an incompressible resin keeps its volume share, and a sphere moves with the resin around it: the regions change shape, not size.</p>
       ${cure}
       <div class="bt" style="margin-top:10px">The compression in 3D <span class="hint" id="pressPlayerHint">the box at every step: its three outer faces, or the three middle sections; materials or von Mises stress</span></div><div id="pressPlayer"></div></div>`;
+  }
+  // The voxel overlap check of every realisation (pipeline: overlap_check):
+  // every particle drawn again after the structure was made, and the voxels
+  // two particles claim - always shown, whatever made the structure
+  // progressive overlap: the largest share of the particle voxels in two
+  // particles - Auto (from the analyses, materials, particle size in voxels
+  // and loading, shown as the plan comes, like the recommended RVE), a value,
+  // or no limit
+  function ovShareAutoHtml() {
+    const os = state.plan && state.plan.plan && state.plan.plan.overlap_share;
+    if (!os) return "planning…";
+    return os.pct == null ? esc(os.text || "") : `<b>${os.pct > 0 ? Number(os.pct.toPrecision(2)) + " %" : "no overlap"}</b>${os.pct > 0 ? " - " + esc(os.text.replace(/^[^-]*- /, "")) : " - " + esc(os.text.replace(/^no overlap - /, ""))}`;
+  }
+  function overlapShareHTML(f) {
+    const o = f.options.overlap_steps || {};
+    const mode = ["value", "none"].includes(o.share) ? o.share : "auto";
+    return `<div class="g2"><div><label class="f">Largest share in two particles</label><select data-k="options.overlap_steps.share"><option value="auto"${mode === "auto" ? " selected" : ""}>Auto</option><option value="value"${mode === "value" ? " selected" : ""}>Set a value</option><option value="none"${mode === "none" ? " selected" : ""}>No limit</option></select></div>`
+      + (mode === "value" ? `<div><label class="f">Share <span class="u">% of particle voxels, 0 = no overlap</span></label><input type="number" min="0" max="100" step="0.01" data-k="options.overlap_steps.max_pct" data-num></div>`
+        : `<div></div>`)
+      + `</div>`
+      + (mode === "auto" ? `<div class="hint" style="margin-top:4px">Auto: <span data-live="ovshare">${ovShareAutoHtml()}</span></div>` : "");
+  }
+  function overlapLine(r) {
+    const ocs = (r.realisations || []).map((x) => x.overlap_check).filter((o) => o && o.particles && !o.error);
+    if (!ocs.length) return "";
+    const worst = ocs.reduce((a, o) => (o.of_particles > a.of_particles ? o : a), ocs[0]);
+    const allowed = Math.max(0, ...(r.realisations || []).map((x) => +x.overlap_vox || 0));
+    const lims = (r.realisations || []).map((x) => x.overlap_limit).filter((o) => o && o.max_pct != null);
+    const lim = lims.length ? lims[0].max_pct : null;
+    const ok = worst.shared === 0 || (lim != null && 100 * worst.of_particles <= lim + 1e-9);
+    const pct = (v) => (v === 0 ? "0" : v < 1e-5 ? (100 * v).toExponential(1) : (100 * v).toPrecision(3));
+    return `<p class="${ok ? "hint" : "warnline"}" style="margin-top:6px"><b>Voxel overlap check</b> (every particle drawn again${ocs.length > 1 ? `, ${ocs.length} realisations, the largest shown` : ""}): `
+      + `${worst.shared.toLocaleString()} voxels lie in two particles - <b>${pct(worst.of_particles)} %</b> of the ${worst.particle_voxels.toLocaleString()} particle voxels, ${pct(worst.of_rve)} % of the RVE`
+      + (worst.shared === 0 ? "; no particle overlaps another." : allowed ? `; the overlap of up to ${allowed} voxel${allowed > 1 ? "s" : ""} progressive overlap allowed, each voxel kept by one of the two.` : "; each voxel is kept by one of the two particles.")
+      + (worst.permitted ? ` ${worst.permitted.toLocaleString()} more voxels where a phase's overlap is permitted (not counted).` : "")
+      + (lim != null ? ` <b>At most ${Number((+lim).toPrecision(2))} % allowed</b>${lims[0].auto ? ` (Auto: ${esc(lims[0].auto)})` : ""}: ${100 * worst.of_particles <= lim + 1e-9 ? "within it" : "above it"}`
+        + (lim <= 0 ? "; no overlap allowed, so the structure was built without it."
+          : lims.some((o) => o.without_overlap) ? "; the overlap went beyond it, so the structure was built without overlap."
+          : lims.some((o) => (o.n_builds || 1) > 1) ? "; built again with less overlap to keep within it." : ".") : "")
+      + `</p>`;
   }
   // the compression with cure: each resin's conversion and viscosity, the
   // closing and the temperature against time
@@ -3718,7 +3769,7 @@
               ${lVar ? "The edge is a parameter of the study and takes its values." : d.edge === "adaptive" ? "Each case's edge is planned for its own particles (a larger filler, a larger RVE), on that voxel size." : "So the cases differ only in the parameters varied."}</div>`;
         })()}
         <div class="note ${n > 64 ? "bad" : ""}">${n} case${n === 1 ? "" : "s"}${n > 64 ? " — at most 64 are accepted" : " will be queued"}. Each case is a complete run with its own result, figures and report.</div>
-        <button class="btn primary" data-act="doeCreate" ${n < 1 || n > 64 ? "disabled" : ""}>${I("play")}Create study and queue runs</button>
+        <button class="btn primary" data-act="doeCreate" ${n < 1 || n > 64 ? "disabled" : ""}>${anyLive() ? `${I("plus")}Add the study to the queue` : `${I("play")}Create study and queue runs`}</button>
       </div></div>
       <div class="sec"><div class="sh">${I("runs")}Studies</div><div class="sb">${studies}</div></div>`;
   }
@@ -3732,9 +3783,12 @@
       form: clone(state.form),
     };
     body.grid = { edge: d.edge === "adaptive" ? "adaptive" : "fixed" };
+    const ahead = (state.jobs || []).filter((j) => ["running", "queued"].includes(j.state)).length;
     try {
       const res = await api("POST", "/api/doe", body);
-      toast(`The study has been created: ${res.n_cases} runs queued.`);
+      toast(ahead
+        ? `Added to the queue: the study "${esc(body.name)}", ${res.n_cases} case${res.n_cases === 1 ? "" : "s"} behind the ${ahead} run${ahead === 1 ? "" : "s"} under way or waiting; they start when a place and their memory are free.`
+        : `The study has been created: ${res.n_cases} runs queued.`, ahead ? 7000 : 4000);
       await loadDoeList();
       await openDoe(res.id);
       setCenter("doe");
@@ -4589,7 +4643,7 @@
       const b = e.target.closest("button"); if (!b) return;
       if (b.id === "dockToggle") toggleDock(); else setDock(b.dataset.d, true);
     });
-    $("#btnRun").addEventListener("click", () => submit(false));
+    $("#btnRun").addEventListener("click", () => (state.tab === "doe" ? doeCreate() : submit(false)));
     $("#btnStop").addEventListener("click", stopActive);
     $("#caseName").addEventListener("input", onField);
     $("#doeSel").addEventListener("change", (e) => openDoe(e.target.value));

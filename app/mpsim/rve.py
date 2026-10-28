@@ -595,10 +595,39 @@ def post_checks(plan_, gen_info, quality="standard"):
                                   "then depends on how finely the contacts are resolved. A contact resistance acts "
                                   "on the faces.")})
     conf = gen_info.get("voxel_conflicts", 0)
-    if conf:
+    oc = gen_info.get("overlap_check") or {}
+    allowed = int(gen_info.get("overlap_vox") or 0)
+    if oc.get("particles") and not oc.get("error"):
+        # always reported: every particle drawn once more after the structure
+        # was made (overlap_check), whatever the mode
+        rel = float(oc["of_particles"])
+        olim = gen_info.get("overlap_limit") or {}
+        lim = float(olim.get("max_pct") or 0.0) / 100.0
+        status = ("pass" if oc["shared"] == 0 or (olim and rel <= lim + 1e-12) else "warn" if (allowed or rel <= 1e-2)
+                  else "fail")
+        note = (f"{oc['shared']:,} of the {oc['particle_voxels']:,} particle voxels ({100 * rel:.3f} %; "
+                f"{100 * oc['of_rve']:.3f} % of the RVE) lie in two particles, each kept by one of them")
+        if oc["shared"] and allowed:
+            note += f" - the overlap of up to {allowed} voxel{'s' if allowed > 1 else ''} the packing needed (progressive overlap)"
+        elif oc["shared"]:
+            note += " - corners the packing's clumps do not cover, or a contact rounded onto the grid"
+        if oc.get("permitted"):
+            note += f"; {oc['permitted']:,} more voxels where the phase's overlap is permitted (not counted)"
+        if olim:
+            ol = olim
+            note += (f". At most {100 * lim:.2g} % allowed ("
+                     + (f"Auto: {ol['auto']}" if ol.get("auto") else "set under Gap between particles") + ")"
+                     + ("; no overlap allowed, so the structure was built without it" if lim <= 0 else
+                        "; the overlap went beyond it, so the structure was built without overlap"
+                        if ol.get("without_overlap") else
+                        f"; built again {int(ol.get('n_builds') or 1) - 1} time(s) with less overlap to keep within it"
+                        if int(ol.get("n_builds") or 1) > 1 else ""))
+        checks.append({"id": "overlap", "group": "Generated structure",
+                       "label": "Voxel overlap check: voxels in two particles (every particle drawn again)",
+                       "value": rel, "target": lim, "unit": "rel", "status": status, "note": note})
+    elif conf:
         nvox = gen_info.get("N", 1) ** 3
         rel = conf / nvox
-        allowed = int(gen_info.get("overlap_vox") or 0)
         checks.append({"id": "overlap", "group": "Generated structure", "label": "Voxels claimed by two particles",
                        "value": rel, "target": 1e-3, "unit": "rel",
                        # the overlap the progressive overlap allowed is reported by its own check

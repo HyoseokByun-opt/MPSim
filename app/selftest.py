@@ -1770,8 +1770,46 @@ def t_settle():
             f"{ck['thermal_stat']['note'].split(';')[1].strip()}")
 
 
+@check("Progressive overlap in the random placement: log-normal irregular grains at 60 vol% whose placement jams "
+       "short reach the loading in seconds (not minutes of clump relaxation); the voxel overlap check finds no overlap in "
+       "a placement that reached it, and the overlap it allowed in one that did not", quick=False)
+def t_rsa_overlap():
+    from mpsim import generate as GEN
+    from mpsim import pipeline as PL
+    from mpsim import spec as S
+    form = {"name": "g", "matrix": {"material_id": "epoxy"},
+            "phases": [{"material_id": "sio2", "name": "grains", "shape": "polyhedron",
+                        "size": {"d": 4, "unit": "um", "poly": "irregular", "variants": 0},
+                        "dist": {"type": "lognormal", "std": 1.6}, "fraction": {"value": 60, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 30, "voxel_um": 0.5, "quality": "fast"}, "analyses": {"thermal": True},
+            "options": {"directions": "z"}}
+    spec = S.normalize(form)
+    gp = PL._generator_phases(spec)
+    out = {}
+    for seed in (1, 2):
+        lines = []
+        t0 = time.time()
+        lab, info = GEN.generate(60, 0.5, gp, seed=seed, log=lines.append, contacts="keep", gap_vox=0.0,
+                                 overlap_steps=PL.overlap_steps(spec["options"]))
+        dt = time.time() - t0
+        oc = GEN.overlap_check(lab.shape, 0.5, info, gp)
+        vf = float((lab == 1).mean())
+        out[seed] = (dt, info.get("overlap_vox", 0), oc, vf, any("clump packing" in l for l in lines))
+    d1, k1, oc1, v1, c1 = out[1]
+    d2, k2, oc2, v2, c2 = out[2]
+    expect(k1 == 0 and oc1["shared"] == 0 and abs(v1 - 0.6) < 0.002, f"seed 1: overlap {k1}, shared {oc1['shared']}, vf {v1}")
+    expect(1 <= k2 <= 3 and not c2 and v2 > 0.595, f"seed 2: overlap {k2}, clump {c2}, vf {v2}")
+    expect(oc2["shared"] > 0 and oc2["of_particles"] < 0.02, f"seed 2 shared {oc2['shared']} ({oc2['of_particles']})")
+    expect(d2 < 60, f"seed 2 took {d2:.0f} s")
+    return (f"seed 1 placed without overlap ({d1:.1f} s, {100 * v1:.2f} vol%); seed 2 jammed short and was finished with "
+            f"up to {k2} voxel(s) of overlap in {d2:.1f} s ({100 * v2:.2f} vol%), {100 * oc2['of_particles']:.2f} % of its "
+            f"particle voxels in two particles")
+
+
 @check("Progressive overlap: spheres at 66 vol% (above random close packing) reach the loading with an overlap of "
-       "at most the voxels allowed; off, they are drawn smaller and fall short", quick=False)
+       "at most the voxels allowed; off, they are drawn smaller and fall short; with a largest share of the particle "
+       "voxels in two particles, a structure above it is built again with less overlap; Auto allows what changes "
+       "the result by at most 1 % (contrast, particle size in voxels, loading)", quick=False)
 def t_overlap_steps():
     from mpsim import generate as GEN
     ph = [{"shape": "sphere", "size_um": {"d": 4.0}, "dist": {"type": "mono"}, "vf": 0.66,
@@ -1789,8 +1827,40 @@ def t_overlap_steps():
     i, j, d = GEN._sphere_pairs(np.asarray(p["centers"]), r, np.array([30.0, 30.0, 30.0]))
     depth = float(np.max(r[i] + r[j] - d)) if d.size else 0.0
     expect(depth <= i1["overlap_vox"] * 0.5 * (1 + 1e-6), f"deepest overlap {depth:.3f} µm")
+    # a largest share: the 2-voxel structure shares more than 2.5 % of its
+    # particle voxels, so it is built again with 1 voxel, which keeps within
+    sh1 = 100 * GEN.overlap_check(lab1.shape, 0.5, i1, ph)["of_particles"]
+    lab2, i2 = GEN.generate(60, 0.5, ph, seed=3, log=lambda *a: None, contacts="keep", gap_vox=0.0,
+                            overlap_steps={"tries": 2, "max_vox": 3, "max_pct": 2.5})
+    sh2 = 100 * GEN.overlap_check(lab2.shape, 0.5, i2, ph)["of_particles"]
+    ol = i2.get("overlap_limit") or {}
+    expect(sh1 > 2.5 and i2["overlap_vox"] < i1["overlap_vox"] and sh2 <= 2.5 and len(ol.get("builds") or []) >= 2,
+           f"share limit 2.5 %: {sh1:.2f} % at {i1['overlap_vox']} voxels, then {sh2:.2f} % at {i2['overlap_vox']}, {ol}")
+    # Auto: from the analysis, the contrast, the particle size in voxels and
+    # the loading; a value as entered (0: no overlap); No limit
+    from mpsim import pipeline as PL
+    from mpsim import rve as R
+    from mpsim import spec as S
+
+    def share(mat, vf, an, o):
+        sp = S.normalize({"name": "s", "matrix": {"material_id": "epoxy"}, "phases": [
+            {"material_id": mat, "shape": "sphere", "size": {"d": 4, "unit": "um"}, "fraction": {"value": vf, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 30, "voxel_um": 0.5}, "analyses": {an: True}, "options": {"overlap_steps": o}})
+        pl = R.plan(PL._plan_phases(sp), dict(sp["rve"], contacts="keep", elastic_method="fans"), {an}, {})
+        PL.resolve_overlap_share(sp, pl)
+        return (PL.overlap_steps(sp["options"]) or {}).get("max_pct")
+    a_si, a_al = share("sio2", 60, "thermal", {}), share("al2o3", 60, "thermal", {})
+    a_si50, a_die = share("sio2", 50, "thermal", {}), share("sio2", 60, "dielectric", {})
+    expect(0.5 < a_si < 1.5 and a_al < 0.1 and a_si50 < 0.05 and a_die >= a_si,
+           f"Auto: silica 60 vol% {a_si}, alumina {a_al}, silica 50 vol% {a_si50}, silica dielectric {a_die}")
+    expect(share("sio2", 60, "thermal", {"share": "value", "max_pct": 0.3}) == 0.3
+           and share("sio2", 60, "thermal", {"share": "value", "max_pct": 0}) == 0.0
+           and share("sio2", 60, "thermal", {"share": "none"}) is None, "a value is not used as entered, or No limit limits")
     return (f"off: {100 * v0:.2f} vol% (size scale {i0['pack_scale']:.3f}); on: {100 * v1:.2f} vol% with up to "
-            f"{i1['overlap_vox']} voxel(s) of overlap (deepest {depth / 0.5:.2f} voxel)")
+            f"{i1['overlap_vox']} voxel(s) of overlap (deepest {depth / 0.5:.2f} voxel), {sh1:.2f} % of the particle "
+            f"voxels shared; at most 2.5 %: built again with {i2['overlap_vox']} voxel(s), {sh2:.2f} %, "
+            f"{100 * float(np.mean(lab2 == 1)):.2f} vol%; Auto (k, 8 voxels): silica 60 vol% {a_si:.2f} %, 50 vol% "
+            f"{a_si50:.3f} %, alumina {a_al:.3f} %, silica permittivity {a_die:.2f} %")
 
 
 @check("Runs: the Terminal sees the run's processes; a stopped run starts again in its own folder and uses the "
@@ -2717,7 +2787,8 @@ def t_film_spans():
 
 
 @check("Queue: runs build their structures side by side and wait before solving until their memory fits; a light "
-       "solve passes a heavy one only while the heavy one still fits beside it")
+       "solve passes a heavy one only while the heavy one still fits beside it; a run alone keeps the cores set in "
+       "Cores each (it took every core in 5.6.1) and takes them all when automatic")
 def t_queue_gate():
     import threading
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"))
@@ -2751,10 +2822,27 @@ def t_queue_gate():
         a.state = "done"
         q._open_gates()
     expect(h.phase == "solve", "the heavy one does not solve once the first is done")
+    # the cores of a run alone: the number set (Cores each), or every core when automatic
+    cores = os.cpu_count() or 2
+    got = {}
+    for auto in (False, True):
+        with q.lock:
+            q.jobs.clear()
+            q.order.clear()
+        q.auto_threads, q.threads = auto, 3
+        s = job("S%d" % auto, 1.0, threads=3)
+        s.auto_cores = auto
+        with q.lock:
+            s.phase, s.gate_t = "gate", 1.0
+            q._open_gates()
+        got[auto] = (s.phase, int(s.threads), int(s.grant[1].value))
+    expect(got[False] == ("solve", 3, 3), f"a run set to 3 cores: {got[False]}")
+    expect(got[True] == ("solve", cores, cores), f"an automatic run alone: {got[True]} of {cores} cores")
     with q.lock:
         q.jobs.clear()
         q.order.clear()
-    return "A solves, H (6 GB) waits, L1 (1 GB) passes it, L2 (3.5 GB) does not; H solves when A is done"
+    return (f"A solves, H (6 GB) waits, L1 (1 GB) passes it, L2 (3.5 GB) does not; H solves when A is done; "
+            f"a run alone solves on the 3 cores set, or on all {cores} when automatic")
 
 
 def _flag_waiter(flag):

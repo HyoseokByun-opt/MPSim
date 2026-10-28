@@ -111,12 +111,23 @@ def _overlap_steps(opts):
     packing cannot reach with no overlap is packed again with an overlap of 1
     voxel allowed, then 2, ... up to max_vox, `tries` packings at each step
     (generate.escalate_overlap). On by default; off, the particles are drawn
-    smaller instead, as before 5.6.1."""
+    smaller instead, as before 5.6.1.
+
+    The largest share of the particle voxels that may lie in two particles
+    (generate._generate_share_limited): share "auto" (default) - set for the
+    run from its analyses, materials, particle size in voxels and loading
+    (overlap_share.auto_share, resolved with the plan by
+    pipeline.resolve_overlap_share); "value" - max_pct as entered (0 = no
+    overlap); "none" - no limit (5.6.1)."""
     o = opts.get("overlap_steps")
     o = o if isinstance(o, dict) else {}
+    share = o.get("share") if o.get("share") in ("value", "none") else "auto"
+    pct = (float(_num(o.get("max_pct") if o.get("max_pct") not in (None, "") else 0.5,
+                      "largest share of voxels in two particles (%)", 0, 100)) if share == "value" else None)
     return {"on": bool(o.get("on", True)),
             "tries": int(_num(o.get("tries", 2), "packings per overlap step", 1, 50)),
-            "max_vox": int(_num(o.get("max_vox", 3), "largest overlap (voxels)", 1, 20))}
+            "max_vox": int(_num(o.get("max_vox", 3), "largest overlap (voxels)", 1, 20)),
+            "share": share, "max_pct": pct}
 
 
 def _realisations(r):

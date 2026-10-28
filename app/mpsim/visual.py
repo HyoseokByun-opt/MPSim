@@ -274,7 +274,7 @@ def _skin_workers(n_jobs, nvox):
     if n_jobs < 2 or nvox < SKIN_PROC_MIN_VOX:
         return 1
     try:
-        cores = int(os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 1)
+        cores = int(os.environ.get("MPSIM_JOB_CORES") or os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 1)
     except ValueError:
         cores = os.cpu_count() or 1
     try:

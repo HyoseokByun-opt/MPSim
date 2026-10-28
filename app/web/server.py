@@ -646,6 +646,11 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                   elastic_method=spec["options"]["elastic_method"])
         need = needed_analyses(spec)
         plan = R.plan(pph, rv, need, app.config["LIMITS"])
+        try:
+            from mpsim import overlap_share as OS
+            plan["overlap_share"] = OS.auto_share(spec, plan)
+        except Exception as e:                                       # noqa: BLE001
+            plan["overlap_share"] = {"pct": None, "text": f"not available ({type(e).__name__}: {e})"}
         return jsonify({"ok": True, "plan": plan, "composition": spec.get("composition"),
                         "warnings": warnings,
                         "labels": [{"name": t["name"], "kind": t["kind"]} for t in spec["labels"]],

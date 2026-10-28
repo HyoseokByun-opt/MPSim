@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.6.1-0b62c4" alt="version 5.6.1">
+  <img src="https://img.shields.io/badge/version-5.6.2-0b62c4" alt="version 5.6.2">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-87%20checks-2da44e" alt="87 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-88%20checks-2da44e" alt="88 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -58,10 +58,11 @@ The main capabilities are listed below.
   rotation; normal and log-normal size distributions with bounds, or a measured particle-size distribution loaded from
   the analyser's file (by volume or by number); coated and hollow particles, several filler phases in one RVE, pores as
   a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression,
-  and every blend that packs is checked so that no voxel belongs to two particles. Particles may touch, as in a filled compound
-  (the default), or are kept a set number of voxels apart. A loading that cannot be packed without overlap (equal spheres
-  beyond random close packing, dense cubes) is reached with the least overlap it takes, 1 voxel and then 2, rather than
-  with every particle drawn smaller (spheres at 66 vol%: 65.95 % instead of 62.6 %). Sphere packings can be sheared in the resin by
+  and every structure is drawn again once built to count the voxels that lie in two particles, whatever made it. Particles
+  may touch, as in a filled compound (the default), or are kept a set number of voxels apart. A loading that cannot be
+  packed without overlap (equal spheres beyond random close packing, dense cubes) is reached with the least overlap it
+  takes, 1 voxel and then 2, rather than with every particle drawn smaller (spheres at 66 vol%: 65.96 % instead of 62.6 %);
+  a random placement that jams a little short is finished the same way in seconds instead of being packed again. Sphere packings can be sheared in the resin by
   particle dynamics before they are drawn, which yields the arrangement of a compound after flow. Fillers and further
   matrix materials can be confined to sections (slabs) of the RVE, so that two compounds, a filled layer on an unfilled
   one or a resin interlayer are modelled as one structure.
@@ -450,7 +451,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **87 problems with known solutions** (56 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **88 problems with known solutions** (56 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -498,7 +499,8 @@ reference values. A selection:
 | Queue: structures side by side, solves through the memory gate | a light solve passes a heavy one only while the heavy one still fits | passed |
 | A run stopped while it waits at the memory gate | the queue keeps answering (a killed waiter hangs a multiprocessing Event) | passed; the gate is a non-blocking flag |
 | Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
-| Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.95 % with ≤ 2 voxels (62.6 % without) |
+| Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (62.6 % without) |
+| Progressive overlap in the random placement: log-normal irregular grains at 60 vol%, a seed whose placement jams | loading reached without a clump relaxation; overlap counted by drawing every particle again | 59.7 % in 3 s with ≤ 2 voxels, 0.6 % shared (220 s by clump relaxation before); 0 shared for a seed that places |
 | Statistical RVE: realisations until the 95 % interval is within the target | stops at the target or the most allowed; whole-number DOE seeds | passed |
 | Every step of a compression kept in 3D, also for a reused structure | labels and stress of each step's whole box | passed |
 
@@ -706,7 +708,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.6.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.6.2, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

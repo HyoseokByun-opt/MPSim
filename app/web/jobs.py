@@ -216,6 +216,7 @@ class Job:
         self.stop_ev = None
         self.stopping = False          # a stop was asked for: the end is "stopped", not "failed"
         self.threads = None            # the cores it was started with
+        self.auto_cores = True         # False: started with a set number of cores (Cores each), kept
         self.summary = None
         self.stage = ""
         self.stage_detail = ""
@@ -795,11 +796,16 @@ class JobQueue:
         the others, and a run that starts solving beside one already solving
         does not get one core while the first keeps all of them."""
         run = self.running()
-        active = [j for j in run if j.grant is not None and j.phase in ("structure", "solve") and not j.stopping]
+        # a run started with a set number of cores (Home -> Machine -> Cores
+        # each) keeps exactly that number; only automatic ones are rebalanced
+        # (before 5.6.2 a gated run alone took every core whatever the setting)
+        active = [j for j in run if j.grant is not None and j.phase in ("structure", "solve") and not j.stopping
+                  and getattr(j, "auto_cores", True)]
+        fixed = sum(int(j.threads or 0) for j in run
+                    if j.grant is None or (not getattr(j, "auto_cores", True) and j.phase in ("structure", "solve")))
         if not active:
             return
         cores = os.cpu_count() or 2
-        fixed = sum(int(j.threads or 0) for j in run if j.grant is None)
         avail = max(len(active), cores - fixed)
         q, r = divmod(avail, len(active))
         for k, j in enumerate(sorted(active, key=lambda x: x.started or 0.0)):
@@ -858,6 +864,7 @@ class JobQueue:
         out_q = ctx.Queue()
         stop_ev = Flag(ctx)
         job.threads = self._threads_for(job)
+        job.auto_cores = bool(self.auto_threads)
         job.phase = self._first_phase(job)
         gate = None
         if job.phase == "structure":

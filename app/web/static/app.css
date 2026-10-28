@@ -208,6 +208,7 @@ label.f .u{color:var(--muted);font-weight:400;margin-left:4px}
 .vdem{position:absolute;inset:0;z-index:12;background:#fff;display:flex;flex-direction:column;padding:8px 10px}
 .vdem[hidden]{display:none}
 .runtools{display:flex;gap:6px;margin:2px 0 8px;flex-wrap:wrap}
+.warnline{font-size:12px;color:#9a6700;background:#fff8c5;border:1px solid #f1e05a;border-radius:4px;padding:5px 8px}
 .runopen{margin:0 0 10px}.runopen[hidden]{display:none}
 .runopen input{width:100%;margin-bottom:6px}
 .livemain{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 12px 4px}

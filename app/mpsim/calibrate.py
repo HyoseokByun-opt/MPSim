@@ -418,11 +418,14 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
                       limits or {})
         film = bool(plan.get("film"))
         plan["skin"] = PL.film_skin(spec, plan) if film else None
+        PL.resolve_overlap_share(spec, plan)
         gen_phases = PL._generator_phases(spec)
         want_cf = PL.wants_contact_faces(spec)
         key = PL.structure_key(gen_phases, plan, PL.contacts_key(spec["options"]), spec["rve"]["seed"], want_cf,
                                sheared=PL.shear_key(spec), dispersion=spec["rve"].get("dispersion"))
         got = PL.load_structure(reuse_dirs, key)
+        if got is not None and not PL.kept_share_ok(got[1], got[0], plan["h_um"], gen_phases, film, spec["options"])[0]:
+            got = None
         if got is not None:
             gen_labels, ginfo, _ = got
             log(f"   sample {i+1}: structure {plan['N']}³ reused")

@@ -41,7 +41,7 @@ def _n_procs():
     """Figure processes: up to three, a core of the run each beyond the
     solves, and about 1.5 GB of free memory each (a large scene)."""
     try:
-        cores = int(os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 1)
+        cores = int(os.environ.get("MPSIM_JOB_CORES") or os.environ.get("NUMBA_NUM_THREADS") or 0) or (os.cpu_count() or 1)
     except ValueError:
         cores = os.cpu_count() or 1
     try:

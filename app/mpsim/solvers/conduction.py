@@ -520,13 +520,14 @@ def _cg_direction(p, z, shift, beta):
 
 
 def _threads():
-    """The thread count the job was given (the queue sets NUMBA_NUM_THREADS, a
-    parallel-solve worker MPSIM_THREADS); -1 (all cores) would ignore the
-    machine setting."""
+    """The thread count the job was given (a parallel-solve worker
+    MPSIM_THREADS, the job MPSIM_JOB_CORES - its numba pool, NUMBA_NUM_THREADS,
+    is sized for every core when the queue may grant more); -1 (all cores)
+    would ignore the machine setting."""
     import os
     try:
-        return max(1, int(os.environ.get("MPSIM_THREADS") or os.environ.get("NUMBA_NUM_THREADS")
-                          or os.cpu_count() or 1))
+        return max(1, int(os.environ.get("MPSIM_THREADS") or os.environ.get("MPSIM_JOB_CORES")
+                          or os.environ.get("NUMBA_NUM_THREADS") or os.cpu_count() or 1))
     except ValueError:
         return -1
 

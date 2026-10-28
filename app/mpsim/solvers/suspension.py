@@ -115,9 +115,11 @@ def init_backend(prefer="auto", log=None):
     for name in order:
         try:
             extra = {}
-            # the cores of the run (the queue sets NUMBA_NUM_THREADS); a
-            # flow-curve worker running beside others, its share of them
-            n_ti = os.environ.get("MPSIM_TI_THREADS") or os.environ.get("NUMBA_NUM_THREADS")
+            # the cores of the run (MPSIM_JOB_CORES; its numba pool may be
+            # sized for every core); a flow-curve worker running beside
+            # others, its share of them; a solve worker, its threads
+            n_ti = (os.environ.get("MPSIM_TI_THREADS") or os.environ.get("MPSIM_THREADS")
+                    or os.environ.get("MPSIM_JOB_CORES") or os.environ.get("NUMBA_NUM_THREADS"))
             if name == "cpu" and n_ti and n_ti.strip().isdigit():
                 extra["cpu_max_num_threads"] = max(1, int(n_ti))
             ti.init(arch=getattr(ti, name), default_fp=ti.f64, default_ip=ti.i32, offline_cache=True,

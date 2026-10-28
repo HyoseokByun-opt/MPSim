@@ -7,7 +7,7 @@ and the self-test all drive exactly the same code.
 import os as _os
 import sys as _sys
 
-__version__ = "5.6.1"
+__version__ = "5.6.2"
 
 # A conda environment's math libraries (MKL) load their parts from the
 # environment's Library\bin by searching PATH. Started without activating the
