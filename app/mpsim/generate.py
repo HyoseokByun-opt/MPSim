@@ -1732,6 +1732,19 @@ SPARSE_SHAPE = 4.0
 # with progressive overlap the packings stop creeping near the target (clump_pack);
 # below g_min they stop once the size has not grown by `stall` (relative) over the same window
 CREEP = {"g_min": 0.97, "gain": 0.003, "min_steps": 2000, "frac": 0.25, "stall": 0.001}
+# spheres of very different sizes are packed largest first (pack_by_size): a new class of sizes starts below
+# the largest of the class before it by this factor (None: every sphere grown at once, as up to 5.6.4)
+STAGED_RATIO = 2.5
+# the Monte-Carlo equilibration of a sphere packing: about this many moves in all, between 200 and the most sweeps
+MC_SWEEP_MOVES = 3.0e6
+MC_SWEEPS_MAX = 3000
+# a packing by size gets this many times the moves: the small spheres are drawn beside the large ones only
+# from 0.8 of their size, and with the usual moves fewer of them reached a large one than in the equilibrium of
+# hard spheres (alumina 2.4-2.8 + 0.3-0.36 µm, 43-54 vol%: 17-19 % fewer, k_z 1.3-2.5 % low; ten times: 4-9 %
+# fewer; three times: k_z within 1 % of ten). With the two cell grids of _mc_sweeps ten times cost 15-30 s there.
+STAGED_SWEEPS = 10.0
+# the Monte-Carlo moves keep spheres smaller than the largest by more than this factor in a cell grid of their own
+MC_GRID_SPLIT = 2.5
 MAX_COMPRESS_ITER = 1_500
 # a tighter budget for jamming_fraction, which only needs where the packing
 # stops (set and reset around its call; None outside it)
@@ -1809,21 +1822,52 @@ def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0, rho=None, rho
     try a position anywhere in the box (a symmetric proposal, so the same
     acceptance keeps detailed balance): local moves alone spread a particle
     only about ten diameters in a few thousand sweeps, too little to build a
-    profile across the box. The returned acceptance is that of local moves."""
+    profile across the box. The returned acceptance is that of local moves.
+
+    Spheres of very different sizes are kept in two cell grids, the small ones
+    (below the largest by more than MC_GRID_SPLIT) in cells of their own size:
+    with one grid of the largest size a small sphere's move tested every small
+    sphere within a large one's reach (alumina 2.6 + 0.35 µm: some 3,800 of
+    them). Whether a move overlaps does not depend on the grid, so the moves
+    and the packing are the same as with one grid."""
     np.random.seed(seed)
     if Lz <= 0.0:
         Lz = L
     zr = Wt if Wt > 0.0 else Lz
     n = pos.shape[0]
-    cs0 = 2.0 * rad.max()
-    nc = max(int(L / cs0), 3)
-    cs = L / nc
-    ncz = max(int(Lz / cs0), 3)
-    csz = Lz / ncz
-    head = -np.ones(nc * nc * ncz, np.int64)
+    rmax = rad.max()
+    r_s = 0.0
+    for i in range(n):
+        if rad[i] * MC_GRID_SPLIT < rmax and rad[i] > r_s:
+            r_s = rad[i]
+    ng = 2 if r_s > 0.0 else 1
+    if ng == 1:
+        r_s = rmax
+    grp = np.zeros(n, np.int64)
+    for i in range(n):
+        if rad[i] > r_s:
+            grp[i] = 1
+    rg = np.array([r_s, rmax])
+    ncg = np.zeros(2, np.int64)
+    nczg = np.zeros(2, np.int64)
+    csg = np.zeros(2)
+    cszg = np.zeros(2)
+    off = np.zeros(3, np.int64)
+    for g in range(ng):
+        c0 = 2.0 * rg[g]
+        if g == 0 and ng == 2:
+            # small spheres few among many cells: no more cells than about 8 a sphere
+            c0 = max(c0, (L * L * Lz / (8.0 * n)) ** (1.0 / 3.0))
+        ncg[g] = max(int(L / c0), 3)
+        csg[g] = L / ncg[g]
+        nczg[g] = max(int(Lz / c0), 3)
+        cszg[g] = Lz / nczg[g]
+        off[g + 1] = off[g] + ncg[g] * ncg[g] * nczg[g]
+    head = -np.ones(off[ng], np.int64)
     nxt = -np.ones(n, np.int64)
     for i in range(n):
-        c = _cell3(pos[i, 0], pos[i, 1], pos[i, 2], cs, nc, csz, ncz)
+        g = grp[i]
+        c = off[g] + _cell3(pos[i, 0], pos[i, 1], pos[i, 2], csg[g], ncg[g], cszg[g], nczg[g])
         nxt[i] = head[c]
         head[c] = i
     disp = disp0
@@ -1831,8 +1875,6 @@ def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0, rho=None, rho
     loc_total = 0
     half = 0.5 * L
     halfz = 0.5 * Lz
-    reach = int(math.ceil(cs0 / cs))
-    reachz = int(math.ceil(cs0 / csz))
     for s in range(n_sweeps):
         acc = 0
         n_loc = 0
@@ -1856,45 +1898,64 @@ def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0, rho=None, rho
                     continue
             else:
                 z = z % Lz
-            cx = int(x / cs) % nc
-            cy = int(y / cs) % nc
-            cz = int(z / csz) % ncz
             hit = False
-            for ox in range(-reach, reach + 1):
+            for g in range(ng):
                 if hit:
                     break
-                ax = (cx + ox) % nc
-                for oy in range(-reach, reach + 1):
+                nc = ncg[g]
+                ncz = nczg[g]
+                cs = csg[g]
+                csz = cszg[g]
+                cx = int(x / cs) % nc
+                cy = int(y / cs) % nc
+                cz = int(z / csz) % ncz
+                # the cells within the largest contact distance with this grid's spheres; a reach that
+                # spans the grid visits each cell once
+                reach = int(math.ceil((rad[i] + rg[g]) / cs))
+                reachz = int(math.ceil((rad[i] + rg[g]) / csz))
+                lx, hx, bx = -reach, reach, cx
+                ly, hy, by = -reach, reach, cy
+                lz, hz, bz = -reachz, reachz, cz
+                if 2 * reach + 1 >= nc:
+                    lx, hx, bx = 0, nc - 1, 0
+                    ly, hy, by = 0, nc - 1, 0
+                if 2 * reachz + 1 >= ncz:
+                    lz, hz, bz = 0, ncz - 1, 0
+                for ox in range(lx, hx + 1):
                     if hit:
                         break
-                    ay = (cy + oy) % nc
-                    for oz in range(-reachz, reachz + 1):
-                        az = (cz + oz) % ncz
-                        j = head[(ax * nc + ay) * ncz + az]
-                        while j != -1:
-                            if j != i:
-                                dx = pos[j, 0] - x
-                                dy = pos[j, 1] - y
-                                dz = pos[j, 2] - z
-                                if dx > half:
-                                    dx -= L
-                                elif dx < -half:
-                                    dx += L
-                                if dy > half:
-                                    dy -= L
-                                elif dy < -half:
-                                    dy += L
-                                if dz > halfz:
-                                    dz -= Lz
-                                elif dz < -halfz:
-                                    dz += Lz
-                                sr = rad[i] + rad[j]
-                                if dx * dx + dy * dy + dz * dz < sr * sr:
-                                    hit = True
-                                    break
-                            j = nxt[j]
+                    ax = (bx + ox) % nc
+                    for oy in range(ly, hy + 1):
                         if hit:
                             break
+                        ay = (by + oy) % nc
+                        for oz in range(lz, hz + 1):
+                            az = (bz + oz) % ncz
+                            j = head[off[g] + (ax * nc + ay) * ncz + az]
+                            while j != -1:
+                                if j != i:
+                                    dx = pos[j, 0] - x
+                                    dy = pos[j, 1] - y
+                                    dz = pos[j, 2] - z
+                                    if dx > half:
+                                        dx -= L
+                                    elif dx < -half:
+                                        dx += L
+                                    if dy > half:
+                                        dy -= L
+                                    elif dy < -half:
+                                        dy += L
+                                    if dz > halfz:
+                                        dz -= Lz
+                                    elif dz < -halfz:
+                                        dz += Lz
+                                    sr = rad[i] + rad[j]
+                                    if dx * dx + dy * dy + dz * dz < sr * sr:
+                                        hit = True
+                                        break
+                                j = nxt[j]
+                            if hit:
+                                break
             if hit:
                 continue
             if rho_max > 0.0:
@@ -1902,8 +1963,9 @@ def _mc_sweeps(pos, rad, L, n_sweeps, disp0, seed, Lz=0.0, Wt=0.0, rho=None, rho
                 r_new = _rho_at(rho, x, y, z, L, zr)
                 if r_new < r_old and np.random.random() * r_old > r_new:
                     continue
-            c_old = _cell3(pos[i, 0], pos[i, 1], pos[i, 2], cs, nc, csz, ncz)
-            c_new = _cell3(x, y, z, cs, nc, csz, ncz)
+            g = grp[i]
+            c_old = off[g] + _cell3(pos[i, 0], pos[i, 1], pos[i, 2], csg[g], ncg[g], cszg[g], nczg[g])
+            c_new = off[g] + _cell3(x, y, z, csg[g], ncg[g], cszg[g], nczg[g])
             pos[i, 0] = x
             pos[i, 1] = y
             pos[i, 2] = z
@@ -2473,6 +2535,103 @@ def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L,
         Rm[i, 1, 1] = Rm[i, 2, 2] * Rm[i, 0, 0] - Rm[i, 2, 0] * Rm[i, 0, 2]
         Rm[i, 1, 2] = Rm[i, 2, 0] * Rm[i, 0, 1] - Rm[i, 2, 1] * Rm[i, 0, 0]
     return worst
+
+
+def size_classes(d, ratio=None):
+    """Indices of the spheres by classes of size, largest first: a class ends where a sphere is smaller than its
+    largest by `ratio`. One class (None) when the sizes are within it."""
+    ratio = ratio or STAGED_RATIO
+    order = np.argsort(-d, kind="stable")
+    out, cur, top = [], [], None
+    for i in order:
+        if top is not None and d[i] < top / ratio:
+            out.append(np.array(cur, np.int64))
+            cur, top = [], None
+        if top is None:
+            top = float(d[i])
+        cur.append(int(i))
+    out.append(np.array(cur, np.int64))
+    return out if len(out) > 1 else None
+
+
+def _free_centres(placed_c, placed_d, d_new, L, T, Lz, film, rng, tries=60):
+    """Centres for spheres of diameters d_new outside every placed sphere (at full size), drawn at random; the new
+    ones may overlap one another (the relaxation separates them). A sphere that finds no free place in `tries`
+    draws keeps its last one."""
+    n = len(d_new)
+    out = np.empty((n, 3))
+    box = np.array([L, L, 3.0 * Lz if film else Lz])    # a film: no wrap across its faces
+    tree = cKDTree(np.mod(placed_c, box), boxsize=box) if len(placed_c) else None
+    rmax = 0.5 * float(placed_d.max()) if len(placed_d) else 0.0
+    todo = np.arange(n)
+    for _ in range(tries):
+        if not len(todo):
+            break
+        c = rng.random((len(todo), 3)) * np.array([L, L, Lz])
+        r = 0.5 * d_new[todo]
+        if film:
+            c[:, 2] = r + rng.random(len(todo)) * np.maximum(T - 2.0 * r, 0.0)
+        ok = np.ones(len(todo), bool)
+        if tree is not None:
+            near = tree.query_ball_point(np.mod(c, box), r + rmax)
+            for k, js in enumerate(near):
+                if js:
+                    dv = placed_c[js] - c[k]
+                    dv[:, :2] -= L * np.round(dv[:, :2] / L)
+                    if not film:
+                        dv[:, 2] -= Lz * np.round(dv[:, 2] / Lz)
+                    if np.any(np.sqrt((dv ** 2).sum(1)) < r[k] + 0.5 * placed_d[js]):
+                        ok[k] = False
+        out[todo] = c
+        todo = todo[~ok]
+    return out
+
+
+def pack_by_size(L, C0, d, ph, same_ok, T, Lz, Wt, rng, log=None, should_stop=None, creep=None):
+    """Spheres of very different sizes packed largest first (a bimodal blend, a wide distribution): grown all at
+    once, every large sphere had to clear its room among thousands of small ones as they all grew, near the end
+    the growth crept by 0.1 % a round, and the small spheres it pushed stayed jammed against it - twice the
+    hard-sphere equilibrium of them at a large one, k_z 6 % high (alumina 2.4-2.8 and 0.3-0.36 µm, 43-54 vol%
+    in a 10 µm film: 1,000-3,800 s). Near the film's jamming (3 µm at 57.9 vol% with 1.8 vol% of 0.29 µm) it
+    stopped at 0.969 of the size, 9 % short. Here the largest class is grown alone in the empty box (few
+    spheres, quick); each smaller class is then drawn in the room the placed ones leave and all of them relaxed
+    together, from a size where the new ones are apart, to full size: 45-215 s for the same cases with the
+    equilibration of STAGED_SWEEPS, and 0.994-1 of the size near the jamming. Returns (centres, size scale
+    reached) or None for sizes within one class; a scale below 1 is finished by the usual packing from there.
+    creep: the stop of a creeping packing (CREEP, with progressive overlap), for every class as for the growth
+    at once - a wide distribution puts most spheres in the largest class."""
+    classes = size_classes(d)
+    if classes is None:
+        return None
+    film = T is not None
+    sph = [(np.zeros((1, 3)), np.array([0.5]))]
+    pos = np.array(C0, float)
+    placed = np.zeros(0, np.int64)
+    for k, cl in enumerate(classes):
+        if k:
+            pos[cl] = _free_centres(pos[placed], d[placed], d[cl], L, T, Lz, film, rng)
+        placed = np.concatenate([placed, cl])
+        m = len(placed)
+        # from a size where the class just drawn hardly overlaps (the placed ones shrink with it and have room)
+        g0 = 0.55 if k == 0 else 0.8
+        p, _, g = clump_pack(float(L), np.ascontiguousarray(pos[placed]), np.tile(np.eye(3), (m, 1, 1)),
+                             d[placed].copy(), np.zeros(m, np.int64), sph, np.zeros(m), ph[placed], same_ok,
+                             np.full(m, -1, np.int64), np.full(m, 0.5), log=None, should_stop=should_stop, tol=1e-3,
+                             Lz=Lz, Wt=Wt, g0=g0, recover=True, creep=creep)
+        pos[placed] = p
+        if log is not None:
+            log(f"    sizes {float(d[cl].min()):.3g}-{float(d[cl].max()):.3g} µm ({len(cl):,} spheres) packed "
+                f"{'alone' if k == 0 else 'into the room of the larger ones'}: size scale {g:.4f}")
+        if g < 1.0:
+            if log is not None:
+                log("    the packing by size stops there; the usual growth finishes it")
+            if k < len(classes) - 1:
+                # the smaller classes still to come: drawn in the room left, the growth starts a little lower
+                rest = np.concatenate(classes[k + 1:])
+                pos[rest] = _free_centres(pos[placed], d[placed] * g, d[rest], L, T, Lz, film, rng)
+                return pos, 0.8 * float(g)
+            return pos, float(g)
+    return pos, 1.0
 
 
 def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
@@ -3146,6 +3305,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             C0 = rng.random((n, 3)) * box
             if film:
                 C0[:, 2] = 0.5 * d_excl + rng.random(n) * (T - d_excl)
+        staged = None
         if rho is not None:
             # An uneven dispersion. The growth's overlap relaxation has no
             # reason to keep particles where they were put and evens them out
@@ -3178,11 +3338,19 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                            g0=0.999 * s0)
                 log(f"  growth with overlap relaxation from size scale {s0:.4f}: {scale:.4f}")
         else:
-            pos, _, scale = clump_pack(float(L), C0, np.tile(np.eye(3), (n, 1, 1)), d_excl.copy(),
-                                       np.zeros(n, np.int64), [(np.zeros((1, 3)), np.array([0.5]))], np.zeros(n),
-                                       ph_arr, overlap_of.astype(np.int64), np.full(n, -1, np.int64),
-                                       np.full(n, 0.5), log=log, should_stop=should_stop, tol=1e-3, Lz=Lz_pack, Wt=Wt,
-                                       creep=CREEP if overlap_steps else None)
+            if STAGED_RATIO:
+                staged = pack_by_size(float(L), C0, d_excl, ph_arr, overlap_of.astype(np.int64), T if film else None,
+                                      Lz_pack, Wt, rng, log=log, should_stop=should_stop,
+                                      creep=CREEP if overlap_steps else None)
+            if staged is not None and staged[1] >= 1.0:
+                pos, scale = staged
+            else:
+                pos, _, scale = clump_pack(float(L), C0 if staged is None else staged[0], np.tile(np.eye(3), (n, 1, 1)),
+                                           d_excl.copy(), np.zeros(n, np.int64), [(np.zeros((1, 3)), np.array([0.5]))],
+                                           np.zeros(n), ph_arr, overlap_of.astype(np.int64), np.full(n, -1, np.int64),
+                                           np.full(n, 0.5), log=log, should_stop=should_stop, tol=1e-3, Lz=Lz_pack, Wt=Wt,
+                                           g0=0.55 if staged is None else 0.999 * staged[1],
+                                           creep=CREEP if overlap_steps else None)
         pos = np.ascontiguousarray(pos)
         if scale < 1.0 and contacts == "apart" and np.any(d_excl > d_base):
             # The separation gap does not fit at this loading. Keep the gap the
@@ -3254,7 +3422,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         if worst > 1e-3:
             log(f"  !! {left} sphere pairs still overlap after the separation (up to {100 * worst:.2f} % of the "
                 f"contact distance); the spheres are drawn smaller by that much so that none overlaps")
-        sweeps = int(min(3000, max(200, 3.0e6 / n)))
+        sweeps = int(min(MC_SWEEPS_MAX, max(200, MC_SWEEP_MOVES * (STAGED_SWEEPS if staged is not None else 1.0) / n)))
         if rho is not None:
             # an uneven dispersion settles into its profile by the biased moves
             # (with jumps across the box): more sweeps where they are cheap

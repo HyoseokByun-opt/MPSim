@@ -939,6 +939,59 @@ def t_generator():
             f"translation-invariant {counts[0]} voxels")
 
 
+@check("Spheres of very different sizes packed largest first: a 5:1 blend reaches its loading and conducts as the "
+       "packing grown at once with ten times the equilibration; the Monte-Carlo moves of wide blends (two cell grids) "
+       "never let two spheres overlap", quick=False)
+def t_pack_by_size():
+    from scipy.spatial import cKDTree
+    from mpsim import generate as GEN
+    from mpsim.solvers import conduction as CD
+    ph = [dict(name=n, shape="sphere", size_um={"d": d}, dist={"type": "mono"}, vf=vf,
+               orientation={"mode": "iso", "spread_deg": 0}, overlap=False, gap_frac=0.0)
+          for n, d, vf in (("coarse", 3.0, 0.27), ("fine", 0.6, 0.18))]
+    res = {}
+    saved = (GEN.STAGED_RATIO, GEN.MC_SWEEP_MOVES)
+    try:
+        for tag, ratio, moves in (("by size", saved[0], saved[1]), ("at once, long", None, 10 * saved[1])):
+            GEN.STAGED_RATIO, GEN.MC_SWEEP_MOVES = ratio, moves
+            t0 = time.time()
+            lab, info = GEN.generate(80, 0.12, ph, seed=5, log=lambda *a: None, contacts="keep", gap_vox=0.0)
+            dt = time.time() - t0
+            k = CD.solve_direction(lab, np.array([0.2, 30.0, 30.0]), 2, tol=1e-6)["k_eff"]
+            res[tag] = (dt, k, float(info.get("pack_scale") or 1.0), [float((lab == i).mean()) for i in (1, 2)], info)
+    finally:
+        GEN.STAGED_RATIO, GEN.MC_SWEEP_MOVES = saved
+    t_s, k_s, sc, vf, info_b = res["by size"]
+    expect(sc >= 1.0 and all(abs(v / w - 1) < 0.02 for v, w in zip(vf, (0.27, 0.18))), f"by size: scale {sc}, fractions {vf}")
+    k_ref = res["at once, long"][1]
+    expect(abs(k_s / k_ref - 1) < 0.05, f"k by size {k_s:.3f}, grown at once after a long equilibration {k_ref:.3f}")
+    # the moves: the packing above and a 7:1 blend in a 6 µm film, 200 more sweeps, every pair checked after them
+    ph_f = [dict(name=n, shape="sphere", size_um={"d": d}, dist={"type": "mono"}, vf=vf,
+                 orientation={"mode": "iso", "spread_deg": 0}, overlap=False, gap_frac=0.0)
+            for n, d, vf in (("coarse", 2.6, 0.25), ("fine", 0.35, 0.18))]
+    _, info_f = GEN.generate(60, 0.12, ph_f, seed=2, log=lambda *a: None, contacts="keep", gap_vox=0.0, nz=50)
+    worst = []
+    for inf, L, T in ((info_b, 80 * 0.12, None), (info_f, 60 * 0.12, 50 * 0.12)):
+        p = np.ascontiguousarray(np.asarray(inf["particles"]["centers"], float))
+        r = 0.999 * np.ascontiguousarray(np.asarray(inf["particles"]["P"], float)[:, 0])
+        Lz = T + 3.0 * r.max() if T else L
+        p[:, :2] = np.mod(p[:, :2], L)
+        if not T:
+            p[:, 2] = np.mod(p[:, 2], L)
+        rho, rmax = GEN._rho_args(None)
+        GEN._mc_sweeps(p, r, float(L), 200, 0.05 * float(2 * r.min()), 3, float(Lz), float(T or 0.0), rho, rmax, 0.0)
+        box = np.array([L, L, 3 * Lz if T else Lz])
+        pr = cKDTree(np.mod(p, box), boxsize=box).query_pairs(2 * r.max(), output_type="ndarray")
+        dv = p[pr[:, 0]] - p[pr[:, 1]]
+        dv[:, :2] -= L * np.round(dv[:, :2] / L)
+        if not T:
+            dv[:, 2] -= Lz * np.round(dv[:, 2] / Lz)
+        worst.append(float(np.min(np.sqrt((dv ** 2).sum(1)) / (r[pr[:, 0]] + r[pr[:, 1]]))))
+        expect(worst[-1] > 1.0 - 1e-9, f"spheres overlap after the moves: closest pair at {worst[-1]:.6f} of contact")
+    return (f"by size {t_s:.1f} s, k {k_s:.3f}; grown at once with 10x equilibration k {k_ref:.3f}; "
+            f"after 200 more sweeps the closest pairs at {worst[0]:.4f} and {worst[1]:.4f} of contact")
+
+
 @check("Redrawing: the stored particles reproduce the generated structure exactly, and a finer grid keeps the fraction")
 def t_rasterize():
     from mpsim import generate as GEN

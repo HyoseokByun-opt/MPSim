@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.6.4-0b62c4" alt="version 5.6.4">
+  <img src="https://img.shields.io/badge/version-5.6.5-0b62c4" alt="version 5.6.5">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -57,8 +57,12 @@ The main capabilities are listed below.
   superellipsoids, polyhedra (irregular grains, each with a shape of its own if wanted), helices and connected networks with full 3D
   rotation; normal and log-normal size distributions with bounds, or a measured particle-size distribution loaded from
   the analyser's file (by volume or by number); coated and hollow particles, several filler phases in one RVE, pores as
-  a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression,
-  and every structure is drawn again once built to count the voxels that lie in two particles, whatever made it. Particles
+  a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression;
+  spheres of very different sizes (a coarse and a fine filler, a wide distribution) are packed largest first, which
+  takes minutes where growing all of them at once took an hour (alumina 2.4 + 0.3 µm, 50.5 vol% in a 10 µm film: 139 s
+  against 3,807 s) and leaves the small spheres around the large ones within 4-9 % of the equilibrium of a hard-sphere
+  mixture, where the growth at once jammed twice as many against them (k<sub>z</sub> 6 % high).
+  Every structure is drawn again once built to count the voxels that lie in two particles, whatever made it. Particles
   may touch, as in a filled compound (the default), or are kept a set number of voxels apart. A loading that cannot be
   packed without overlap (equal spheres beyond random close packing, dense cubes) is reached with the least overlap it
   takes, 1 voxel and then 2, rather than with every particle drawn smaller (spheres at 66 vol%: 65.96 % instead of 62.6 %);
@@ -708,7 +712,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.6.4, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.6.5, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

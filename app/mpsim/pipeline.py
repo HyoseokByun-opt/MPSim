@@ -324,6 +324,11 @@ def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispe
         # v5.3: particles of a size distribution are drawn until the target
         # volume (no common rescaling); monodisperse structures are unchanged
         key["psd"] = 2
+    parts = [ph for ph in gen_phases if ph.get("shape") != G.NETWORK and float(ph.get("vf") or 0) > 0]
+    if GEN.STAGED_RATIO and parts and all(ph.get("shape") == "sphere" and not ph.get("overlap") for ph in parts) and (
+            key.get("psd") or len({round(float((ph.get("size_um") or {}).get("d") or 0), 9) for ph in parts}) > 1):
+        # 5.6.5: spheres of different sizes packed largest first (generate.pack_by_size); one size keeps its key
+        key["pack"] = "size"
     if sheared:
         key["sheared"] = sheared                 # only a sheared one: random packings keep their keys
     if pressed:
