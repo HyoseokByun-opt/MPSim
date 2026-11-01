@@ -758,6 +758,37 @@ def t_cal_rve():
             f"({K_['ci95'][0]:.2g}–{K_['ci95'][1]:.2g}); true 2e-7, 2.0; γ {r['identifiability']['collinearity']:.1f}")
 
 
+@check("Calibration of a CTE: the filler's expansion recovered from two contents (synthetic data; elastic solves "
+       "only, no conduction)", quick=False)
+def t_cal_cte():
+    import json
+    from mpsim import calibrate as CA
+    base = CA.fill_props({"name": "cte", "matrix": {"material_id": "epoxy"},
+                          "phases": [{"material_id": "sio2", "name": "F", "shape": "sphere", "size": {"d": 4.0, "unit": "um"},
+                                      "fraction": {"value": 30, "basis": "vol"}}],
+                          "rve": {"auto": False, "L_um": 24.0, "voxel_um": 1.0, "quality": "fast"},
+                          "analyses": {"cte": True}})
+    base["phases"][0]["props"]["alpha"] = 3.0                       # the truth
+    U = {"path": "phases.0.props.alpha", "label": "a", "lo": 0.3, "hi": 30.0, "scale": "log"}
+    conds = [{"label": "30%", "set": {}}, {"label": "50%", "set": {"phases.0.fraction.value": 50}}]
+    with tempfile.TemporaryDirectory() as d:
+        samples = CA._prepare({"measurements": [dict(c, property="alpha") for c in conds]}, base, [CA._Unknown(U)], d, {},
+                              lambda *a: None, None)
+        Y = [CA._elastic_value(s_, s_["form"], 1e-6, None) for s_ in samples]
+        meas = [dict(c, property="alpha", direction="iso", value=float(y), rel_unc=0.03) for c, y in zip(conds, Y)]
+        # elastic measurements only: no conduction solve and no solve pool (5.6.3 stopped here)
+        CA.run({"name": "t", "base": base, "measurements": meas, "_structure_dirs": [d], "unknowns": [U]},
+               os.path.join(d, "cal"), log=lambda *a: None)
+        with open(os.path.join(d, "cal", "result.json"), encoding="utf-8") as fh:
+            r = json.load(fh)
+    A = r["unknowns"][0]
+    expect(A["ci95"][0] < 3.0 < A["ci95"][1], f"filler CTE {A['map']:.3g} {A['ci95']}")
+    dev = max(abs(m["direct"] / m["measured"] - 1) for m in r["measurements"])
+    expect(dev < 0.02, f"direct solve at the estimate off by {100 * dev:.1f} %")
+    return (f"filler CTE {A['map']:.3g} ppm/K (95 % {A['ci95'][0]:.2g}–{A['ci95'][1]:.2g}; true 3.0) from "
+            f"{Y[0]:.2f} and {Y[1]:.2f} ppm/K at 30 and 50 vol%")
+
+
 @check("Calibration with touching particles: R_c = 2·R_int recovers R_int; R_int alone is flagged when no value reaches "
        "the measurement; R_int with R_c from one sample is a combination; every parameter set is recorded", quick=False)
 def t_cal_contacts():
@@ -1544,6 +1575,24 @@ def t_doe_mix_grid():
         st.create(None, {"form": man, "parameters": [{"path": "rve.voxel_um", "min": 0.02, "max": 0.04, "steps": 3}],
                          "grid": {"edge": "fixed"}}, q3, d, lambda f: f, plan=plan)
         expect([f["rve"]["voxel_um"] for f in q3.forms] == [0.02, 0.03, 0.04], f"voxel parameter {[f['rve'] for f in q3.forms]}")
+
+        # own: a particle size that varies - each case's edge and voxel planned for its particles, the
+        # voxel exactly d/6 in every case, not the plan's rounded one (the stand-in: an edge of 4 d)
+        def plan_own(f):
+            rv = f.get("rve") or {}
+            if rv.get("auto") is False:
+                return {"L_um": float(rv["L_um"]), "h_um": float(rv["voxel_um"]), "film": False}
+            dd = float(f["phases"][0]["size"]["d"])
+            nice = math.floor(dd / 6.0 * 10.0) / 10.0
+            return {"L_um": 4.0 * dd, "h_um": nice, "film": False,
+                    "recommended": {"h_um": nice, "h_exact": dd / 6.0, "L_um": 4.0 * dd}}
+        q4 = _Queue()
+        st.create(None, {"form": base, "parameters": [{"path": "phases.0.size.d", "min": 1.0, "max": 4.0, "steps": 2}],
+                         "grid": {"edge": "own"}}, q4, d, lambda f: f, plan=plan_own)
+        h4 = [f["rve"]["voxel_um"] for f in q4.forms]
+        L4 = [f["rve"]["L_um"] for f in q4.forms]
+        expect(abs(h4[0] - 1 / 6) < 1e-9 and abs(h4[1] - 4 / 6) < 1e-9 and all(abs(L / h - 24) < 1e-6 for L, h in zip(L4, h4)),
+               f"own grids: edges {L4}, voxels {h4}")
     # what a finished case really holds: 51.1 of 55 vol%, a BN share of 48 of 50 %
     from web.doe import realised
     res = {"spec": {"labels": [{"kind": "matrix", "phase": None}, {"kind": "core", "phase": 0}, {"kind": "core", "phase": 1}],
@@ -1553,7 +1602,8 @@ def t_doe_mix_grid():
     expect(abs(rz["real_filler"][2] - 51.1) < 1e-9 and abs(rz["real_filler"][3] - 55.0) < 1e-9, f"filler {rz['real_filler']}")
     expect(abs(rz["real_mix.1"][2] - 100 * 0.245 / 0.511) < 1e-9 and abs(rz["real_mix.1"][3] - 50.0) < 1e-9, f"share {rz['real_mix.1']}")
     return (f"shares {shares[0]:g}-{shares[-1]:g} % of 55 vol% with the total kept; the Domain's grid on every case, "
-            f"edges {Ls[0]:.3g}-{Ls[-1]:.3g} µm adapted on its voxel size; "
+            f"edges {Ls[0]:.3g}-{Ls[-1]:.3g} µm adapted on its voxel size; own grids for a size study "
+            f"(voxel {h4[0]:.3g}-{h4[1]:.3g} µm); "
             f"realised 51.1 vol%, share {rz['real_mix.1'][2]:.1f} %")
 
 

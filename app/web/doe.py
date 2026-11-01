@@ -133,7 +133,9 @@ class DOEStore:
         automatic one as planned for the base) unless it is a parameter of the
         study; the RVE edge is the Domain's for every case ('fixed') or each
         case's own, planned for its particles at the Domain's level
-        ('adaptive'), on that voxel size."""
+        ('adaptive'), on that voxel size. 'own': edge and voxel both planned
+        for each case's particles at the Domain's level, for studies that vary
+        a particle size."""
         base = copy.deepcopy(payload.get("form") or {})
         # the machine's grid limits (Home -> Machine) go with every case; the
         # stored base form leaves them out, so a later change applies to
@@ -167,30 +169,7 @@ class DOEStore:
         for p in parameters:
             varied.add(p["path"])
             varied.update(ln["path"] for ln in p.get("links") or [])
-        forms = []
-        for i, c in enumerate(cases):
-            try:
-                form = DOE.apply_case(base, c, i, parameters=parameters)
-                rv = form.setdefault("rve", {})
-                h = float(rv["voxel_um"]) if "rve.voxel_um" in varied else h0
-                if "rve.N" in varied and rv.get("N"):
-                    L = float(rv["N"]) * h                 # a grid-size study: the edge follows the count
-                elif "rve.L_um" in varied:
-                    L = float(rv["L_um"])
-                elif edge == "adaptive":
-                    # the case's own edge at the Domain's level (its particles may differ)
-                    auto = copy.deepcopy(form)
-                    auto["rve"] = dict(auto.get("rve") or {}, auto=True, N=None, L_um=None, voxel_um=None)
-                    L = float(plan(auto)["L_um"])
-                else:
-                    L = L0
-                n = max(8, int(round(L / h)))
-                n += n % 2
-                rv.update(auto=False, voxel_um=h, L_um=n * h, N=None, auto_enlarge=False, L_unit="um", h_unit="um")
-            except ValueError as e:
-                raise ValueError(f"Case {i + 1} ({c['label']}): {e}") from None
-            normalize(copy.deepcopy(form))          # raises ValueError on a bad case
-            forms.append(form)
+        forms = [self._case_form(base, c, i, parameters, grid, varied, plan, normalize) for i, c in enumerate(cases)]
         sid = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
         study = {"id": sid, "name": payload.get("name") or (base.get("name") or "DOE study"),
                  "created": time.time(), "owner": owner, "design": design,
@@ -198,6 +177,61 @@ class DOEStore:
                  "grid": grid,
                  "analyses": [k for k, v in (base.get("analyses") or {}).items() if v],
                  "base_form": base, "cases": []}
+        self._submit(study, forms, cases, queue, runs_dir, owner, folder, case_name, estimate, limits)
+        self.save(study)
+        return study
+
+    @staticmethod
+    def _varied(parameters):
+        varied = set()
+        for p in parameters:
+            varied.add(p["path"])
+            varied.update(ln["path"] for ln in p.get("links") or [])
+        return varied
+
+    @staticmethod
+    def _case_form(base, c, i, parameters, grid, varied, plan, normalize):
+        """The complete form of one case on the study's grid (see create)."""
+        h0, L0 = float(grid["voxel_um"]), float(grid["L_um"])
+        try:
+            form = DOE.apply_case(base, c, i, parameters=parameters)
+            rv = form.setdefault("rve", {})
+            h = float(rv["voxel_um"]) if "rve.voxel_um" in varied else h0
+            own = None
+            if grid.get("edge") in ("adaptive", "own"):
+                # the case's own plan at the Domain's level (its particles may differ)
+                auto = copy.deepcopy(form)
+                auto["rve"] = dict(auto.get("rve") or {}, auto=True, N=None, L_um=None, voxel_um=None)
+                own = plan(auto)
+                if grid["edge"] == "own" and "rve.voxel_um" not in varied:
+                    # a particle size that varies: the voxel resolves this case's smallest particle
+                    # (a voxel planned for the base would under-resolve the small ones and waste
+                    # voxels on the large) with the same count in every case - not rounded to a nice
+                    # value, which gives 6 to 8 voxels per diameter from case to case, and touching
+                    # particles conduct through contacts that depend on it. A grid limit that moved
+                    # the voxel keeps the limited one.
+                    h = float(own["h_um"])
+                    rec = own.get("recommended") or {}
+                    if rec.get("h_exact") and abs(h - float(rec.get("h_um") or 0.0)) <= 1e-9 * h:
+                        h = float(rec["h_exact"])
+            if "rve.N" in varied and rv.get("N"):
+                L = float(rv["N"]) * h                 # a grid-size study: the edge follows the count
+            elif "rve.L_um" in varied:
+                L = float(rv["L_um"])
+            elif own is not None:
+                L = float(own["L_um"])
+            else:
+                L = L0
+            n = max(8, int(round(L / h)))
+            n += n % 2
+            rv.update(auto=False, voxel_um=h, L_um=n * h, N=None, auto_enlarge=False, L_unit="um", h_unit="um")
+        except ValueError as e:
+            raise ValueError(f"Case {i + 1} ({c['label']}): {e}") from None
+        normalize(copy.deepcopy(form))          # raises ValueError on a bad case
+        return form
+
+    def _submit(self, study, forms, cases, queue, runs_dir, owner, folder, case_name, estimate, limits):
+        sid = study["id"]
         for form, case in zip(forms, cases):
             meta = {"name": form["name"], "analyses": study["analyses"], "doe": sid,
                     "mem_gb": estimate(form) if estimate else 0.0,
@@ -211,9 +245,34 @@ class DOEStore:
             if limits:
                 form["_limits"] = limits
             job = queue.submit(owner, form, runs_dir, meta, folder=folder, case=case_name)
-            study["cases"].append({"job_id": job.id, "values": case["values"], "label": case["label"]})
+            study["cases"].append({"job_id": job.id, "values": case["values"], "label": case["label"],
+                                   **({"added": case["added"]} if case.get("added") else {})})
+
+    def add(self, study, points, queue, runs_dir, normalize, folder=None, case_name="", estimate=None, plan=None,
+            limits=None, tag=""):
+        """Further cases of a study at chosen points ({path: value} for every
+        parameter): the points an optimisation wants run next, on the study's
+        own grid, shown and fitted with the others."""
+        parameters = study.get("parameters") or []
+        paths = [p["path"] for p in parameters]
+        cases = []
+        for v in points:
+            vals = {}
+            for p in paths:
+                if p not in v:
+                    raise ValueError(f"A point needs a value for every parameter of the study ({p} is missing)")
+                vals[p] = float(v[p])
+            lab = " · ".join(f"{(q.get('label') or q['path'])} {DOE._fmt(vals[q['path']])}" for q in parameters)
+            cases.append({"values": vals, "label": (f"{tag} · " if tag else "") + lab, "added": tag or True})
+        if not cases:
+            raise ValueError("No point was given")
+        varied = self._varied(parameters)
+        i0 = len(study["cases"])
+        forms = [self._case_form(study["base_form"], c, i0 + k, parameters, study["grid"], varied, plan, normalize)
+                 for k, c in enumerate(cases)]
+        self._submit(study, forms, cases, queue, runs_dir, study.get("owner"), folder, case_name, estimate, limits)
         self.save(study)
-        return study
+        return cases
 
     # -------------------------------------------------------------- status
     def rows(self, study, queue):

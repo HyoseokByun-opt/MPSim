@@ -23,6 +23,7 @@
   <nav class="ribbon">
     <div class="rtabs" id="rtabs">
       <button data-tab="home" class="on">Home</button>
+      {% if ai %}<button data-tab="ai">AI</button>{% endif %}
       <button data-tab="material">Material</button>
       <button data-tab="structure">Structure</button>
       <button data-tab="domain">Domain</button>
@@ -51,6 +52,7 @@
         <button data-c="opt"></button>
         <button data-c="cal"></button>
         <button data-c="rep"></button>
+        {% if ai %}<button data-c="ai"></button>{% endif %}
         <div class="grow"></div>
         <span class="ctitle" id="cTitle"></span>
       </div>
@@ -154,6 +156,7 @@
         <div class="repbar" id="reportBar"></div>
         <iframe id="reportFrame" title="Report"></iframe>
       </section>
+      <section class="cpage" id="c-ai"></section>
     </main>
 
     <aside class="rpanel">
@@ -277,5 +280,7 @@
 <script src="/static/press_player.js?v={{ version }}"></script>
 <script src="/static/press3d.js?v={{ version }}"></script>
 <script src="/static/app.js?v={{ version }}"></script>
+{% if ai %}<link rel="stylesheet" href="{{ ai.css }}?v={{ ai.version }}">
+<script src="{{ ai.js }}?v={{ ai.version }}"></script>{% endif %}
 </body>
 </html>

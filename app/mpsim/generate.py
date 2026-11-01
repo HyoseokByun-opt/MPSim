@@ -1720,8 +1720,18 @@ MAX_RELAX_STEPS = 150_000
 # most this share (relative) short of a phase's loading; a placement further
 # off is packed again by clump relaxation
 RSA_OVERLAP_SHORT = 0.05
-# with progressive overlap the packings stop creeping near the target (clump_pack)
-CREEP = {"g_min": 0.97, "gain": 0.003, "min_steps": 2000, "frac": 0.25}
+# flat or long particles (platelets, fibres): a random placement that the
+# overlap steps brought this close (relative) to the loading is kept. Their
+# clump relaxation reaches less, and slowly: random h-BN discs of aspect 10 at
+# 17.4 vol% (Accurate, 332 discs of 245 spheres) were placed to 17.04 vol% and
+# then relaxed to size scale 0.880 (11.8 vol%), still there after 6,600 steps
+RSA_KEEP_SHORT = 0.03
+# a particle is flat or long when its circumscribed sphere holds this many times its volume
+# (a cube 2.7, a disc of aspect 0.25 4, of aspect 0.1 10)
+SPARSE_SHAPE = 4.0
+# with progressive overlap the packings stop creeping near the target (clump_pack);
+# below g_min they stop once the size has not grown by `stall` (relative) over the same window
+CREEP = {"g_min": 0.97, "gain": 0.003, "min_steps": 2000, "frac": 0.25, "stall": 0.001}
 MAX_COMPRESS_ITER = 1_500
 # a tighter budget for jamming_fraction, which only needs where the packing
 # stops (set and reset around its call; None outside it)
@@ -2015,6 +2025,17 @@ def contact_ratio(pos, rad, L, Lz=None, slack=0.0):
     if d.size == 0:
         return math.inf
     return float(np.min((d + slack) / (rad[i] + rad[j])))
+
+
+def _sparse(nom, poly_meta=None):
+    """A flat or long particle: its circumscribed sphere holds SPARSE_SHAPE
+    times its volume or more (see RSA_KEEP_SHORT)."""
+    try:
+        v = float(SH.volume(nom["code"], nom["P"], poly_meta))
+        r = float(SH.circumradius(nom["code"], nom["P"]))
+    except Exception:                                                # noqa: BLE001
+        return False
+    return v > 0 and 4.0 / 3.0 * math.pi * r ** 3 >= SPARSE_SHAPE * v
 
 
 def escalate_overlap(pack, scale, steps, log=None, should_stop=None):
@@ -2602,6 +2623,16 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
             if old is not None and best_g - old < creep["gain"] * best_g:
                 if log is not None:
                     log(f"    clump relaxation: creeping ({100 * (best_g - old) / best_g:.2f} % in the last "
+                        f"{it_total - back:.0f} steps) - stopped at size scale {best_g:.4f} after {it_total:,} steps")
+                break
+        elif creep is not None and creep.get("stall"):
+            # jammed below the target: the size has stopped growing (thin platelets sat at 0.880
+            # for thousands of steps and would have run to the step limit)
+            back = it_total - max(creep["min_steps"], creep["frac"] * it_total)
+            old = next((b for st, b in reversed(hist_s) if st <= back), None)
+            if old is not None and best_g - old < creep["stall"] * best_g:
+                if log is not None:
+                    log(f"    clump relaxation: jammed ({100 * (best_g - old) / best_g:.2f} % in the last "
                         f"{it_total - back:.0f} steps) - stopped at size scale {best_g:.4f} after {it_total:,} steps")
                 break
         if stall_window and len(hist) > stall_window and                 hist[-1] - hist[-1 - stall_window] < stall_gain * max(hist[-1], 1e-12):
@@ -3325,6 +3356,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         rounds = 0
         remaining = {i: True for i in part_idx}
         rsa_parts = {"codes": [], "P": [], "R": [], "centers": [], "phase": []}
+        rsa_ov = 0
         def rsa_round(label, inset_test=0.0, gap_on=True):
             """One RSA round for the phases still short: particles drawn for
             their deficit, largest first, and placed."""
@@ -3414,11 +3446,23 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 if all(count[i] >= 0.995 * target[i] for i in short):
                     break
             short = [i for i in part_idx if not phases[i].get("overlap") and count[i] < 0.995 * target[i]]
+            sparse = [i for i in short if nominal[i] is not None and _sparse(nominal[i], poly_meta)]
+            if short and sparse == short and all(count[i] >= (1.0 - RSA_KEEP_SHORT) * target[i] for i in short):
+                # flat or long particles this close: the placement stays (see RSA_KEEP_SHORT)
+                for i in short:
+                    jammed[i] = True
+                    log(f"  !! {phases[i].get('name', i + 1)}: placed to {100 * count[i] / nvox:.2f} of "
+                        f"{100 * target[i] / nvox:.2f} vol% ({100 * (1 - count[i] / target[i]):.2f} % short) and kept - "
+                        f"packing flat or long particles again by clump relaxation reaches less; the volume-fraction "
+                        f"check reports the difference")
+                info["kept_short"] = {int(i): float(count[i] / target[i]) for i in short}
+                short = []
             if short:
                 # not reached: back to the packing without overlap below
                 log("  the overlap steps did not reach the loading either; the clump relaxation packs it again")
-                ov_k = 0
-        short = [i for i in part_idx if not phases[i].get("overlap") and count[i] < 0.995 * target[i]]
+                rsa_ov, ov_k = ov_k, 0
+        short = [i for i in part_idx if not phases[i].get("overlap") and count[i] < 0.995 * target[i]
+                 and int(i) not in (info.get("kept_short") or {})]
         if not short:
             for key in parts:
                 parts[key].extend(rsa_parts[key])
@@ -3427,6 +3471,13 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             log("  RSA jammed below the target for " + ", ".join(phases[i].get("name", str(i + 1)) for i in short)
                 + " -> dense packing by rigid clump relaxation")
             info["route"] = "rigid clump relaxation (multi-sphere, translation + rotation)"
+            # flat or long particles: their random placement is kept aside, to be drawn instead
+            # should the relaxation end with less of them (see RSA_KEEP_SHORT)
+            rsa_keep = None
+            if rsa_parts["codes"] and all(nominal[i] is not None and _sparse(nominal[i], poly_meta) for i in short):
+                rsa_keep = {k_: np.concatenate(v_) for k_, v_ in rsa_parts.items()}
+                rsa_keep["frac"] = {int(i): float(count[i] / max(target[i], 1)) for i in short}
+                rsa_keep["ov"] = rsa_ov
             owner[:] = 0
             count[:] = 0
             n_placed[:] = 0
@@ -3558,6 +3609,20 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                         f"their packing spheres; corners the spheres do not cover may overlap more, and a voxel "
                         f"two particles share belongs to the first")
             info["pack_scale"] = scale
+            if rsa_keep is not None and scale < 1.0 and all(scale ** 3 < f_ for f_ in rsa_keep["frac"].values()):
+                log(f"  !! the clump relaxation reached size scale {scale:.3f} (volume x {scale ** 3:.3f}), less than "
+                    f"the random placement ({min(rsa_keep['frac'].values()):.3f} of the loading): the random placement "
+                    f"is kept, and the volume-fraction check reports the difference")
+                codes, Ps, Rs, C, ph_arr = (rsa_keep["codes"], rsa_keep["P"], rsa_keep["R"], rsa_keep["centers"],
+                                            rsa_keep["phase"])
+                rotm = np.array([-1 if nominal[int(p_)]["code"] == 0 else _rotmode(
+                    (phases[int(p_)].get("orientation") or {}).get("mode", "iso"),
+                    (phases[int(p_)].get("orientation") or {}).get("spread_deg", 0)) for p_ in ph_arr], np.int64)
+                ov_k = rsa_keep["ov"]
+                for i_ in rsa_keep["frac"]:
+                    jammed[i_] = True
+                info["kept_short"] = rsa_keep["frac"]
+                scale = 1.0
             if scale < 1.0:
                 log(f"  !! the target could not be packed without overlap; particles are {scale:.3f} x the "
                     f"requested size (volume fraction x {scale**3:.3f})")

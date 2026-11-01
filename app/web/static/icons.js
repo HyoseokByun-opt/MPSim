@@ -15,6 +15,8 @@
     new: `<path ${F} d="M6 3h8l4 4v14H6z"/><path ${S} d="M14 3v4h4M12 11v6M9 14h6"/>`,
     open: `<path ${F} d="M3 7h6l2 2h10v10H3z"/><path ${S} d="M3 11h18"/>`,
     save: `<path ${F} d="M5 4h11l3 3v13H5z"/><path ${S} d="M8 4v5h7V4M8 20v-6h8v6"/>`,
+    // the AI tab: a speech bubble with a spark
+    ai: `<path ${F} d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5z"/><path ${S} d="M12 6.2l.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9z"/>`,
     preset: `<rect ${F} x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect ${S} x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect ${S} x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect ${F} x="13.5" y="13.5" width="7" height="7" rx="1.5"/>`,
     database: `<ellipse ${F} cx="12" cy="6" rx="7" ry="2.6"/><path ${S} d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6"/>`,
     matrix: `<rect ${F} x="4" y="4" width="16" height="16" rx="2"/><path ${S} d="M4 9.5h16M4 14.5h16M9.5 4v16M14.5 4v16" opacity=".55"/>`,

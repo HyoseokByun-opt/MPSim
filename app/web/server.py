@@ -21,6 +21,7 @@ import io
 import json
 import math
 import os
+import sys
 import re
 import secrets
 import shutil
@@ -518,7 +519,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
     @app.get("/")
     def index():
         owner()
-        return render_template("index.html", version=asset_version())
+        return render_template("index.html", version=asset_version(), ai=app.config.get("AIMPSIM"))
 
     @app.get("/healthz")
     def healthz():
@@ -1491,6 +1492,24 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         out["study"] = {"id": s["id"], "name": s["name"], "design": s["design"]}
         return jsonify(out)
 
+    @app.post("/api/doe/<sid>/cases")
+    def api_doe_add_cases(sid):
+        """Further cases of a study at chosen points (the points an
+        optimisation wants run next): queued like its first cases, on its
+        grid, and fitted with them."""
+        s = app.doe.get(sid)
+        if s is None:
+            abort(404, "DOE study not found")
+        body = request.get_json(force=True, silent=True) or {}
+        try:
+            added = app.doe.add(s, body.get("cases") or [], app.queue, case_dir(), S.normalize,
+                                folder=app.config["RUNS_DIR"], case_name=app.config.get("CASE") or "",
+                                estimate=est_mem_gb, plan=lambda f: plan_form(f)[0], limits=app.config["LIMITS"],
+                                tag=str(body.get("label") or "added"))
+        except ValueError as e:
+            return jsonify({"ok": False, "errors": str(e).split("\n")}), 400
+        return jsonify({"ok": True, "added": len(added), "n_cases": len(s["cases"])})
+
     @app.post("/api/doe/<sid>/point")
     def api_doe_point(sid):
         """Queue one run at a chosen point: the verification of an optimum.
@@ -1694,4 +1713,52 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             return jsonify({"ok": False, "error": getattr(e, "description", str(e))}), e.code
         return e
 
+    _load_aimpsim(app, plan_form)
     return app
+
+
+def _load_aimpsim(app, plan_form):
+    """AIMPSim (requests in words, a separate project used with the latest
+    MPSim) as the AI tab: imported when installed, or found in MPSIM_AI_PATH,
+    in an AIMPSim folder inside this MPSim folder or beside it. MPSim works
+    as before without it; the tab then says how to add it."""
+    import importlib
+    app.config["AIMPSIM"] = None
+    mod = None
+    try:
+        mod = importlib.import_module("aimpsim")
+    except ImportError:
+        base = os.path.dirname(ROOT)
+        for p in (os.environ.get("MPSIM_AI_PATH"), os.path.join(base, "AIMPSim"),
+                  os.path.join(os.path.dirname(base), "AIMPSim")):
+            if p and os.path.isfile(os.path.join(p, "aimpsim", "__init__.py")):
+                sys.path.insert(0, p)
+                try:
+                    mod = importlib.import_module("aimpsim")
+                except Exception as e:                                # noqa: BLE001
+                    app.logger.warning("AIMPSim could not be loaded from %s: %s", p, e)
+                    mod = None
+                break
+    if mod is None:
+        return
+    from mpsim.calibrate import fill_props
+
+    def validate(form):
+        try:
+            S.normalize(fill_props(form))
+            return None
+        except ValueError as e:
+            return str(e)
+
+    def plan(form):
+        return plan_form(fill_props(form))[0]
+
+    try:
+        if hasattr(mod, "compatible") and not mod.compatible(__version__):
+            app.logger.warning("AIMPSim %s needs MPSim %s or later", getattr(mod, "__version__", "?"),
+                               getattr(mod, "MPSIM_MIN", "?"))
+        mod.register(app, {"library": M.load_library()["materials"], "validate": validate, "plan": plan,
+                           "cores": os.cpu_count() or 1, "version": __version__})
+    except Exception as e:                                            # noqa: BLE001
+        app.logger.warning("AIMPSim could not be registered: %s", e)
+        app.config["AIMPSIM"] = None

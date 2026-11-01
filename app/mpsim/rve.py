@@ -173,7 +173,7 @@ def plan(phases, rve=None, props=None, limits=None):
                 h_res = min(h_res, f["shell"] / shell_vox)
         h_rec = nice_floor(h_res)
     else:
-        h_rec = 1.0
+        h_res = h_rec = 1.0
 
     # ---- recommended domain size ----------------------------------------
     # A film fixes z at its real thickness T; the lateral edge L then has to
@@ -447,7 +447,9 @@ def plan(phases, rve=None, props=None, limits=None):
     return {
         "N": int(N), "h_um": float(h), "L_um": float(L),
         "film": film, "Nz": int(Nz), "T_um": float(T),
-        "recommended": {"h_um": float(h_rec), "L_um": float(L_req), "reason": why},
+        # h_exact: the voxel before rounding to a nice value, exactly the level's voxels across the smallest
+        # dimension (a study of particle sizes keeps that count in every case)
+        "recommended": {"h_um": float(h_rec), "h_exact": float(h_res), "L_um": float(L_req), "reason": why},
         "quality": rve.get("quality", "standard"), "quality_label": q["label"],
         "seeds": (int((rve.get("realisations") or {}).get("n_max") or 20)
                   if (rve.get("realisations") or {}).get("mode") == "settle" else int(rve.get("n_seeds") or q["seeds"])),

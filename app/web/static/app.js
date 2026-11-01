@@ -162,6 +162,7 @@
   }
   const TABS = {
     home: ["home", "Home", "Presets and the analysis workflow"],
+    ai: ["ai", "AI", "A request in words: what to analyse, with which materials (AIMPSim)"],
     material: ["matrix", "Material", "Matrix material and properties"],
     structure: ["cube", "Structure", "Fillers, fibres, pores and their geometry"],
     domain: ["auto", "Domain", "Voxel size, RVE size and the criteria behind them"],
@@ -467,6 +468,10 @@
         { group: "Particles", items: [toggle("grains")] },
         execute,
       ],
+      ai: [
+        { group: "Request", items: [RB("ai:new", "new", "New request", { dis: !window.AIMPSim }), RB("ai:examples", "preset", "Examples", { dis: !window.AIMPSim })] },
+        execute,
+      ],
       doe: [
         { group: "Design", items: [RB("doeAdd", "plus", "Add parameter"), RB("doeClear", "delete", "Clear parameters")] },
         { group: "Study", items: [RB("doeCreate", busy ? "plus" : "play", busy ? "Add DOE study" : "Create and queue", { primary: true, tip: busy ? "Adds the study's cases to the queue behind the runs under way: they start when a place and their memory are free" : "Creates the study and queues its cases" }), RB("c:doe", "preset", "DOE results")] },
@@ -510,6 +515,8 @@
     const f = state.form;
     if (el && el.classList.contains("dis")) return;
     const [kind, arg] = id.split(":");
+    if (kind === "ai") { if (window.AIMPSim) window.AIMPSim.action(arg); return; }
+    if (id === "run" && state.tab === "ai" && window.AIMPSim && window.AIMPSim.ready()) { window.AIMPSim.runReady(); return; }
     if (kind === "an") {
       if (disabledReason(arg) && !f.analyses[arg]) { toast(disabledReason(arg)); return; }
       f.analyses[arg] = !f.analyses[arg];
@@ -633,6 +640,7 @@
   function setTab(tab) {
     state.tab = tab;
     headerRun();
+    if (tab === "ai") setCenter("ai");
     if (tab === "doe") loadDoeCatalogue().then(() => { if (state.tab === "doe") renderLeft(); });
     if (tab === "calibration") { CAL(); loadDoeCatalogue().then(() => { if (state.tab === "calibration") renderLeft(); }); calLoadTheory(); }
     renderRibbon();
@@ -648,6 +656,10 @@
     if (c === "opt") renderOpt();
     if (c === "cal") renderCal();
     if (c === "rep") renderReport();
+    if (c === "ai") {
+      if (window.AIMPSim) window.AIMPSim.renderCenter($("#c-ai"));
+      else $("#c-ai").innerHTML = `<div class="hint" style="padding:24px">AIMPSim is not installed beside this MPSim.</div>`;
+    }
     if (state.tab === "results") renderRibbon();
   }
   function setRight(r) {
@@ -678,10 +690,19 @@
     $("#lhead").innerHTML = `${I(icon)}<div><b>${title}</b><small title="${String(sub).replace(/"/g, "&quot;")}">${sub}</small></div>`;
     const body = $("#lbody");
     const top = body.scrollTop;
-    body.innerHTML = { home: leftHome, material: leftMaterial, structure: leftStructure, domain: leftDomain, analysis: leftAnalysis, simulation: leftSimulation, doe: leftDoe, optimization: leftOptimization, calibration: leftCalibration, results: leftResults }[state.tab]();
+    body.innerHTML = { home: leftHome, ai: leftAI, material: leftMaterial, structure: leftStructure, domain: leftDomain, analysis: leftAnalysis, simulation: leftSimulation, doe: leftDoe, optimization: leftOptimization, calibration: leftCalibration, results: leftResults }[state.tab]();
     fillInputs(body);
     body.scrollTop = top;
     if (state.tab === "structure") { renderComposition(); requestAnimationFrame(drawPsd); }
+    if (state.tab === "ai" && window.AIMPSim) window.AIMPSim.mountLeft(body);
+  }
+  // the AI tab: AIMPSim (a separate project, used with the latest MPSim) when
+  // it is installed beside MPSim, else how to add it
+  function leftAI() {
+    if (window.AIMPSim) return window.AIMPSim.left();
+    return `<div class="sec"><div class="sh">${I("ai")}AIMPSim</div><div class="sb">
+      <div class="hint">The AI tab reads a request in words - for example "epoxy with 55 vol% spherical alumina, thermal conductivity" - and sets up the run, DOE study, calibration or optimisation it describes. It is the separate project AIMPSim, used with the latest MPSim.</div>
+      <div class="hint">To add it, place the AIMPSim folder inside or beside this MPSim folder (or set MPSIM_AI_PATH) and start MPSim again.</div></div></div>`;
   }
 
   async function loadSettings() {
@@ -3271,6 +3292,7 @@
       toast("The calibration has been queued. The console follows it; the result opens here when it is done.", 6000);
       attach(r.id, false);
       pollRuns();
+      return r.id;
     } catch (err) { toast("The calibration could not be started:\n" + err.message, 9000); }
   }
   function calApply() {
@@ -3762,11 +3784,12 @@
           const vVar = d.parameters.some((p) => p.path === "rve.voxel_um"), lVar = d.parameters.some((p) => p.path === "rve.L_um" || p.path === "rve.N");
           const dom = `<span data-live="doedom">${doeDomHtml()}</span>`;
           return `<label class="f">RVE edge of the cases</label><select data-doe="edge" ${lVar ? "disabled" : ""}>
-              <option value="fixed" ${d.edge !== "adaptive" ? "selected" : ""}>Fixed: the Domain's edge for every case (default)</option>
-              <option value="adaptive" ${d.edge === "adaptive" ? "selected" : ""}>Adaptive: each case's own edge at the Domain's accuracy level</option></select>
+              <option value="fixed" ${!["adaptive", "own"].includes(d.edge) ? "selected" : ""}>Fixed: the Domain's edge for every case (default)</option>
+              <option value="adaptive" ${d.edge === "adaptive" ? "selected" : ""}>Adaptive: each case's own edge at the Domain's accuracy level</option>
+              <option value="own" ${d.edge === "own" ? "selected" : ""}>Own grid: each case's edge and voxel at the Domain's accuracy level</option></select>
             <div class="hint">The Domain tab applies to every case as it is: <b>${dom}</b>; arrangement, dispersion and realisations as set there.
-              The voxel size stays the Domain's${vVar ? " — here it is a parameter of the study and takes its values" : " in every case; it changes only as a parameter of the study"}.
-              ${lVar ? "The edge is a parameter of the study and takes its values." : d.edge === "adaptive" ? "Each case's edge is planned for its own particles (a larger filler, a larger RVE), on that voxel size." : "So the cases differ only in the parameters varied."}</div>`;
+              ${vVar ? "The voxel size is a parameter of the study and takes its values." : d.edge === "own" ? "The voxel size is planned for each case's smallest particle, for studies that vary a particle size (a voxel planned for the base under-resolves the small ones)." : "The voxel size stays the Domain's in every case; it changes only as a parameter of the study."}
+              ${lVar ? "The edge is a parameter of the study and takes its values." : ["adaptive", "own"].includes(d.edge) ? "Each case's edge is planned for its own particles (a larger filler, a larger RVE)." : "So the cases differ only in the parameters varied."}</div>`;
         })()}
         <div class="note ${n > 64 ? "bad" : ""}">${n} case${n === 1 ? "" : "s"}${n > 64 ? " — at most 64 are accepted" : " will be queued"}. Each case is a complete run with its own result, figures and report.</div>
         <button class="btn primary" data-act="doeCreate" ${n < 1 || n > 64 ? "disabled" : ""}>${anyLive() ? `${I("plus")}Add the study to the queue` : `${I("play")}Create study and queue runs`}</button>
@@ -3782,7 +3805,7 @@
         links: (p.links || []).filter((l) => l.path).map((l) => ({ path: l.path, expr: (l.expr || "x").trim() || "x" })) })),
       form: clone(state.form),
     };
-    body.grid = { edge: d.edge === "adaptive" ? "adaptive" : "fixed" };
+    body.grid = { edge: ["adaptive", "own"].includes(d.edge) ? d.edge : "fixed" };
     const ahead = (state.jobs || []).filter((j) => ["running", "queued"].includes(j.state)).length;
     try {
       const res = await api("POST", "/api/doe", body);
@@ -3870,7 +3893,7 @@
     d.rows.forEach((r) => (counts[r.state] = (counts[r.state] || 0) + 1));
     const design = { full: "full factorial", oat: "one factor at a time", lhs: "Latin hypercube" }[d.design] || d.design;
     const g = d.grid || {};
-    const grid = g.edge ? `${g.film ? `thin film ${fmt(g.T_um)} µm · ` : ""}${g.edge === "adaptive" ? "edge adapted per case" : `edge ${fmt(g.L_um)} µm`} · voxel ${fmt(g.voxel_um)} µm (Domain)`
+    const grid = g.edge ? `${g.film ? `thin film ${fmt(g.T_um)} µm · ` : ""}${g.edge === "own" ? "edge and voxel planned per case" : `${g.edge === "adaptive" ? "edge adapted per case" : `edge ${fmt(g.L_um)} µm`} · voxel ${fmt(g.voxel_um)} µm (Domain)`}`
       : g.mode === "fixed" ? `fixed grid ${g.N}³ (${fmt(g.L_um)} µm, voxel ${fmt(g.voxel_um)} µm)` : `grid adaptive per case${g.quality ? ` (${g.quality})` : ""}`;
     $("#doeInfo").textContent = `${d.name} · ${d.n_cases} cases · ${design} · ${grid}`;
     const tile = (l, v, dd) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${dd || ""}</div></div>`;
@@ -4559,6 +4582,7 @@
     const optTab = $("#ctabs [data-c=opt]");
     if (optTab) optTab.innerHTML = `${I("optimize")}Optimization`;
     $("#ctabs [data-c=rep]").innerHTML = `${I("report")}Report`;
+    if ($("#ctabs [data-c=ai]")) $("#ctabs [data-c=ai]").innerHTML = `${I("ai")}AI`;
     $("#ctabs [data-c=cal]").innerHTML = `${I("calibrate")}Calibration`;
     $("#doeCsv").innerHTML = `${I("download")}CSV`;
     $("#doeCsv").title = "Download the Cases table as it stands, also while the study runs";
@@ -4643,7 +4667,8 @@
       const b = e.target.closest("button"); if (!b) return;
       if (b.id === "dockToggle") toggleDock(); else setDock(b.dataset.d, true);
     });
-    $("#btnRun").addEventListener("click", () => (state.tab === "doe" ? doeCreate() : submit(false)));
+    $("#btnRun").addEventListener("click", () => (state.tab === "doe" ? doeCreate()
+      : state.tab === "ai" && window.AIMPSim && window.AIMPSim.ready() ? window.AIMPSim.runReady() : submit(false)));
     $("#btnStop").addEventListener("click", stopActive);
     $("#caseName").addEventListener("input", onField);
     $("#doeSel").addEventListener("change", (e) => openDoe(e.target.value));
@@ -4958,6 +4983,36 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
     bindViewer();
   }
   function renderAll() { $("#caseName").value = state.form.name || ""; renderRibbon(); renderLeft(); }
+  // the interface AIMPSim (the AI tab) works through: it fills the case and
+  // starts runs, studies and calibrations as the user would from the tabs
+  window.MPSimHost = {
+    state, api, toast, esc, fmt, I, AN,
+    material: (id) => mat(id),
+    applyForm(form) { state.form = completeForm(form); state.sel = 0; renderAll(); schedulePlan(0); saveForm(); },
+    run: (preview) => submit(!!preview),
+    setDoe(d) { state.doe = Object.assign({ name: "", design: "full", samples: 12, seed: 1, parameters: [], edge: "fixed" }, clone(d)); },
+    createDoe: () => doeCreate(),
+    setCal(c) {
+      const C = CAL(), cands = calCandidates();
+      // an unknown is a path (the tab's default range) or {path, lo, hi, scale, links} (a range of its own)
+      const unk = (c.unknowns || []).map((p) => {
+        const q = typeof p === "string" ? { path: p } : p;
+        const k = cands.find((x) => x.path === q.path) || { path: q.path, label: q.path, unit: "", lo: 1e-9, hi: 1e-5, scale: "log" };
+        return { path: k.path, label: q.label || k.label, unit: q.unit || k.unit, lo: q.lo ?? k.lo, hi: q.hi ?? k.hi, scale: q.scale || k.scale,
+          prior: "uniform", center: "", sigma_dec: 1, links: clone(q.links || []) };
+      });
+      Object.assign(C, { name: c.name || "", measurements: clone(c.measurements || []), unknowns: unk, result: null, resultJob: null, preview: null });
+      calSave();
+    },
+    runCal: () => calRun(),
+    openDoe: (id) => openDoe(id),
+    optimize(response, goal, target) {
+      Object.assign(state.opt, { response, goal: goal || "max", target: goal === "target" ? target : state.opt.target });
+      setTab("optimization"); setCenter("opt"); return runOptimize();
+    },
+    settings: (body) => api("POST", "/api/settings", body).then((s) => { state.settings = s; renderRibbon(); return s; }),
+    setTab, setCenter, renderLeft, renderRibbon, pollRuns, attach,
+  };
 
   async function init() {
     bind();

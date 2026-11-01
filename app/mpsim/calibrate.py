@@ -1020,7 +1020,9 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
         pool = PAR.SolvePool(workers, max(1, threads // workers))
     try:
         for s in samples:
-            if s["labels"] is None:
+            # the conduction solves read the structure from shared memory; an elastic sample (CTE, modulus)
+            # is solved here from its labels, and with elastic measurements only there is no pool at all
+            if s["labels"] is None or pool is None:
                 continue
             s["lab_path"] = pool.share(s["labels"], name=f"lab{s['i']}")
             if s["cmask"] is not None:
