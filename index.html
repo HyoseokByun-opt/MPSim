@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.6.4",
+  "softwareVersion": "5.6.5",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -181,7 +181,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.6.4</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.6.5</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -440,7 +440,7 @@
       <p class="sub">The engine is verified against problems with known solutions. Every run also reports its own checks (RVE size,
         resolution, particle count, convergence and rigorous bounds) as passed, warning or failed, together with the reason.</p>
       <div class="stats">
-        <div class="stat"><b>89</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>90</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
         <div class="stat"><b>39</b><span>ready-to-run presets for semiconductor materials, at least one for every analysis, four compared with published measurements, each with a tutorial in the guide</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
@@ -467,9 +467,9 @@
       <table class="bench">
         <tr><th>Preset and source</th><th>Reported</th><th>Computed</th></tr>
         <tr><td>Cu + diamond 50 vol%, 400 µm<span class="src">Wang et al., <i>Materials</i> 2025 <a href="#ref1">[1]</a></span></td><td>640 W/m·K</td><td>646 W/m·K (interface 12.5 MW/m²K)</td></tr>
-        <tr><td>AlSiC 63 vol%<span class="src">Guo et al., <i>J. USTB</i> 2014 <a href="#ref2">[2]</a></span></td><td>178 W/m·K, 8.21 ppm/K</td><td>189 W/m·K, 8.84 ppm/K</td></tr>
+        <tr><td>AlSiC 63 vol%<span class="src">Guo et al., <i>J. USTB</i> 2014 <a href="#ref2">[2]</a></span></td><td>178 W/m·K, 8.21 ppm/K</td><td>189 W/m·K, 8.85 ppm/K</td></tr>
         <tr><td>PTFE + silica 60 wt%<span class="src">Murali et al., <i>Compos. A</i> 2009 <a href="#ref3">[3]</a></span></td><td>Dk 2.9</td><td>Dk 3.01</td></tr>
-        <tr><td>Carbonyl iron + epoxy 54 vol%<span class="src">Sugawa et al., <i>IEEE Trans. Magn.</i> 2013 <a href="#ref4">[4]</a></span></td><td>μr 7.5 (printed core)</td><td>μr 5.96 (spheres; a printed core forms chains)</td></tr>
+        <tr><td>Carbonyl iron + epoxy 54 vol%<span class="src">Sugawa et al., <i>IEEE Trans. Magn.</i> 2013 <a href="#ref4">[4]</a></span></td><td>μr 7.5 (printed core)</td><td>μr 5.98 (spheres; a printed core forms chains)</td></tr>
       </table>
       <ol class="refs">
         <li id="ref1">Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, <i>Materials</i> <b>18</b> (16), 3882 (2025). <a href="https://doi.org/10.3390/ma18163882">doi:10.3390/ma18163882</a> — 400 µm diamond, 50 vol%: 640 W/m·K.</li>
@@ -510,7 +510,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.6.4},
+  version   = {5.6.5},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
