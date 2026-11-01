@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-89%20checks-2da44e" alt="89 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-90%20checks-2da44e" alt="90 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -455,7 +455,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **89 problems with known solutions** (56 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **90 problems with known solutions** (56 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -505,6 +505,7 @@ reference values. A selection:
 | Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
 | Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (62.6 % without) |
 | Progressive overlap in the random placement: log-normal irregular grains at 60 vol%, a seed whose placement jams | loading reached without a clump relaxation; overlap counted by drawing every particle again | 59.7 % in 3 s with ≤ 2 voxels, 0.6 % shared (220 s by clump relaxation before); 0 shared for a seed that places |
+| Spheres of different sizes packed largest first: 3 + 0.6 µm at 27 + 18 vol% | loading reached; k of the packing grown at once with ten times the equilibration (within 5 %); no overlap after 200 more two-grid moves | 27.0 + 18.0 vol%, k 1.392 against 1.362; closest pairs at 1.0001 of contact |
 | Statistical RVE: realisations until the 95 % interval is within the target | stops at the target or the most allowed; whole-number DOE seeds | passed |
 | Every step of a compression kept in 3D, also for a reused structure | labels and stress of each step's whole box | passed |
 
@@ -519,9 +520,9 @@ published. Each preset was run as loaded; the preset descriptions discuss the re
 | Preset | Reference | Reported | Computed |
 |---|---|---|---|
 | Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 2025 [1] | 640 W/m·K | 646 W/m·K, with 12.5 MW/m²K at the interface |
-| Power-module baseplate · AlSiC 63 vol% | Guo et al., *J. USTB* 2014 [2] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.84 ppm/K |
+| Power-module baseplate · AlSiC 63 vol% | Guo et al., *J. USTB* 2014 [2] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.85 ppm/K |
 | mmWave substrate · PTFE + silica 60 wt% | Murali et al., *Compos. Part A* 2009 [3] | Dk 2.9 | Dk 3.01 |
-| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [4] | μr 7.5 (printed) | μr 5.96 (spheres) |
+| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [4] | μr 7.5 (printed) | μr 5.98 (spheres) |
 
 1. Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, *Materials* **18** (16), 3882 (2025). [doi:10.3390/ma18163882](https://doi.org/10.3390/ma18163882) — 400 µm diamond, 50 vol%: 640 W/m·K.
 2. M. Guo, J. Liu, C. Jia, S. Guo, Y. Li, H. Zhou, “Microstructure and properties of SiCp/Al electronic packaging materials fabricated by pseudo-semi-solid thixoforming”, *Journal of University of Science and Technology Beijing* **36** (4), 489–495 (2014). [doi:10.13374/j.issn1001-053x.2014.04.011](https://doi.org/10.13374/j.issn1001-053x.2014.04.011) — as tabulated in L. Lai et al., *Micromachines* **14** (8), 1491 (2023), Table 2, [doi:10.3390/mi14081491](https://doi.org/10.3390/mi14081491).
