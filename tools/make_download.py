@@ -56,6 +56,11 @@ def main():
     docs, odocs = os.path.join(ROOT, "docs"), os.path.join(OUT, "docs")
     os.makedirs(os.path.join(odocs, "guide", "figures"))
     n += copytree(os.path.join(docs, "images"), os.path.join(odocs, "images"))
+    # the AI edition's own images go with it (tools/make_aimpsim.py), not with the standard edition
+    for f in os.listdir(os.path.join(odocs, "images")):
+        if f.startswith("aimpsim_"):
+            os.remove(os.path.join(odocs, "images", f))
+            n -= 1
     figs = set()
     for lang in ("en", "ko"):
         shutil.copy2(os.path.join(docs, f"USER_GUIDE_{lang.upper()}.pdf"), odocs)
