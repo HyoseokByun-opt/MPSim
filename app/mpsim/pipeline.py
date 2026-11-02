@@ -329,6 +329,11 @@ def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispe
             key.get("psd") or len({round(float((ph.get("size_um") or {}).get("d") or 0), 9) for ph in parts}) > 1):
         # 5.6.5: spheres of different sizes packed largest first (generate.pack_by_size); one size keeps its key
         key["pack"] = "size"
+    elif GEN.STAGED_RATIO and parts and any(ph.get("shape") != "sphere" for ph in parts) and (
+            key.get("psd") or len(parts) > 1):
+        # 5.6.6: other shapes too, when their placement jams and the clump relaxation packs them
+        # (generate.pack_clumps_by_size); one phase of one size keeps its key
+        key["pack"] = "size"
     if sheared:
         key["sheared"] = sheared                 # only a sheared one: random packings keep their keys
     if pressed:

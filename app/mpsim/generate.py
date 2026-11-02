@@ -2587,40 +2587,70 @@ def _free_centres(placed_c, placed_d, d_new, L, T, Lz, film, rng, tries=60):
     return out
 
 
+def _clump_spheres(C, Rm, s, tpl, templates, gap):
+    """World centres and diameters of the spheres that make up placed clumps (as _relax_step places them)."""
+    cs, ds = [], []
+    for i in range(len(C)):
+        q, r = templates[int(tpl[i])]
+        cs.append(C[i] + (np.asarray(q, float).reshape(-1, 3) * s[i]) @ Rm[i])
+        ds.append(2.0 * (np.asarray(r, float) * s[i] + 0.5 * gap[i]))
+    if not cs:
+        return np.zeros((0, 3)), np.zeros(0)
+    return np.concatenate(cs), np.concatenate(ds)
+
+
 def pack_by_size(L, C0, d, ph, same_ok, T, Lz, Wt, rng, log=None, should_stop=None, creep=None):
     """Spheres of very different sizes packed largest first (a bimodal blend, a wide distribution): grown all at
     once, every large sphere had to clear its room among thousands of small ones as they all grew, near the end
     the growth crept by 0.1 % a round, and the small spheres it pushed stayed jammed against it - twice the
     hard-sphere equilibrium of them at a large one, k_z 6 % high (alumina 2.4-2.8 and 0.3-0.36 µm, 43-54 vol%
     in a 10 µm film: 1,000-3,800 s). Near the film's jamming (3 µm at 57.9 vol% with 1.8 vol% of 0.29 µm) it
-    stopped at 0.969 of the size, 9 % short. Here the largest class is grown alone in the empty box (few
-    spheres, quick); each smaller class is then drawn in the room the placed ones leave and all of them relaxed
-    together, from a size where the new ones are apart, to full size: 45-215 s for the same cases with the
-    equilibration of STAGED_SWEEPS, and 0.994-1 of the size near the jamming. Returns (centres, size scale
-    reached) or None for sizes within one class; a scale below 1 is finished by the usual packing from there.
-    creep: the stop of a creeping packing (CREEP, with progressive overlap), for every class as for the growth
-    at once - a wide distribution puts most spheres in the largest class."""
-    classes = size_classes(d)
+    stopped at 0.969 of the size, 9 % short. Packed by size (pack_clumps_by_size, a sphere being a clump of one):
+    45-215 s for the same cases with the equilibration of STAGED_SWEEPS, and 0.994-1 of the size near the
+    jamming. Returns (centres, size scale reached) or None for sizes within one class."""
+    n = len(d)
+    out = pack_clumps_by_size(L, C0, np.tile(np.eye(3), (n, 1, 1)), np.asarray(d, float), np.zeros(n, np.int64),
+                              [(np.zeros((1, 3)), np.array([0.5]))], np.zeros(n), ph, same_ok,
+                              np.full(n, -1, np.int64), np.full(n, 0.5), T, Lz, Wt, rng, log=log,
+                              should_stop=should_stop, creep=creep, tol=1e-3, what="spheres")
+    return None if out is None else (out[0], out[2])
+
+
+def pack_clumps_by_size(L, C0, Rm0, s, tpl, templates, gap, ph, same_ok, rotmode, circ, T, Lz, Wt, rng, log=None,
+                        should_stop=None, creep=None, tol=0.01, what="particles"):
+    """Particles of very different sizes packed largest first, whatever their shape (spheres, or rigid clumps of
+    spheres for polyhedra, cubes, platelets, fibres and blends of shapes): classes by the circumscribed diameter
+    (size_classes); the largest class is grown alone in the empty box; each smaller class is drawn in the room
+    the placed particles leave - outside every sphere of their clumps at full size - and all of them relaxed
+    together from 0.8 of their size to full size. A class of thin particles (platelets, rods) starts as small as
+    clump_pack starts them; otherwise the placed ones keep their arrangement. Returns (centres, rotations, size
+    scale reached) or None for sizes within one class; a scale below 1 is finished by the usual packing from
+    there. creep: the stop of a creeping packing (CREEP, with progressive overlap), for every class as for the
+    growth at once - a wide distribution puts most particles in the largest class."""
+    size = 2.0 * circ * s + gap
+    classes = size_classes(size)
     if classes is None:
         return None
     film = T is not None
-    sph = [(np.zeros((1, 3)), np.array([0.5]))]
+    thick = np.array([float(np.max(templates[int(t)][1])) for t in tpl])
     pos = np.array(C0, float)
+    rot = np.array(Rm0, float)
     placed = np.zeros(0, np.int64)
     for k, cl in enumerate(classes):
         if k:
-            pos[cl] = _free_centres(pos[placed], d[placed], d[cl], L, T, Lz, film, rng)
+            wc, wd = _clump_spheres(pos[placed], rot[placed], s[placed], tpl[placed], templates, gap[placed])
+            pos[cl] = _free_centres(wc, wd, size[cl], L, T, Lz, film, rng)
         placed = np.concatenate([placed, cl])
-        m = len(placed)
         # from a size where the class just drawn hardly overlaps (the placed ones shrink with it and have room)
         g0 = 0.55 if k == 0 else 0.8
-        p, _, g = clump_pack(float(L), np.ascontiguousarray(pos[placed]), np.tile(np.eye(3), (m, 1, 1)),
-                             d[placed].copy(), np.zeros(m, np.int64), sph, np.zeros(m), ph[placed], same_ok,
-                             np.full(m, -1, np.int64), np.full(m, 0.5), log=None, should_stop=should_stop, tol=1e-3,
-                             Lz=Lz, Wt=Wt, g0=g0, recover=True, creep=creep)
-        pos[placed] = p
+        p, r_, g = clump_pack(float(L), np.ascontiguousarray(pos[placed]), np.ascontiguousarray(rot[placed]),
+                              s[placed].copy(), tpl[placed], templates, gap[placed], ph[placed], same_ok,
+                              rotmode[placed], circ[placed], log=None, should_stop=should_stop, tol=tol, Lz=Lz,
+                              Wt=Wt, g0=g0, recover=True, creep=creep,
+                              thin_start=k == 0 or bool(np.any(circ[cl] > 4.0 * thick[cl])))
+        pos[placed], rot[placed] = p, r_
         if log is not None:
-            log(f"    sizes {float(d[cl].min()):.3g}-{float(d[cl].max()):.3g} µm ({len(cl):,} spheres) packed "
+            log(f"    sizes {float(size[cl].min()):.3g}-{float(size[cl].max()):.3g} µm ({len(cl):,} {what}) packed "
                 f"{'alone' if k == 0 else 'into the room of the larger ones'}: size scale {g:.4f}")
         if g < 1.0:
             if log is not None:
@@ -2628,15 +2658,16 @@ def pack_by_size(L, C0, d, ph, same_ok, T, Lz, Wt, rng, log=None, should_stop=No
             if k < len(classes) - 1:
                 # the smaller classes still to come: drawn in the room left, the growth starts a little lower
                 rest = np.concatenate(classes[k + 1:])
-                pos[rest] = _free_centres(pos[placed], d[placed] * g, d[rest], L, T, Lz, film, rng)
-                return pos, 0.8 * float(g)
-            return pos, float(g)
-    return pos, 1.0
+                wc, wd = _clump_spheres(pos[placed], rot[placed], s[placed] * g, tpl[placed], templates, gap[placed])
+                pos[rest] = _free_centres(wc, wd, size[rest], L, T, Lz, film, rng)
+                return pos, rot, 0.8 * float(g)
+            return pos, rot, float(g)
+    return pos, rot, 1.0
 
 
 def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
                log=None, should_stop=None, max_steps=MAX_RELAX_STEPS, tol=0.01, Lz=None, Wt=0.0, g0=0.55,
-               stall_window=0, stall_gain=0.0, recover=False, creep=None):
+               stall_window=0, stall_gain=0.0, recover=False, creep=None, thin_start=True):
     """Grow and relax rigid clumps until they reach full size without overlap.
 
     templates : list of (centres (k,3), radii (k,)) at nominal size
@@ -2658,6 +2689,8 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
                 structure: thin platelets otherwise crept on at 0.5 % a round
                 after their first failure. jamming_fraction keeps it off - its
                 calibration (JAM_CAL) was measured without it.
+    thin_start: thin particles start smaller (below); off where they are
+                already placed apart and only smaller ones were added.
     Returns (C, Rm, scale) of the best overlap-free state; scale < 1 means the
     target size (and so the target fraction) was not reached.
 
@@ -2689,7 +2722,7 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
     # where they are short against their spacing they rarely cross, and they
     # grow from there
     asp = float(np.max(circ / np.maximum(thick, 1e-300)))
-    if asp > 4.0:
+    if thin_start and asp > 4.0:
         g0 = min(g0, max(0.1, 2.2 / asp))
     msub = int(sum(tcnt[t] for t in tpl))
     wpos = np.zeros((msub, 3))
@@ -3733,9 +3766,21 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 if g_med < sep - 1e-6:
                     log(f"  a {sep:g}-voxel gap between all particles does not fit at this loading; "
                         f"particles kept {g_med:.2f} voxels apart where the packing allows")
-            C, Rs, scale = clump_pack(float(L), C, Rs, s, tpl, templates, gap, ph_arr,
-                                      overlap_of.astype(np.int64), rotm, circ, log=log, should_stop=should_stop,
-                                      Lz=Lz_pack, Wt=Wt, recover=True, creep=CREEP if overlap_steps else None)
+            # particles of very different sizes, of any shape: largest first (5.6.6, as spheres since 5.6.5)
+            staged = None
+            if STAGED_RATIO and rho is None:
+                staged = pack_clumps_by_size(float(L), C, Rs, s, tpl, templates, gap, ph_arr,
+                                             overlap_of.astype(np.int64), rotm, circ, T if film else None, Lz_pack,
+                                             Wt, rng, log=log, should_stop=should_stop,
+                                             creep=CREEP if overlap_steps else None)
+            if staged is not None and staged[2] >= 1.0:
+                C, Rs, scale = staged
+            else:
+                C, Rs, scale = clump_pack(float(L), C if staged is None else staged[0],
+                                          Rs if staged is None else staged[1], s, tpl, templates, gap, ph_arr,
+                                          overlap_of.astype(np.int64), rotm, circ, log=log, should_stop=should_stop,
+                                          Lz=Lz_pack, Wt=Wt, g0=0.55 if staged is None else 0.999 * staged[2],
+                                          recover=True, creep=CREEP if overlap_steps else None)
             if scale < 1.0 and np.any(gap > gap_user):
                 # the separation gap does not fit: continue from this state
                 # without it, so particles touch only where the target needs it

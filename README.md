@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.6.5-0b62c4" alt="version 5.6.5">
+  <img src="https://img.shields.io/badge/version-5.6.6-0b62c4" alt="version 5.6.6">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-90%20checks-2da44e" alt="90 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-91%20checks-2da44e" alt="91 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -61,7 +61,10 @@ The main capabilities are listed below.
   spheres of very different sizes (a coarse and a fine filler, a wide distribution) are packed largest first, which
   takes minutes where growing all of them at once took an hour (alumina 2.4 + 0.3 µm, 50.5 vol% in a 10 µm film: 139 s
   against 3,807 s) and leaves the small spheres around the large ones within 4-9 % of the equilibrium of a hard-sphere
-  mixture, where the growth at once jammed twice as many against them (k<sub>z</sub> 6 % high).
+  mixture, where the growth at once jammed twice as many against them (k<sub>z</sub> 6 % high). Particles of other
+  shapes and blends of shapes are packed the same way when their random placement jams and the clump relaxation
+  packs them again (cubes 4 + 1 µm at 40 + 20 vol%: 96-119 s against 287-855 s, and fewer particles shrunk where
+  their corners caught).
   Every structure is drawn again once built to count the voxels that lie in two particles, whatever made it. Particles
   may touch, as in a filled compound (the default), or are kept a set number of voxels apart. A loading that cannot be
   packed without overlap (equal spheres beyond random close packing, dense cubes) is reached with the least overlap it
@@ -455,7 +458,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **90 problems with known solutions** (56 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **91 problems with known solutions** (56 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -506,6 +509,7 @@ reference values. A selection:
 | Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (62.6 % without) |
 | Progressive overlap in the random placement: log-normal irregular grains at 60 vol%, a seed whose placement jams | loading reached without a clump relaxation; overlap counted by drawing every particle again | 59.7 % in 3 s with ≤ 2 voxels, 0.6 % shared (220 s by clump relaxation before); 0 shared for a seed that places |
 | Spheres of different sizes packed largest first: 3 + 0.6 µm at 27 + 18 vol% | loading reached; k of the packing grown at once with ten times the equilibration (within 5 %); no overlap after 200 more two-grid moves | 27.0 + 18.0 vol%, k 1.392 against 1.362; closest pairs at 1.0001 of contact |
+| Particles of other shapes packed largest first: cubes 2 + 0.5 µm at 40 + 20 vol%, whose placement jams | the clump relaxation packs the classes one after the other and reaches the loading | both classes at full size, 40.00 + 19.76 vol% |
 | Statistical RVE: realisations until the 95 % interval is within the target | stops at the target or the most allowed; whole-number DOE seeds | passed |
 | Every step of a compression kept in 3D, also for a reused structure | labels and stress of each step's whole box | passed |
 
@@ -713,7 +717,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.6.5, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.6.6, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 
