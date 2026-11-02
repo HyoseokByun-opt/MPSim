@@ -747,6 +747,15 @@ Bug reports and suggestions are welcome as GitHub issues. A report should includ
 shown in the title bar and the output of `5_SELF_TEST.bat --quick`. Pull requests should keep the self-test passing and
 add a check for any new solver or analysis.
 
+## Related projects
+
+- [AIMPSim](https://github.com/HyoseokByun-opt/AIMPSim) ([project page](https://hyoseokbyun-opt.github.io/AIMPSim/)) -
+  MPSim with requests in words: a local language model reads the request, rules check it against the sentence, MPSim
+  runs it.
+- [AICAD](https://github.com/HyoseokByun-opt/AICAD) ([project page](https://hyoseokbyun-opt.github.io/AICAD/)) -
+  AI-assisted CAD modelling: engineering drawings or descriptions to parametric 3D solids (STEP) and beam and shell
+  analysis models, with a local vision-language model and the OpenCASCADE kernel.
+
 ## Authors
 
 **Hyoseok Byun** ([GitHub](https://github.com/HyoseokByun-opt) · [LinkedIn](https://www.linkedin.com/in/hyoseok-byun-72992120a)): concept, design, direction and
