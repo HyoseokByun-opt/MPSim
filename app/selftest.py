@@ -992,26 +992,6 @@ def t_pack_by_size():
             f"after 200 more sweeps the closest pairs at {worst[0]:.4f} and {worst[1]:.4f} of contact")
 
 
-@check("Particles of other shapes and very different sizes packed largest first: cubes 2 + 0.5 µm whose placement "
-       "jams are packed by the clump relaxation class by class and reach their loading", quick=False)
-def t_pack_clumps_by_size():
-    from mpsim import generate as GEN
-    ph = [dict(name=n, shape="cube", size_um={"d": d}, dist={"type": "mono"}, vf=vf,
-               orientation={"mode": "iso", "spread_deg": 0}, overlap=False, gap_frac=0.0)
-          for n, d, vf in (("big", 2.0, 0.40), ("small", 0.5, 0.20))]
-    lines = []
-    t0 = time.time()
-    lab, info = GEN.generate(48, 0.125, ph, seed=3, log=lambda *a: lines.append(" ".join(str(x) for x in a)),
-                             contacts="keep", gap_vox=0.0)
-    dt = time.time() - t0
-    vf = [float((lab == i).mean()) for i in (1, 2)]
-    by_size = [ln.strip() for ln in lines if " packed alone" in ln or "into the room of the larger ones" in ln]
-    expect("clump" in (info.get("route") or ""), f"route {info.get('route')}: the placement did not jam")
-    expect(len(by_size) == 2, f"classes packed: {by_size}")
-    expect(all(abs(v / w - 1) < 0.03 for v, w in zip(vf, (0.40, 0.20))), f"fractions {vf}")
-    return f"{dt:.1f} s; " + "; ".join(by_size) + f"; {100 * vf[0]:.2f} + {100 * vf[1]:.2f} vol%"
-
-
 @check("Redrawing: the stored particles reproduce the generated structure exactly, and a finer grid keeps the fraction")
 def t_rasterize():
     from mpsim import generate as GEN

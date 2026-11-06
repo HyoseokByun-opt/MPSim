@@ -1745,6 +1745,18 @@ MC_SWEEPS_MAX = 3000
 STAGED_SWEEPS = 10.0
 # the Monte-Carlo moves keep spheres smaller than the largest by more than this factor in a cell grid of their own
 MC_GRID_SPLIT = 2.5
+# other shapes of very different sizes, packed by the clump relaxation, are packed largest first too only when
+# this is set (off: grown at once, as up to 5.6.5). Packed by size, the smaller clumps stayed where they were
+# drawn, outside the larger ones: irregular polyhedra 6 + 1.5 µm at 35 + 20 vol% had 26-34 voxel faces of small
+# particles per large one, against 100 in a random placement and 124 grown at once; the Monte-Carlo moves of
+# clump_equilibrate bring them to about 80, but at 0.17 ms a move (111 s for 639 particles) the packing by size is
+# then no faster than growing all at once. Kept for further work.
+CLUMP_STAGED = False
+# with CLUMP_STAGED: the clumps' Monte-Carlo equilibration, about this many moves in all, between
+# CLUMP_MC_SWEEPS_MIN and MC_SWEEPS_MAX sweeps
+CLUMP_STAGED_MC = True
+CLUMP_MC_MOVES = 3.0e7
+CLUMP_MC_SWEEPS_MIN = 200
 MAX_COMPRESS_ITER = 1_500
 # a tighter budget for jamming_fraction, which only needs where the packing
 # stops (set and reset around its call; None outside it)
@@ -2663,6 +2675,281 @@ def pack_clumps_by_size(L, C0, Rm0, s, tpl, templates, gap, ph, same_ok, rotmode
                 return pos, rot, 0.8 * float(g)
             return pos, rot, float(g)
     return pos, rot, 1.0
+
+
+@njit(cache=True)
+def _clump_cell(x, y, z, g, csg, ncg, cszg, nczg, off):
+    return off[g] + _cell3(x, y, z, csg[g], ncg[g], cszg[g], nczg[g])
+
+
+@njit(cache=True, fastmath=True)
+def _mc_clump_sweeps(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L, Lz, Wt, n_sweeps,
+                     disp0, ang0, tol, seed):
+    """Athermal hard-body Metropolis moves of rigid clumps of spheres: a clump is moved by a random step and
+    turned by a random small angle (about any axis when free, about its own axis when it keeps it, about its
+    own axis or the world z when it keeps it in the xy plane - rotmode as in _relax_step); the move stands
+    when none of its spheres then overlaps a sphere of another clump (or a film face, Wt > 0) by more than
+    tol of the smaller radius, the tolerance clump_pack leaves. The proposals are symmetric, so the moves
+    sample the arrangements of the clumps evenly. The spheres sit in two cell grids by their radius, as in
+    _mc_sweeps. Returns the acceptance."""
+    np.random.seed(seed)
+    if Lz <= 0.0:
+        Lz = L
+    n = C.shape[0]
+    soff = np.zeros(n + 1, np.int64)
+    for i in range(n):
+        soff[i + 1] = soff[i] + tcnt[tpl[i]]
+    m = soff[n]
+    wpos = np.zeros((m, 3))
+    wrad = np.zeros(m)
+    wown = np.zeros(m, np.int64)
+    kmax = 0
+    for i in range(n):
+        t = tpl[i]
+        if tcnt[t] > kmax:
+            kmax = tcnt[t]
+        a = soff[i]
+        for k in range(toff[t], toff[t] + tcnt[t]):
+            qx = tq[k, 0] * s[i]
+            qy = tq[k, 1] * s[i]
+            qz = tq[k, 2] * s[i]
+            wpos[a, 0] = C[i, 0] + Rm[i, 0, 0] * qx + Rm[i, 1, 0] * qy + Rm[i, 2, 0] * qz
+            wpos[a, 1] = C[i, 1] + Rm[i, 0, 1] * qx + Rm[i, 1, 1] * qy + Rm[i, 2, 1] * qz
+            wpos[a, 2] = C[i, 2] + Rm[i, 0, 2] * qx + Rm[i, 1, 2] * qy + Rm[i, 2, 2] * qz
+            wrad[a] = tr[k] * s[i] + 0.5 * gap[i]
+            wown[a] = i
+            a += 1
+    # two cell grids by sphere radius
+    rmax = wrad.max()
+    r_s = 0.0
+    for a in range(m):
+        if wrad[a] * MC_GRID_SPLIT < rmax and wrad[a] > r_s:
+            r_s = wrad[a]
+    ng = 2 if r_s > 0.0 else 1
+    if ng == 1:
+        r_s = rmax
+    rg = np.array([r_s, rmax])
+    ncg = np.zeros(2, np.int64)
+    nczg = np.zeros(2, np.int64)
+    csg = np.zeros(2)
+    cszg = np.zeros(2)
+    off = np.zeros(3, np.int64)
+    for g in range(ng):
+        c0 = 2.0 * rg[g]
+        if g == 0 and ng == 2:
+            c0 = max(c0, (L * L * Lz / (8.0 * m)) ** (1.0 / 3.0))
+        ncg[g] = max(int(L / c0), 3)
+        csg[g] = L / ncg[g]
+        nczg[g] = max(int(Lz / c0), 3)
+        cszg[g] = Lz / nczg[g]
+        off[g + 1] = off[g] + ncg[g] * ncg[g] * nczg[g]
+    grp = np.zeros(m, np.int64)
+    for a in range(m):
+        if wrad[a] > r_s:
+            grp[a] = 1
+    head = -np.ones(off[ng], np.int64)
+    nxt = -np.ones(m, np.int64)
+    for a in range(m):
+        c = _clump_cell(wpos[a, 0] % L, wpos[a, 1] % L, wpos[a, 2] % Lz, grp[a], csg, ncg, cszg, nczg, off)
+        nxt[a] = head[c]
+        head[c] = a
+    tp = np.zeros((kmax, 3))
+    R2 = np.zeros((3, 3))
+    disp = disp0
+    ang_max = ang0
+    acc_total = 0
+    tries_total = 0
+    half = 0.5 * L
+    halfz = 0.5 * Lz
+    for sw in range(n_sweeps):
+        acc = 0
+        for _ in range(n):
+            i = np.random.randint(0, n)
+            dx = (np.random.random() - 0.5) * 2.0 * disp
+            dy = (np.random.random() - 0.5) * 2.0 * disp
+            dz = (np.random.random() - 0.5) * 2.0 * disp
+            # the turn: an axis and an angle
+            ux, uy, uz, an = 0.0, 0.0, 1.0, 0.0
+            if rotmode[i] >= 0:
+                an = (np.random.random() - 0.5) * 2.0 * ang_max
+                if rotmode[i] == 0:
+                    ux = np.random.normal()
+                    uy = np.random.normal()
+                    uz = np.random.normal()
+                    nu = math.sqrt(ux * ux + uy * uy + uz * uz)
+                    ux /= nu
+                    uy /= nu
+                    uz /= nu
+                elif rotmode[i] == 1 or np.random.random() < 0.5:
+                    ux = Rm[i, 2, 0]
+                    uy = Rm[i, 2, 1]
+                    uz = Rm[i, 2, 2]
+            ca = math.cos(an)
+            sa = math.sin(an)
+            oc = 1.0 - ca
+            q00 = ca + ux * ux * oc
+            q01 = ux * uy * oc - uz * sa
+            q02 = ux * uz * oc + uy * sa
+            q10 = uy * ux * oc + uz * sa
+            q11 = ca + uy * uy * oc
+            q12 = uy * uz * oc - ux * sa
+            q20 = uz * ux * oc - uy * sa
+            q21 = uz * uy * oc + ux * sa
+            q22 = ca + uz * uz * oc
+            for r in range(3):
+                a0 = Rm[i, r, 0]
+                a1 = Rm[i, r, 1]
+                a2 = Rm[i, r, 2]
+                R2[r, 0] = q00 * a0 + q01 * a1 + q02 * a2
+                R2[r, 1] = q10 * a0 + q11 * a1 + q12 * a2
+                R2[r, 2] = q20 * a0 + q21 * a1 + q22 * a2
+            cx = (C[i, 0] + dx) % L
+            cy = (C[i, 1] + dy) % L
+            cz = C[i, 2] + dz if Wt > 0.0 else (C[i, 2] + dz) % Lz
+            t = tpl[i]
+            kk = tcnt[t]
+            hit = False
+            for k in range(kk):
+                qx = tq[toff[t] + k, 0] * s[i]
+                qy = tq[toff[t] + k, 1] * s[i]
+                qz = tq[toff[t] + k, 2] * s[i]
+                tp[k, 0] = cx + R2[0, 0] * qx + R2[1, 0] * qy + R2[2, 0] * qz
+                tp[k, 1] = cy + R2[0, 1] * qx + R2[1, 1] * qy + R2[2, 1] * qz
+                tp[k, 2] = cz + R2[0, 2] * qx + R2[1, 2] * qy + R2[2, 2] * qz
+                ra = wrad[soff[i] + k]
+                if Wt > 0.0 and (tp[k, 2] - ra < -tol * ra or tp[k, 2] + ra > Wt + tol * ra):
+                    hit = True
+                    break
+                x = tp[k, 0] % L
+                y = tp[k, 1] % L
+                z = tp[k, 2] % Lz
+                for g in range(ng):
+                    if hit:
+                        break
+                    nc = ncg[g]
+                    ncz = nczg[g]
+                    cs = csg[g]
+                    csz = cszg[g]
+                    gx = int(x / cs) % nc
+                    gy = int(y / cs) % nc
+                    gz = int(z / csz) % ncz
+                    reach = int(math.ceil((ra + rg[g]) / cs))
+                    reachz = int(math.ceil((ra + rg[g]) / csz))
+                    lx, hx, bx = -reach, reach, gx
+                    ly, hy, by = -reach, reach, gy
+                    lz, hz, bz = -reachz, reachz, gz
+                    if 2 * reach + 1 >= nc:
+                        lx, hx, bx = 0, nc - 1, 0
+                        ly, hy, by = 0, nc - 1, 0
+                    if 2 * reachz + 1 >= ncz:
+                        lz, hz, bz = 0, ncz - 1, 0
+                    for ox in range(lx, hx + 1):
+                        if hit:
+                            break
+                        ax_ = (bx + ox) % nc
+                        for oy in range(ly, hy + 1):
+                            if hit:
+                                break
+                            ay_ = (by + oy) % nc
+                            for oz in range(lz, hz + 1):
+                                az_ = (bz + oz) % ncz
+                                b = head[off[g] + (ax_ * nc + ay_) * ncz + az_]
+                                while b != -1:
+                                    ib = wown[b]
+                                    if ib != i and not (same_ok[ph[i]] == 1 and ph[i] == ph[ib]):
+                                        ex = wpos[b, 0] - tp[k, 0]
+                                        ey = wpos[b, 1] - tp[k, 1]
+                                        ez = wpos[b, 2] - tp[k, 2]
+                                        if ex > half:
+                                            ex -= L
+                                        elif ex < -half:
+                                            ex += L
+                                        if ey > half:
+                                            ey -= L
+                                        elif ey < -half:
+                                            ey += L
+                                        if ez > halfz:
+                                            ez -= Lz
+                                        elif ez < -halfz:
+                                            ez += Lz
+                                        need = ra + wrad[b] - tol * min(ra, wrad[b])
+                                        if ex * ex + ey * ey + ez * ez < need * need:
+                                            hit = True
+                                            break
+                                    b = nxt[b]
+                                if hit:
+                                    break
+                if hit:
+                    break
+            tries_total += 1
+            if hit:
+                continue
+            # the move stands: its spheres change cells where they moved out of theirs
+            for k in range(kk):
+                a = soff[i] + k
+                c_old = _clump_cell(wpos[a, 0] % L, wpos[a, 1] % L, wpos[a, 2] % Lz, grp[a], csg, ncg, cszg, nczg, off)
+                c_new = _clump_cell(tp[k, 0] % L, tp[k, 1] % L, tp[k, 2] % Lz, grp[a], csg, ncg, cszg, nczg, off)
+                wpos[a, 0] = tp[k, 0]
+                wpos[a, 1] = tp[k, 1]
+                wpos[a, 2] = tp[k, 2]
+                if c_new != c_old:
+                    b = head[c_old]
+                    if b == a:
+                        head[c_old] = nxt[a]
+                    else:
+                        while b != -1:
+                            if nxt[b] == a:
+                                nxt[b] = nxt[a]
+                                break
+                            b = nxt[b]
+                    nxt[a] = head[c_new]
+                    head[c_new] = a
+            C[i, 0] = cx
+            C[i, 1] = cy
+            C[i, 2] = cz
+            for r in range(3):
+                for c in range(3):
+                    Rm[i, r, c] = R2[r, c]
+            acc += 1
+        acc_total += acc
+        if sw < n_sweeps // 2 and sw % 20 == 19:
+            rate = acc / n
+            if rate > 0.40:
+                disp *= 1.08
+                ang_max *= 1.08
+            elif rate < 0.30:
+                disp *= 0.93
+                ang_max *= 0.93
+            disp = min(disp, 0.25 * L)
+            ang_max = min(ang_max, 0.5)
+    return acc_total / max(1, tries_total)
+
+
+def clump_equilibrate(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ, Lz, Wt, sweeps, rng, tol=0.01):
+    """Monte-Carlo equilibration of a packing of rigid clumps (_mc_clump_sweeps), the clumps' counterpart of
+    the spheres' equilibration: a packing by size leaves the smaller particles where they were drawn, outside
+    the larger ones, and the relaxation does not bring them to them. Returns (C, Rm, acceptance); the rotations
+    are made orthonormal again at the end."""
+    toff = np.zeros(len(templates), np.int64)
+    tcnt = np.zeros(len(templates), np.int64)
+    tq_l, tr_l = [], []
+    o = 0
+    for t, (q, r) in enumerate(templates):
+        toff[t], tcnt[t] = o, len(r)
+        tq_l.append(np.asarray(q, float).reshape(-1, 3))
+        tr_l.append(np.asarray(r, float))
+        o += len(r)
+    C = np.ascontiguousarray(C, float).copy()
+    Rm = np.ascontiguousarray(Rm, float).copy()
+    size = 2.0 * np.asarray(circ, float) * np.asarray(s, float)
+    rate = _mc_clump_sweeps(C, Rm, np.ascontiguousarray(s, float), np.ascontiguousarray(tpl, np.int64), toff, tcnt,
+                            np.concatenate(tq_l), np.concatenate(tr_l), np.ascontiguousarray(gap, float),
+                            np.ascontiguousarray(ph, np.int64), np.ascontiguousarray(same_ok, np.int64),
+                            np.ascontiguousarray(rotmode, np.int64), float(L), float(Lz), float(Wt), int(sweeps),
+                            0.05 * float(size.min()), 0.05, float(tol), int(rng.integers(1 << 30)))
+    u, _, vt = np.linalg.svd(Rm)
+    Rm = u @ vt
+    return C, Rm, float(rate)
 
 
 def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
@@ -3766,9 +4053,9 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 if g_med < sep - 1e-6:
                     log(f"  a {sep:g}-voxel gap between all particles does not fit at this loading; "
                         f"particles kept {g_med:.2f} voxels apart where the packing allows")
-            # particles of very different sizes, of any shape: largest first (5.6.6, as spheres since 5.6.5)
+            # particles of very different sizes, of any shape: largest first when CLUMP_STAGED is set
             staged = None
-            if STAGED_RATIO and rho is None:
+            if STAGED_RATIO and CLUMP_STAGED and rho is None:
                 staged = pack_clumps_by_size(float(L), C, Rs, s, tpl, templates, gap, ph_arr,
                                              overlap_of.astype(np.int64), rotm, circ, T if film else None, Lz_pack,
                                              Wt, rng, log=log, should_stop=should_stop,
@@ -3781,6 +4068,16 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                           overlap_of.astype(np.int64), rotm, circ, log=log, should_stop=should_stop,
                                           Lz=Lz_pack, Wt=Wt, g0=0.55 if staged is None else 0.999 * staged[2],
                                           recover=True, creep=CREEP if overlap_steps else None)
+            if staged is not None and CLUMP_STAGED_MC:
+                # packed by size: the smaller particles brought to the larger ones by Monte-Carlo moves, as the
+                # spheres' equilibration does (left where they were drawn, they kept a layer of matrix around
+                # the larger particles)
+                sweeps = int(min(MC_SWEEPS_MAX, max(CLUMP_MC_SWEEPS_MIN, CLUMP_MC_MOVES / len(s))))
+                t_mc = time.time()
+                C, Rs, rate = clump_equilibrate(float(L), C, Rs, s * scale, tpl, templates, gap, ph_arr,
+                                                overlap_of.astype(np.int64), rotm, circ, Lz_pack, Wt, sweeps, rng)
+                log(f"  Monte-Carlo equilibration of the clumps: {sweeps} sweeps (acceptance {100 * rate:.0f} %, "
+                    f"{time.time() - t_mc:.1f} s)")
             if scale < 1.0 and np.any(gap > gap_user):
                 # the separation gap does not fit: continue from this state
                 # without it, so particles touch only where the target needs it
