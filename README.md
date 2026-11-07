@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-90%20checks-2da44e" alt="90 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-93%20checks-2da44e" alt="93 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -53,11 +53,13 @@ PC or on a server that is accessed from other computers on the network; data do 
 
 The main capabilities are listed below.
 
-- **Microstructure generation.** Spheres, spheroids (needles and platelets), cylinders, capsules, cubes, cuboids,
-  superellipsoids, polyhedra (irregular grains, each with a shape of its own if wanted), helices and connected networks with full 3D
-  rotation; normal and log-normal size distributions with bounds, or a measured particle-size distribution loaded from
-  the analyser's file (by volume or by number); coated and hollow particles, several filler phases in one RVE, pores as
-  a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression;
+- **Microstructure generation.** Spheres, spheroids of two or three axes (needles, platelets, flakes that are not round),
+  cylinders, capsules, cubes, cuboids, superellipsoids, polyhedra (irregular grains, each with a shape of its own if wanted)
+  and connected networks with full 3D rotation; normal and log-normal size distributions with bounds, or a measured
+  particle-size distribution loaded from the analyser's file (by volume or by number). Every dimension beyond the size can
+  have a distribution of its own, independent of it (a fibre's length, a flake's thickness ratio, a box's edges), and the
+  size can be read as the volume-equivalent diameter that laser diffraction reports. Coated and hollow particles, several
+  filler phases in one RVE, pores as a material phase and gas matrices. Dense packings are obtained by rigid-clump relaxation and Monte-Carlo compression;
   spheres of very different sizes (a coarse and a fine filler, a wide distribution) are packed largest first, which
   takes minutes where growing all of them at once took an hour (alumina 2.4 + 0.3 µm, 50.5 vol% in a 10 µm film: 139 s
   against 3,807 s) and leaves the small spheres around the large ones within 4-9 % of the equilibrium of a hard-sphere
@@ -66,10 +68,21 @@ The main capabilities are listed below.
   may touch, as in a filled compound (the default), or are kept a set number of voxels apart. A loading that cannot be
   packed without overlap (equal spheres beyond random close packing, dense cubes) is reached with the least overlap it
   takes, 1 voxel and then 2, rather than with every particle drawn smaller (spheres at 66 vol%: 65.96 % instead of 62.6 %);
-  a random placement that jams a little short is finished the same way in seconds instead of being packed again. Sphere packings can be sheared in the resin by
+  a random placement that jams a little short is finished the same way in seconds instead of being packed again.
+  Every structure sets the sizes it holds against the input, dimension by dimension (means, D10/D50/D90 by number and
+  by volume, a two-sample test, a check), while the run goes on; up to 5.6.5 the random placement of non-spherical
+  particles dropped the smallest of every round (a log-normal CV of 0.34 came out as 0.15-0.20, the number mean 9-50 %
+  high), which 5.6.6 corrects. The particles are written as files (particles.csv with every particle's centre, dimensions
+  and rotation, the polyhedra's vertices, the size distributions) from which another program redraws the structure
+  voxel for voxel. Sphere packings can be sheared in the resin by
   particle dynamics before they are drawn, which yields the arrangement of a compound after flow. Fillers and further
   matrix materials can be confined to sections (slabs) of the RVE, so that two compounds, a filled layer on an unfilled
   one or a resin interlayer are modelled as one structure.
+- **Structures from images.** A 3D TIFF - a CT or FIB-SEM reconstruction, a segmented label image, MPSim's own
+  structure.tif - is read as the RVE: 8/16-bit grey, palette or RGB stacks, a 2D image extruded along z; every grey value,
+  colour or grey-value range (thresholds entered or found by the multi-level Otsu method) becomes the matrix or a phase
+  of a library material, and every voxel analysis runs on it. Grain analysis counts the connected regions of each phase.
+  A structure written as structure.tif and read back gives the same labels and the same conductivity.
 - **Compression while the resin flows.** The periodic RVE is shortened along z with its sides free or held, step by
   step: each step solves the three-dimensional creeping flow of the whole RVE on its voxels (every resin with its own
   viscosity, the filler spheres rigid, the pores a compressible gas), the spheres move as rigid bodies and the resins
@@ -455,7 +468,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **90 problems with known solutions** (56 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **93 problems with known solutions** (59 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -504,8 +517,11 @@ reference values. A selection:
 | A run stopped while it waits at the memory gate | the queue keeps answering (a killed waiter hangs a multiprocessing Event) | passed; the gate is a non-blocking flag |
 | Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
 | Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (62.6 % without) |
-| Progressive overlap in the random placement: log-normal irregular grains at 60 vol%, a seed whose placement jams | loading reached without a clump relaxation; overlap counted by drawing every particle again | 59.7 % in 3 s with ≤ 2 voxels, 0.6 % shared (220 s by clump relaxation before); 0 shared for a seed that places |
+| Progressive overlap in the random placement: log-normal spheroids (c/a 0.5) at 50 vol% whose placement jams 2-3 % short | loading reached without a clump relaxation, with the particles drawn (sizes within three standard errors); overlap counted by drawing every particle again | 49.8-50.0 % in under 1 s with ≤ 2 voxels, 0.2 % shared; 0 shared at 30 vol% |
 | Spheres of different sizes packed largest first: 3 + 0.6 µm at 27 + 18 vol% | loading reached; k of the packing grown at once with ten times the equilibration (within 5 %); no overlap after 200 more two-grid moves | 27.0 + 18.0 vol%, k 1.392 against 1.362; closest pairs at 1.0001 of contact |
+| Particle files: particles.csv and polyhedra.csv redrawn by plain numpy with the README's conventions, eight shapes, bulk and film | the generated structure | identical voxel for voxel |
+| Sizes realised in every dimension: triaxial spheroids with their own c/a, fibres with their own length, irregular grains by volume | the input distribution | every mean within 0.6 of three standard errors; two-sample test not rejecting |
+| Structure from a TIFF: structure.tif, label, RGB, palette and ImageJ stacks; a noisy grey image | the generated labels; the shares of the phases | identical; shares within 0.03 % by automatic thresholds |
 | Statistical RVE: realisations until the 95 % interval is within the target | stops at the target or the most allowed; whole-number DOE seeds | passed |
 | Every step of a compression kept in 3D, also for a reused structure | labels and stress of each step's whole box | passed |
 

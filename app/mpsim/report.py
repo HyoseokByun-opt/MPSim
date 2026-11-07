@@ -171,7 +171,7 @@ def _table(head, rows):
 
 SHAPES = {"sphere": "sphere", "spheroid": "spheroid", "cylinder": "cylinder", "spherocylinder": "spherocylinder",
           "cube": "cube", "cuboid": "cuboid", "superellipsoid": "rounded box (superellipsoid)", "polyhedron": "polyhedron",
-          "helix": "helix", "network": "bicontinuous network"}
+          "network": "bicontinuous network", "image": "voxels of the image"}
 
 
 def write(out_dir, r):
@@ -207,12 +207,17 @@ def write(out_dir, r):
                      f"E {_fmt(mp_['E'])} GPa, α {_fmt(mp_['alpha'])} ppm/K</td></tr>")
     for ph in spec["phases"]:
         sz = ph["size_um"]
-        desc = f"{SHAPES[ph['shape']]}, d {_fmt(sz['d'])} µm" + (f", aspect ratio {_fmt(sz.get('aspect'))}" if "aspect" in sz else "") + \
+        own = ph.get("dists") or {}
+        desc = ("voxels of the image" if ph["shape"] == "image" else f"{SHAPES[ph['shape']]}, d {_fmt(sz['d'])} µm") + \
+               (" (volume-equivalent)" if ph.get("size_basis") == "volume" else "") + \
+               (f", aspect ratio c/a {_fmt(sz.get('aspect'))}" if "aspect" in sz else "") + \
+               (f", b/a {_fmt(sz.get('aspect_y'))}" if sz.get("aspect_y") not in (None, 1.0) else "") + \
+               "".join(f"; {k}{_dist_text(dd, None if k.startswith('aspect') else sz.get(k))}" for k, dd in own.items()) + \
                (f", length {_fmt(sz.get('length'))} µm" if "length" in sz else "") + \
                _dist_text(ph["dist"], sz.get("d")) + \
-               (f", orientation {ph['orientation']['mode']}" if ph["shape"] not in ("sphere", "network") else "") + \
+               (f", orientation {ph['orientation']['mode']}" if ph["shape"] not in ("sphere", "network", "image") else "") + \
                (f", shell {_fmt(ph['shell']['thickness_um'])} µm" if ph.get("shell") else "") + \
-               (f" × {_fmt(sz['ly'])} × {_fmt(sz['lz'])} µm" if "ly" in sz else "") +                (f", n {_fmt(sz['n'])}" if ph["shape"] == "superellipsoid" else "") +                (f", {sz.get('poly')}" if ph["shape"] == "polyhedron" else "") +                (f", coil {_fmt(sz['coil_d'])} µm, pitch {_fmt(sz['pitch'])} µm, {_fmt(sz['turns'])} turns" if ph["shape"] == "helix" else "") +                (f", R<sub>int</sub> {_fmt(ph['r_int'])} m²K/W" if ph.get("r_int") else "") +                (f", R<sub>c</sub> {_fmt(ph['r_contact'])} m²K/W" if ph.get("r_contact") else "") +                (f", in {ph['section']['axis']} {_fmt(100 * ph['section']['from'])}–{_fmt(100 * ph['section']['to'])} % "
+               (f" × {_fmt(sz['ly'])} × {_fmt(sz['lz'])} µm" if "ly" in sz else "") +                (f", n {_fmt(sz['n'])}" if ph["shape"] == "superellipsoid" else "") +                (f", {sz.get('poly')}" if ph["shape"] == "polyhedron" else "") +               (f", R<sub>int</sub> {_fmt(ph['r_int'])} m²K/W" if ph.get("r_int") else "") +                (f", R<sub>c</sub> {_fmt(ph['r_contact'])} m²K/W" if ph.get("r_contact") else "") +                (f", in {ph['section']['axis']} {_fmt(100 * ph['section']['from'])}–{_fmt(100 * ph['section']['to'])} % "
                 f"of the edge" if ph.get("section") else "")
         p = ph["props"]
         P.append(f"<tr><td>{'Pore phase' if ph['void'] else ('Network' if ph['shape'] == 'network' else 'Filler')}</td><td>{e(ph['name'])}</td><td>{desc}</td>"
@@ -221,7 +226,8 @@ def write(out_dir, r):
     P.append("</table>")
 
     # ------------------------------------------------------------------ RVE
-    P.append(f"<h2>2. RVE model</h2><p>Grid <b>{plan['N']}³</b>, voxel size <b>{_fmt(plan['h_um'])} µm</b>, RVE edge length <b>{_fmt(plan['L_um'])} µm</b> "
+    grid_ = " × ".join(str(v) for v in plan["shape"]) if plan.get("shape") else f"{plan['N']}³"
+    P.append(f"<h2>2. RVE model</h2><p>Grid <b>{grid_}</b>, voxel size <b>{_fmt(plan['h_um'])} µm</b>, RVE edge length <b>{_fmt(plan['L_um'])} µm</b> "
              f"(accuracy level {e(plan['quality_label'])}, {plan['seeds']} independent realisation(s)). Recommended voxel size {_fmt(plan['recommended']['h_um'])} µm; "
              f"recommended edge length {_fmt(plan['recommended']['L_um'])} µm, governed by {e(plan['recommended']['reason'])}.</p>")
     for n in plan["notes"]:
@@ -238,6 +244,24 @@ def write(out_dir, r):
                 + (f"{tp:,} voxel neighbour pairs of two particles remain, {rz.get('contact_faces', 0):,} across a face."
                    if tp else "No two particles touch at this resolution."))
     P.append(f"<p>Placement method: {e(rz['route'] or '-')}. {e(ctxt)}</p>")
+    psz = rz.get("particle_sizes") or {}
+    if psz:
+        # 5.6.6: every dimension of the particles the structure holds against the input
+        P.append("<p>Particle sizes of the first realisation against the input (the input sampled as the generator samples "
+                 "it; number statistics unless stated; p: two-sample Kolmogorov-Smirnov test of the number distributions). "
+                 "particles.csv and psa.csv in the run folder hold every particle and both distributions.</p>"
+                 "<table><tr><th>Phase</th><th>Dimension</th><th class='n'>Particles</th><th class='n'>Mean input / realised</th>"
+                 "<th class='n'>CV input / realised</th><th class='n'>D50 by volume input / realised</th><th class='n'>p</th></tr>")
+        for _i, pe in sorted(psz.items(), key=lambda kv: int(kv[0])):
+            for dm in pe.get("dimensions") or []:
+                si, sr = dm.get("input") or {}, dm.get("real") or {}
+                un = " µm" if dm.get("unit") == "um" else ""
+                P.append(f"<tr><td>{e(pe.get('name') or '')}</td><td>{e(dm['label'])}</td><td class='n'>{sr.get('count', '')}</td>"
+                         f"<td class='n'>{_fmt(si.get('number_mean'))} / {_fmt(sr.get('number_mean'))}{un}</td>"
+                         f"<td class='n'>{_fmt(si.get('cv'))} / {_fmt(sr.get('cv'))}</td>"
+                         f"<td class='n'>{_fmt(si.get('d50v'))} / {_fmt(sr.get('d50v'))}{un}</td>"
+                         f"<td class='n'>{_fmt((dm.get('ks') or {}).get('p'))}</td></tr>")
+        P.append("</table>")
     sh = rz.get("sheared")
     if sh:
         fab = sh.get("fabric") or {}
@@ -823,7 +847,8 @@ def input_html(spec, plan, meta=None, state="queued", created=None):
     # --------------------------------------------------------------- domain
     P.append("<h2>2. Domain</h2>")
     if plan:
-        grid = f"{plan['N']} × {plan['N']} × {plan['Nz']}" if plan.get("film") else f"{plan['N']}³"
+        grid = (" × ".join(str(v) for v in plan["shape"]) if plan.get("shape") else
+                f"{plan['N']} × {plan['N']} × {plan['Nz']}" if plan.get("film") else f"{plan['N']}³")
         P.append(f"<p>Grid <b>{grid}</b>, voxel <b>{_fmt(plan['h_um'])} µm</b>, edge <b>{_fmt(plan['L_um'])} µm</b>"
                  + (f", film <b>{_fmt(plan['T_um'])} µm</b> thick" if plan.get("film") else "")
                  + f" (level {e(str(plan.get('quality_label') or rv.get('quality')))}, {plan.get('seeds', 1)} realisation(s), "

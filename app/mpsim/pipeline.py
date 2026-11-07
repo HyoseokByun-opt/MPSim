@@ -195,8 +195,9 @@ def _outer_size(shape, size, t):
         return size
     d0 = size["d"]
     if shape == "spheroid":
-        a, b = 0.5 * d0, 0.5 * d0 * size["aspect"]
-        size["aspect"] = (b + t) / (a + t)
+        a, c, b = 0.5 * d0, 0.5 * d0 * size["aspect"], 0.5 * d0 * float(size.get("aspect_y", 1.0) or 1.0)
+        size["aspect"] = (c + t) / (a + t)
+        size["aspect_y"] = (b + t) / (a + t)
     if shape in ("cylinder", "spherocylinder"):
         size["length"] = size["length"] + 2 * t
     if shape in ("cuboid", "superellipsoid"):
@@ -213,11 +214,17 @@ def _generator_phases(spec):
     """Outer particle sizes (shell included) for the generator."""
     out = []
     for ph in spec["phases"]:
-        t = ph["shell"]["thickness_um"] if ph["shell"] and ph["shape"] != G.NETWORK else 0.0
-        size = _outer_size(ph["shape"], ph["size_um"], t) if ph["shape"] != G.NETWORK else dict(ph["size_um"])
+        t = ph["shell"]["thickness_um"] if ph["shell"] and ph["shape"] not in G.NON_PARTICLE else 0.0
+        size = _outer_size(ph["shape"], ph["size_um"], t) if ph["shape"] not in G.NON_PARTICLE else dict(ph["size_um"])
         out.append({"name": ph["name"], "shape": ph["shape"], "size_um": size, "dist": ph["dist"],
                     "vf": ph["vf"], "orientation": ph["orientation"], "overlap": ph["overlap"],
                     "gap_frac": ph["gap_frac"]})
+        # 5.6.6: the dimensions' own distributions and a volume-equivalent size, only where given (the
+        # structures and their keys stay as they were without them)
+        if ph.get("dists"):
+            out[-1]["dists"] = ph["dists"]
+        if ph.get("size_basis") == "volume":
+            out[-1]["size_basis"] = "volume"
         if ph.get("section"):
             out[-1]["section"] = dict(ph["section"])
     return out
@@ -324,7 +331,11 @@ def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispe
         # v5.3: particles of a size distribution are drawn until the target
         # volume (no common rescaling); monodisperse structures are unchanged
         key["psd"] = 2
-    parts = [ph for ph in gen_phases if ph.get("shape") != G.NETWORK and float(ph.get("vf") or 0) > 0]
+    if any(ph.get("shape") not in ("sphere",) + G.NON_PARTICLE for ph in gen_phases):
+        # 5.6.6: the random placement places every particle it draws (the smallest of every round were
+        # dropped, narrowing a size distribution); spheres, packed otherwise, keep their keys
+        key["rsa"] = 2
+    parts = [ph for ph in gen_phases if ph.get("shape") not in G.NON_PARTICLE and float(ph.get("vf") or 0) > 0]
     if GEN.STAGED_RATIO and parts and all(ph.get("shape") == "sphere" and not ph.get("overlap") for ph in parts) and (
             key.get("psd") or len({round(float((ph.get("size_um") or {}).get("d") or 0), 9) for ph in parts}) > 1):
         # 5.6.5: spheres of different sizes packed largest first (generate.pack_by_size); one size keeps its key
@@ -347,7 +358,7 @@ def structure_key(gen_phases, plan, contacts, seed, want_cf, sheared=None, dispe
 def shear_phases(spec):
     """The particle phases of a structure arranged by shear flow: spheres of
     a solid (no shells, no pores, no permitted overlap), at least one."""
-    return [i for i, ph in enumerate(spec["phases"]) if ph["shape"] != G.NETWORK and ph["vf"] > 0]
+    return [i for i, ph in enumerate(spec["phases"]) if ph["shape"] not in G.NON_PARTICLE and ph["vf"] > 0]
 
 
 def shear_key(spec):
@@ -443,7 +454,7 @@ def press_cure(spec, base, mu, log):
         pr = t["props"]
         rhocp += f * float(pr.get("rho") or 1.0) * 1e3 * float(pr.get("cp") or 1000.0)
     for ph in spec["phases"]:
-        if ph["void"] or ph["shape"] == G.NETWORK:
+        if ph["void"] or ph["shape"] in G.NON_PARTICLE:
             continue
         phif += float(ph["vf"])
         kf += float(ph["vf"]) * float(ph["props"].get("k") or 1.0)
@@ -812,7 +823,7 @@ def _dilute_eta(phases, log, should_stop, workers, vf=0.04):
     ext, dmin = 0.0, math.inf
     for p in parts:
         p["vf"] = float(p["vf"]) * vf / tot
-        st = G.phase_size_stats(p["shape"], p["size_um"], p.get("dist"))
+        st = G.phase_size_stats(p["shape"], p["size_um"], p.get("dist"), p.get("dists"), p.get("size_basis"))
         ext = max(ext, st["extent_max"])
         dmin = min(dmin, st["min_dim_p10"])
     L = 5.0 * ext
@@ -834,7 +845,7 @@ def sphere_distribution(phases, n=4000):
     included) and its truncated size distribution."""
     ds, ws = [], []
     for p in phases:
-        if p.get("void") or p["shape"] == G.NETWORK or float(p.get("vf", 0)) <= 0:
+        if p.get("void") or p["shape"] in G.NON_PARTICLE or float(p.get("vf", 0)) <= 0:
             continue
         if p["shape"] != "sphere":
             return None
@@ -859,7 +870,7 @@ def max_packing(phases, vo, log, should_stop):
         vx["phi_m_basis"] = "random close packing of the size distribution (Farr-Groot)"
         log(f"    random close packing of these spheres (Farr-Groot): {vx['phi_m_rcp']:.4f}")
     else:
-        solid = [p for p in phases if not p.get("void") and p["shape"] != G.NETWORK]
+        solid = [p for p in phases if not p.get("void") and p["shape"] not in G.NON_PARTICLE]
         try:
             vx["phi_m_rcp"], vx["jamming"] = GEN.jamming_fraction(solid, log=log, should_stop=should_stop)
             vx["phi_m_basis"] = "jammed packing of these particles"
@@ -1123,7 +1134,7 @@ def _dem_radii(spec, solid, n_target, seed=11):
             # largest sphere must still fit twice
             ext.append(float(p["size_um"]["d"]) * G.scale_bounds(dd)[1])
         else:
-            st = G.phase_size_stats(p["shape"], p["size_um"], dd)
+            st = G.phase_size_stats(p["shape"], p["size_um"], dd, p.get("dists"), p.get("size_basis"))
             d_eq.append(float(st["eqd_median"]))
             ext.append(float(st["extent_max"]))
         sc = G.sample_scales(20000, dd, rng)
@@ -1237,13 +1248,13 @@ def _dem_from_rve(spec, solid, ginfo, max_spheres=256):
     scale, vol, area, circ = np.ones(nb), np.zeros(nb), np.zeros(nb), np.zeros(nb)
     rotmode = np.full(nb, -1, np.int64)
     templates, tkey, info = [], {}, []
+    varied = [GEN.varied_proportions(p) for p in phs]
     for j in range(nb):
         k, code, P = int(owner[j]), int(codes[j]), Pp[j]
-        Pn = nominal[k]["P"].copy()
+        # the particle's own proportions where its phase's vary (5.6.6): its clump has them
+        Pn, prop = GEN.proportioned(code, nominal[k]["P"], P, varied[k])
         t_id = int(P[1]) if code == 6 else -1
-        if code == 6:
-            Pn[1] = t_id
-        key = (k, t_id)
+        key = (k, t_id, prop)
         if key not in tkey:
             q, r = SH.dem_template(code, Pn, planes, nfaces, max_spheres)
             tkey[key] = len(templates)
@@ -1469,7 +1480,7 @@ def dem_direct(spec, need):
     if set(need) != {"viscosity"} or not vo["dem"]["on"] or vo["rve_with_dem"]:
         return False
     # a phase set to 0 % takes no part (it stays in the form, but has no particles)
-    solid = [ph for ph in spec["phases"] if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
+    solid = [ph for ph in spec["phases"] if not ph["void"] and ph["shape"] not in G.NON_PARTICLE and ph["vf"] > 0]
     if not solid or any((ph["void"] or ph.get("shell")) and ph["vf"] > 0 for ph in spec["phases"]):
         return False
     return float(sum(ph["vf"] for ph in solid)) > 0.35
@@ -1484,7 +1495,7 @@ def _dem_direct_run(spec, opts, gen_phases, table, out_dir, log, event, prog, sh
     vo = opts["viscosity"]
     # the phases with particles (a phase set to 0 % has none; it would otherwise
     # get the one particle every phase is given, or forty when its are the largest)
-    solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
+    solid = [i for i, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] not in G.NON_PARTICLE and ph["vf"] > 0]
     phi = float(sum(spec["phases"][i]["vf"] for i in solid))
     sph = all(spec["phases"][i]["shape"] == "sphere" for i in solid)
     why = f"{'spheres' if sph else 'particles'} at {100 * phi:.0f} vol%"
@@ -1937,9 +1948,9 @@ def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks
                                uf["theta_deg"])
     settle = []
     for i, ph in enumerate(spec["phases"]):
-        if ph["void"] or ph["shape"] == G.NETWORK:
+        if ph["void"] or ph["shape"] in G.NON_PARTICLE:
             continue
-        st = G.phase_size_stats(ph["shape"], ph["size_um"], ph.get("dist"))
+        st = G.phase_size_stats(ph["shape"], ph["size_um"], ph.get("dist"), ph.get("dists"), ph.get("size_basis"))
         d = float(st.get("eqd_median") or st.get("eqd_max") or st.get("min_dim_p10") or 1.0)
         s_ = VI.settling(d * 1e-6, float(ph["props"]["rho"]) * 1000.0, vo["density_resin"], mu_m_ref, phi,
                          vo["settle_min"] * 60.0)
@@ -2088,8 +2099,10 @@ def rebuild_view(run_dir, log=print):
 
 
 def _plan_phases(spec):
+    # the dimensions' own distributions and the size basis (5.6.6) size the RVE as they size the particles
     return [{"name": ph["name"], "shape": ph["shape"], "size_um": ph["size_um"], "dist": ph["dist"],
-             "vf": ph["vf"], "shell": ph["shell"], "overlap": ph["overlap"], "gap_frac": ph["gap_frac"]}
+             "vf": ph["vf"], "shell": ph["shell"], "overlap": ph["overlap"], "gap_frac": ph["gap_frac"],
+             "dists": ph.get("dists") or None, "size_basis": ph.get("size_basis") or "shape"}
             for ph in spec["phases"]]
 
 
@@ -3334,7 +3347,7 @@ def _isotropic_structure(spec):
     # sections and matrix regions layer the RVE on purpose
     if spec.get("matrix_regions") or any(ph.get("section") for ph in spec["phases"]):
         return False
-    return all(ph["shape"] in ("sphere", G.NETWORK) or ph["orientation"]["mode"] == "iso"
+    return all(ph["shape"] in ("sphere",) + G.NON_PARTICLE or ph["orientation"]["mode"] == "iso"
                for ph in spec["phases"])
 
 
@@ -3371,9 +3384,9 @@ def _cond_refs(key, spec, vf_labels, vals):
         phs = []
         for li, t in enumerate(table[1:], start=1):
             ph = spec["phases"][t["phase"]]
-            ar = 1.0 if ph["shape"] in ("sphere", G.NETWORK) else G.aspect_ratio(ph["shape"], ph["size_um"])
+            ar = 1.0 if ph["shape"] in ("sphere",) + G.NON_PARTICLE else G.aspect_ratio(ph["shape"], ph["size_um"])
             phs.append({"phi": phi[li], "k": vals[li], "aspect": ar,
-                        "orientation": ph["orientation"]["mode"] if ph["shape"] not in ("sphere", G.NETWORK) else "iso"})
+                        "orientation": ph["orientation"]["mode"] if ph["shape"] not in ("sphere",) + G.NON_PARTICLE else "iso"})
         refs["Maxwell-Garnett / Mori–Tanaka"] = AN.mori_tanaka(km, phs)
         if all(spec["phases"][t["phase"]]["shape"] == "sphere" for t in table[1:]):
             refs["Bruggeman (EMA)"] = AN.bruggeman(phi, vals)
@@ -3702,7 +3715,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 nph = len(spec["phases"])
                 for i_ in range(nph):
                     for j_ in range(i_, nph):
-                        if spec["phases"][i_]["shape"] == G.NETWORK or spec["phases"][j_]["shape"] == G.NETWORK:
+                        if spec["phases"][i_]["shape"] in G.NON_PARTICLE or spec["phases"][j_]["shape"] in G.NON_PARTICLE:
                             continue
                         rows_c.append({"pair": [i_, j_], "names": [spec["phases"][i_]["name"], spec["phases"][j_]["name"]],
                                        "r_c": contact_resistance(spec, i_, j_),
@@ -3879,7 +3892,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             for t in table:
                 if t["kind"] == "core" and t["props"]["sigma"] > 1.0:
                     ph = spec["phases"][t["phase"]]
-                    st = G.phase_size_stats(ph["shape"], ph["size_um"], ph["dist"]) if ph["shape"] != G.NETWORK else {"min_dim_p10": ph["size_um"]["d"]}
+                    st = G.phase_size_stats(ph["shape"], ph["size_um"], ph["dist"], ph.get("dists"), ph.get("size_basis")) if ph["shape"] not in G.NON_PARTICLE else {"min_dim_p10": ph["size_um"]["d"]}
                     fillers.append((t["name"], t["props"]["sigma"], t["props"]["mu_r"], st["min_dim_p10"] * 1e-6))
             valid = EMI.validity(eps, mu, sig, N * h * 1e-6, fillers)
             f = np.asarray(sp["freq_hz"])
@@ -4122,7 +4135,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         want_cf = wants_contact_faces(spec)
         skey = structure_key(gen_phases, plan, contacts_key(opts), seed, want_cf, sheared=sheared,
                              dispersion=spec["rve"].get("dispersion"), pressed=pressed)
-        got = load_structure([out_dir] + list(reuse.get("from") or []), skey) if opts.get("reuse_runs", True) else None
+        got = (load_structure([out_dir] + list(reuse.get("from") or []), skey)
+               if opts.get("reuse_runs", True) and not spec.get("image") else None)
         if got is not None:
             ok, sh = kept_share_ok(got[1], got[0], h, gen_phases, bool(plan.get("film")), opts)
             if not ok:
@@ -4149,6 +4163,18 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                         shutil.copytree(ps, os.path.join(out_dir, PRESS_STEPS))
                     except OSError:
                         pass
+        elif spec.get("image"):
+            # 5.6.6: the structure is the image's, as its classes assign the matrix and the phases
+            from . import image_input as IMG
+            gen_labels, ginfo = IMG.labels(spec["image"], log=log)
+            shp = [int(v) for v in ginfo["shape"]]
+            plan.update(N=shp[0], shape=shp, L_um=shp[0] * h, box_um=[v * h for v in shp])
+            try:
+                # the image the run used, beside its results (a run folder stands on its own)
+                import shutil as _sh
+                _sh.copytree(spec["image"]["dir"], os.path.join(out_dir, "input_image"), dirs_exist_ok=True)
+            except OSError:
+                pass
         else:
             gen_labels, ginfo = GEN.generate(N, h, gen_phases, seed=seed, log=log, should_stop=should_stop,
                                              contacts=opts["contacts"], gap_vox=opts.get("particle_gap_vox") or 2.0,
@@ -4258,6 +4284,24 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 export_structure(out_dir, labels, table, h, vf_labels)
             except Exception as e:                                   # noqa: BLE001
                 log(f"   (structure.tif could not be written: {e})")
+            # 5.6.6: the sizes the structure holds against those the input draws (every dimension), and the
+            # particles as files another program rebuilds the same structure from
+            if len((ginfo.get("particles") or {}).get("codes", [])):
+                try:
+                    from . import grains as GR
+                    psd_ = GR.size_report(spec["phases"], gen_phases, ginfo)
+                    rinfo["particle_sizes"] = psd_
+                    rinfo["particle_files"] = GR.write_particle_files(out_dir, spec["phases"], gen_phases, ginfo, psd_)
+                    checks += GR.size_checks(psd_)
+                    for e_ in psd_.values():
+                        d_ = next((x for x in e_["dimensions"] if x["key"] == (e_.get("basis") or "d")),
+                                  e_["dimensions"][0])
+                        log(f"   {e_['name']}: {e_['n_particles']} particles, {d_['label'].lower()} number mean "
+                            f"{d_['real']['number_mean']:.4g} µm (input {d_['input']['number_mean']:.4g}), D50 by volume "
+                            f"{d_['real']['d50v']:.4g} µm (input {d_['input']['d50v']:.4g}), CV {d_['real']['cv']:.3f} "
+                            f"(input {d_['input']['cv']:.3f})")
+                except Exception as e:                               # noqa: BLE001
+                    log(f"   (the particle sizes and files could not be written: {type(e).__name__}: {e})")
         prog.end()
         res_r = {}
 
@@ -4494,7 +4538,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             # as the particle dynamics when that runs on a GPU
             from .solvers import suspension as SU
             solid_v = [i for i, ph in enumerate(spec["phases"])
-                       if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
+                       if not ph["void"] and ph["shape"] not in G.NON_PARTICLE and ph["vf"] > 0]
             dem_possible = (vo["dem"]["on"] and bool(solid_v)
                             and not any(ph["void"] and ph["vf"] > 0 for ph in spec["phases"]))
             if first:
@@ -4590,7 +4634,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             if first:
                 vx = {}
                 solid = [i for i, ph in enumerate(spec["phases"])
-                         if not ph["void"] and ph["shape"] != G.NETWORK and ph["vf"] > 0]
+                         if not ph["void"] and ph["shape"] not in G.NON_PARTICLE and ph["vf"] > 0]
                 if solid:
                     prog.stage("Viscosity · maximum packing fraction", "random close packing of these particles", units=1.0)
                     sp_solid = [dict(gen_phases[i], void=False) for i in solid]          # outer sizes
@@ -5030,6 +5074,17 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                     gres, glt = pg_["res"], pg_.get("lt")
                 else:
                     gres, glt = GR.analyse(spec, ginfo, labels, table, h, log=log)
+                if rinfo.get("particle_sizes"):
+                    # every dimension realised against the input, by spec phase
+                    gres = dict(gres, sizes=rinfo["particle_sizes"])
+                comps = gres.pop("_components", None) if isinstance(gres, dict) else None
+                if comps is not None:
+                    # an image: its connected regions and their size distribution as files
+                    try:
+                        GR.write_components(out_dir, comps)
+                        GR.write_psa_files(out_dir, gres.get("sizes") or {})
+                    except Exception as e:                            # noqa: BLE001
+                        log(f"    (the grain files could not be written: {e})")
                 if glt is not None and viewer is not None:
                     viewer.add_field("grain_matrix_lt", glt * h, "Matrix ligament thickness between particles",
                                      "µm", "Grains", in_matrix=True)
@@ -5265,7 +5320,11 @@ def headline_numbers(props, comp):
                     "unit": "-", "sub": f"{props['pore_network']['n_pores']} pores · {props['pore_network']['n_throats']} throats"})
     if "grains" in props and props["grains"].get("phases"):
         n = sum(p.get("n_particles", 0) for p in props["grains"]["phases"].values())
-        out.append({"key": "np", "label": "Particles in the RVE", "value": n, "unit": ""})
+        if props["grains"].get("image"):
+            # an image: the phases' connected regions, touching grains as one
+            out.append({"key": "np", "label": "Connected regions in the image", "value": n, "unit": ""})
+        else:
+            out.append({"key": "np", "label": "Particles in the RVE", "value": n, "unit": ""})
     # Per-direction values, whenever more than one direction was solved. They
     # are what a DOE or an optimisation has to aim at for an anisotropic
     # structure: a substrate is specified by its through-thickness Dk, not by an

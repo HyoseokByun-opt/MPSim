@@ -565,7 +565,9 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                 "structure": (f"{phases} in {mat}" if phases else mat).strip()}
         if plan:
             n, nz = plan.get("N"), plan.get("Nz") if plan.get("film") else None
-            if n:
+            if plan.get("shape"):
+                tags["grid"] = "×".join(str(v) for v in plan["shape"])
+            elif n:
                 tags["grid"] = f"{n}³" if not nz else f"{n}×{n}×{nz}"
         return tags
 
@@ -656,16 +658,46 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                         "warnings": warnings,
                         "labels": [{"name": t["name"], "kind": t["kind"]} for t in spec["labels"]],
                         "phases": [{"name": p["name"], "vf": p["vf"], "d_um": p["size_um"].get("d"),
-                                    "dist": _dist_summary(p)} for p in spec["phases"]]})
+                                    "dist": _dist_summary(p), "dists": _dists_summary(p), "dims": _dims_expected(p)}
+                                   for p in spec["phases"]]})
 
     def _dist_summary(p):
         """What a phase's size distribution draws, for the preview in the
         Structure tab (number mean, volume D10/D50/D90, densities)."""
-        if p["shape"] == "network" or (p.get("dist") or {}).get("type") not in ("lognormal", "normal", "table"):
+        if p["shape"] in ("network", "image") or (p.get("dist") or {}).get("type") not in ("lognormal", "normal", "table"):
             return None
         from mpsim import geometry as G
         try:
             return G.dist_summary(p["size_um"]["d"], p["dist"])
+        except Exception:                                    # noqa: BLE001
+            return None
+
+    def _dists_summary(p):
+        """The other dimensions' own distributions (a fibre's length, a spheroid's aspect ratios, a box's
+        edges), each as the preview of d shows it."""
+        from mpsim import geometry as G
+        out = {}
+        for k, dd in (p.get("dists") or {}).items():
+            try:
+                out[k] = G.dist_summary(p["size_um"][k], dd)
+            except Exception:                                # noqa: BLE001
+                out[k] = None
+        return out or None
+
+    def _dims_expected(p):
+        """What the generator draws of every dimension of a particle phase and of its volume-equivalent
+        diameter (number and volume statistics), for the table under the shape."""
+        if p["shape"] in ("network", "image"):
+            return None
+        from mpsim import grains as GR
+        from mpsim import shapes as SH
+        try:
+            code, Ps, meta = SH.draw_sample(p["shape"], p["size_um"], p.get("dist"), p.get("dists"),
+                                            p.get("size_basis") or "shape", n=6000)
+            dims = SH.particle_dims(p["shape"], code, Ps, meta)
+            rows = [(k, lab, un) for k, lab, un in SH.DIMENSIONS.get(p["shape"], []) if k in dims]
+            rows.append(("eqd", "Volume-equivalent diameter", "um"))
+            return [dict(key=k, label=lab, unit=un, **GR.size_stats(dims[k], dims["volume"])) for k, lab, un in rows]
         except Exception:                                    # noqa: BLE001
             return None
 
@@ -1035,6 +1067,114 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         wf_save(st)
         return jsonify({"ok": True, "kind": "folder", "added": n, "runs": wf_count(p),
                         "folder": os.path.basename(p.rstrip("\\/"))})
+
+    # ----------------------------------------------------- structure from an image (5.6.6)
+    def image_root():
+        return os.path.join(app.config["WORKSPACE"], "images")
+
+    def _image_meta_out(meta):
+        """What the browser keeps of an image: its description, classes and a histogram of at most 256 bins."""
+        import numpy as np
+        out = {k: v for k, v in meta.items() if k not in ("values", "counts")}
+        v, c = np.asarray(meta["values"], float), np.asarray(meta["counts"], float)
+        if len(v) > 256:
+            h, e = np.histogram(v, bins=256, weights=c)
+            out["hist"] = {"x": (0.5 * (e[1:] + e[:-1])).tolist(), "n": h.tolist()}
+        else:
+            out["hist"] = {"x": v.tolist(), "n": c.tolist()}
+        return out
+
+    @app.post("/api/images")
+    def api_image_upload():
+        """A TIFF (a 3D stack, or one 2D image to extrude) kept in the workspace as the structure of a case."""
+        from mpsim import image_input as IM
+        try:
+            request.max_content_length = 1 << 40
+        except AttributeError:
+            pass
+        f = request.files.get("file")
+        if f is None or not f.filename:
+            return jsonify({"ok": False, "error": "No file was sent"}), 400
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix=".tif")
+        os.close(fd)
+        try:
+            f.save(tmp)
+            meta = IM.store(image_root(), tmp, os.path.basename(f.filename))
+        except Exception as e:                                       # noqa: BLE001
+            return jsonify({"ok": False, "error": f"The image could not be read: {e}"}), 400
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        return jsonify({"ok": True, "image": _image_meta_out(meta)})
+
+    @app.post("/api/images/example")
+    def api_image_example():
+        """An example image shipped with MPSim (mpsim/data/images), stored as an upload is."""
+        from mpsim import image_input as IM
+        name = os.path.basename(str((request.get_json(force=True, silent=True) or {}).get("name") or ""))
+        src = os.path.join(ROOT, "mpsim", "data", "images", name)
+        if not name or not os.path.isfile(src):
+            return jsonify({"ok": False, "error": f"No example image '{name}'"}), 404
+        try:
+            meta = IM.store(image_root(), src, name)
+        except Exception as e:                                       # noqa: BLE001
+            return jsonify({"ok": False, "error": f"The image could not be read: {e}"}), 400
+        return jsonify({"ok": True, "image": _image_meta_out(meta)})
+
+    def _image_dir(iid):
+        d = os.path.join(image_root(), re.sub(r"[^\w.-]+", "", iid))
+        if not os.path.isfile(os.path.join(d, "meta.json")):
+            abort(404)
+        return d
+
+    @app.get("/api/images/<iid>/classes")
+    def api_image_classes(iid):
+        """The classes of an image for grey-value thresholds (?t=100,180), or its own values or colours."""
+        from mpsim import image_input as IM
+        meta = IM.load_meta(_image_dir(iid))
+        t = [float(x) for x in (request.args.get("t") or "").split(",") if x.strip()]
+        if request.args.get("auto"):
+            t = IM.auto_thresholds(meta["values"], meta["counts"], int(request.args.get("auto")))
+        cls = IM.classes_of(meta, t or None)
+        return jsonify({"ok": True, "thresholds": t, "classes": cls})
+
+    @app.get("/api/images/<iid>/slice")
+    def api_image_slice(iid):
+        """One slice of an image as a PNG (?axis=z&k=10; the middle slice by default), coloured by class when
+        thresholds are given (?t=...), else as stored (grey values stretched, colours, palette)."""
+        import numpy as np
+        from PIL import Image
+        from mpsim import image_input as IM
+        d = _image_dir(iid)
+        meta = IM.load_meta(d)
+        keys = IM.load_keys(d)
+        ax = "xyz".index(request.args.get("axis", "z")) if request.args.get("axis", "z") in "xyz" else 2
+        n = keys.shape[ax]
+        k = int(request.args.get("k", n // 2))
+        sl = np.asarray(np.take(keys, min(max(k, 0), n - 1), axis=ax))
+        sl = sl.T if ax == 2 else sl.T                      # rows y (or z), columns x (or y)
+        t = [float(x) for x in (request.args.get("t") or "").split(",") if x.strip()]
+        if t:
+            idx = np.searchsorted(sorted(t), sl, side="right")
+            g = np.round(255.0 * idx / max(len(t), 1)).astype(np.uint8)
+            rgb = np.stack([g, g, g], -1)
+        elif meta["mode"] == "rgb":
+            rgb = np.stack([(sl >> 16) & 255, (sl >> 8) & 255, sl & 255], -1).astype(np.uint8)
+        elif meta["mode"] == "palette" and meta.get("palette"):
+            pal = np.array([[int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)] for c in meta["palette"]], np.uint8)
+            rgb = pal[np.clip(sl, 0, len(pal) - 1)]
+        else:
+            lo, hi = float(meta["value_min"]), float(meta["value_max"])
+            g = np.clip((sl.astype(float) - lo) / max(hi - lo, 1e-12) * 255.0, 0, 255).astype(np.uint8)
+            rgb = np.stack([g, g, g], -1)
+        img = Image.fromarray(np.ascontiguousarray(rgb[::-1] if ax == 2 else rgb[::-1]))
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        buf.seek(0)
+        return send_file(buf, mimetype="image/png")
 
     @app.post("/api/runs/import")
     def api_runs_import():
@@ -1652,7 +1792,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         d = job.out_dir
         names = {"layer_card": "layer_card.json", "result": "result.json", "structure": "structure.tif",
                  "structure_labels": "structure_labels.tif", "structure_legend": "structure_legend.csv",
-                 "report": "report.html", "spec": "spec.json"}
+                 "report": "report.html", "spec": "spec.json", "particles": "particles.csv", "psa": "psa.csv",
+                 "psa_summary": "psa_summary.csv"}
         base = (job.meta.get("name") or job.id).replace("/", "_").replace("\\", "_")[:60]
         if what in names:
             p = os.path.join(d, names[what])
@@ -1670,6 +1811,22 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             buf.seek(0)
             return send_file(buf, as_attachment=True, download_name=f"{base}_structure.zip",
                              mimetype="application/zip")
+        if what in ("particles_set", "psa_set"):
+            # the particles as built (centre, size, dimensions, orientation; polyhedron vertices) and the size
+            # distributions realised against the input
+            fl = (("particles.csv", "polyhedra.csv", "particles_README.txt") if what == "particles_set" else
+                  ("psa.csv", "psa_summary.csv", "particles_README.txt", "grains.csv"))
+            if not os.path.exists(os.path.join(d, fl[0])):
+                abort(404)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for n in fl:
+                    p = os.path.join(d, n)
+                    if os.path.exists(p):
+                        zf.write(p, n)
+            buf.seek(0)
+            return send_file(buf, as_attachment=True, mimetype="application/zip",
+                             download_name=f"{base}_{'particles' if what == 'particles_set' else 'psa'}.zip")
         if what == "run":
             # the whole run folder (results, 3D view, structure, report), to
             # open on another PC (Runs - Import ZIP); written to a temporary
@@ -1691,7 +1848,8 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for n in ("result.json", "layer_card.json", "spec.json", "spec.normalized.json",
-                          "structure.tif", "structure_labels.tif", "structure_legend.csv", "report.html", "run.log"):
+                          "structure.tif", "structure_labels.tif", "structure_legend.csv", "report.html", "run.log",
+                          "particles.csv", "polyhedra.csv", "particles_README.txt", "psa.csv", "psa_summary.csv"):
                     p = os.path.join(d, n)
                     if os.path.exists(p):
                         zf.write(p, n)

@@ -30,7 +30,6 @@
     cuboid: `<path ${F} d="M3 10 9 6.5h12v7.5L15 17.5H3z"/><path ${S} d="M3 10h12l6-3.5M15 10v7.5"/>`,
     superellipsoid: `<rect ${F} x="4" y="6" width="16" height="12" rx="5"/><path ${S} d="M4 12h16" opacity=".5"/>`,
     polyhedron: `<path ${F} d="M12 3 20 8.5 17.5 18h-11L4 8.5z"/><path ${S} d="M12 3l-2.5 7h5zM4 8.5l5.5 1.5M20 8.5l-5.5 1.5M9.5 10 6.5 18M14.5 10l3 8M9.5 10h5"/>`,
-    helix: `<path ${S} stroke-width="2.2" d="M4 18c2 0 3-4 5-4s1 4 3 4 3-4 5-4 1 4 3 4M4 10c2 0 3-4 5-4s1 4 3 4 3-4 5-4 1 4 3 4" opacity=".35"/><path fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" d="M3 16c2.5-6 5.5-6 6.5 0s4 6 6.5 0 4-6 5 0"/><path fill="none" stroke="var(--ic, #cfe2ff)" stroke-width="2" stroke-linecap="round" d="M3 16c2.5-6 5.5-6 6.5 0s4 6 6.5 0 4-6 5 0"/>`,
     pores: `<rect ${S} x="3.5" y="3.5" width="17" height="17" rx="2"/><circle ${F} cx="9" cy="9" r="2.6"/><circle ${F} cx="15.5" cy="14.5" r="3"/><circle ${F} cx="8" cy="16" r="1.5"/><circle ${F} cx="16" cy="7.5" r="1.3"/>`,
     network: `<path ${F} d="M4 15c1-5 5-2 6-6s6-5 9-2-1 5 1 8-4 6-8 4-9 1-8-4z"/><circle cx="9" cy="14" r="1.3" fill="#fff"/><circle cx="15" cy="10" r="1.6" fill="#fff"/>`,
     duplicate: `<rect ${F} x="8" y="8" width="12" height="12" rx="2"/><path ${S} d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>`,

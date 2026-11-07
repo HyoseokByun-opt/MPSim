@@ -50,17 +50,16 @@
   const kText = (p) => isAniso(p) ? ANISO_PROPS.map(([k]) => fmt(p[k] ?? p.k)).join("/") : fmt(p.k);
   const SHAPES = {
     sphere: { label: "Sphere", icon: "sphere", hint: "Spherical particle." },
-    spheroid: { label: "Spheroid", icon: "spheroid", hint: "Aspect ratio c/a (length along the symmetry axis / equatorial diameter): above 1 needle-like, below 1 platelet-like." },
+    spheroid: { label: "Spheroid", icon: "spheroid", hint: "Ellipsoid with the axes 2a = d (x), 2b (y) and 2c (z, the axis the orientation aligns): c/a above 1 needle-like, below 1 platelet-like; b/a = 1 is a spheroid of revolution, any other value a triaxial ellipsoid." },
     cylinder: { label: "Cylinder", icon: "cylinder", hint: "Rod or fibre; a length below the diameter gives a disc." },
     spherocylinder: { label: "Capsule", icon: "spherocylinder", hint: "Rod or fibre with hemispherical ends; the total length is not smaller than the diameter." },
     cube: { label: "Cube", icon: "shape_cube", hint: "Cube with edge length d (cubic fillers, crystals). Orientation applies to its edges." },
     cuboid: { label: "Cuboid", icon: "cuboid", hint: "Box with three edge lengths (bricks, flakes with square edges, rectangular platelets)." },
     superellipsoid: { label: "Rounded box", icon: "superellipsoid", hint: "Superellipsoid |x/a|ⁿ+|y/b|ⁿ+|z/c|ⁿ ≤ 1: n = 2 is an ellipsoid, larger n a box with rounded edges (the 'meta-particle' of discrete-element codes)." },
     polyhedron: { label: "Polyhedron", icon: "polyhedron", hint: "Convex polyhedron: a regular solid, or irregular grains (crushed particles) drawn from a set of random convex shapes. d is the circumscribed diameter." },
-    helix: { label: "Helix", icon: "helix", hint: "A wire of diameter d wound on a coil (curled fibre, spring-shaped filler); coil diameter is measured at the wire centre." },
     network: { label: "Network", icon: "network", hint: "Bicontinuous random structure of any material: open porosity when the material is a gas, a sintered skeleton or foam solid when it is solid. The size is the characteristic ligament width." },
   };
-  const PARTICLE_SHAPES = ["sphere", "spheroid", "cylinder", "spherocylinder", "cube", "cuboid", "superellipsoid", "polyhedron", "helix"];
+  const PARTICLE_SHAPES = ["sphere", "spheroid", "cylinder", "spherocylinder", "cube", "cuboid", "superellipsoid", "polyhedron"];
   const POLY_KINDS = { tetrahedron: "Tetrahedron", octahedron: "Octahedron", dodecahedron: "Dodecahedron", icosahedron: "Icosahedron", irregular: "Irregular grains" };
   const AN = {
     thermal: { title: "Thermal conductivity", icon: "thermal", color: "var(--c-thermal)", solver: "Periodic finite volume (default) · NASA PuMA FE on request", out: "k tensor · diffusivity · area-specific resistance · temperature and heat-flux fields" },
@@ -177,7 +176,7 @@
   const state = {
     lib: null, byId: {}, custom: {}, presets: [], form: null, plan: null, planErrors: [], wf: null, case: null,
     jobs: [], active: null, seq: 0, history: {}, partial: {}, activeState: null, activePreview: false,
-    result: null, resultJob: null, health: null, viewerJob: null, viewerSig: "",
+    result: null, resultJob: null, health: null, viewerJob: null, viewerSig: "", szView: {},
     tab: "home", center: "vis", rtab: "display", dtab: "console", sel: 0,
     doeCat: [], doeList: [], doeId: null, doeData: null,
     doe: { name: "", design: "full", samples: 12, seed: 1, parameters: [], edge: "fixed" },
@@ -311,9 +310,9 @@
     const m = mat(id);
     return {
       material_id: id, name: m.name, props: clone(m.props), shape,
-      size: { d: shape === "network" ? 2 : shape === "helix" ? 1 : 10, aspect: 0.2, length: 60, ly: 6, lz: 3, n: 4,
-              poly: "icosahedron", n_vertices: 14, variants: 8, coil_d: 6, pitch: 4, turns: 3, unit: "um" },
-      dist: { type: "mono", cv: 0.25 }, fraction: { value: 20, basis: "vol" },
+      size: { d: shape === "network" ? 2 : 10, aspect: 0.2, aspect_y: 1, length: 60, ly: 6, lz: 3, n: 4,
+              poly: "icosahedron", n_vertices: 14, variants: 8, unit: "um" },
+      dist: { type: "mono", cv: 0.25 }, dists: {}, size_basis: "shape", fraction: { value: 20, basis: "vol" },
       orientation: { mode: "iso", spread_deg: 0 }, overlap: false, gap_frac: 0,
       shell: { enabled: false, thickness: 0.5, material_id: "sio2", name: "shell", props: clone(mat("sio2").props) },
       r_int: 0, r_contact: 0, section: { mode: "whole", axis: "z", from: 0, to: 50 },
@@ -325,6 +324,8 @@
   function defaultForm() {
     return {
       name: "New case", defaults: FORM_DEFAULTS, matrix: matEntry("epoxy"), phases: [phaseEntry("al2o3", "sphere")],
+      // 5.6.6: "image" takes the structure from a TIFF (form.image) instead of generating particles
+      source: "particles", image: null,
       rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, realisations: { mode: "fixed", target_pct: 2, n_min: 3, n_max: 20 }, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, press_cure: false, press_mold_C: 175, press_control: "rate", press_stress_Pa: 100, press_part_mm: 1, press_time_s: 600, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
@@ -388,9 +389,19 @@
     });
     if (out.matrix && out.matrix.material_id && !(f.matrix && f.matrix.props) && mat(out.matrix.material_id)) {
       out.matrix.props = clone(mat(out.matrix.material_id).props);
-      if (!f.matrix.name) out.matrix.name = mat(out.matrix.material_id).name;
+      if (!(f.matrix && f.matrix.name)) out.matrix.name = mat(out.matrix.material_id).name;
     }
-    out.phases = (f.phases || []).map((p) => {
+    let helixed = 0;
+    out.phases = (f.phases || []).map((p0) => {
+      let p = p0;
+      if (p.shape === "helix") {
+        // the helix was removed in 5.6.6: a straight fibre of the wire's diameter and length takes its place
+        const s = Object.assign({}, p.size || {}), t = +s.turns || 1, len = Math.hypot(Math.PI * (+s.coil_d || 0) * t, (+s.pitch || 0) * t);
+        s.length = +((len || 10 * (+s.d || 1)).toPrecision(4));
+        ["coil_d", "pitch", "turns"].forEach((k) => delete s[k]);
+        p = Object.assign({}, p, { shape: "cylinder", size: s });
+        helixed++;
+      }
       const d = phaseEntry(p.material_id && mat(p.material_id) ? p.material_id : "al2o3", p.shape || "sphere");
       const q = deepMerge(d, clone(p));
       if (!p.props && mat(q.material_id)) q.props = clone(mat(q.material_id).props);
@@ -398,6 +409,7 @@
       if (!p.name) q.name = mat(q.material_id).name;
       return q;
     });
+    if (helixed) setTimeout(() => toast(`The helix shape was removed in 5.6.6: ${helixed} helix phase(s) became straight fibres (cylinders) of the wire's diameter and length.`, 8000), 0);
     return out;
   }
   let saveTimer = null;
@@ -453,8 +465,8 @@
         { group: "Exchange", items: [RB("libExport", "save", "Export library"), RB("database", "database", "Material table")] },
       ],
       structure: [
-        { group: "Add a phase (any material; Air makes it pore space)", items: PARTICLE_SHAPES.map((s) => RB("add:" + s, SHAPES[s].icon, SHAPES[s].label, { color: "var(--c-gen)" })) },
-        { group: "Bicontinuous", items: [RB("add:network", "network", "Network", { color: "var(--c-flow)" })] },
+        { group: "Add a phase (any material; Air makes it pore space)", items: PARTICLE_SHAPES.map((s) => RB("add:" + s, SHAPES[s].icon, SHAPES[s].label, { color: "var(--c-gen)", dis: f.source === "image" })) },
+        { group: "Bicontinuous", items: [RB("add:network", "network", "Network", { color: "var(--c-flow)", dis: f.source === "image" })] },
         { group: "Selected phase", items: [RB("dup", "duplicate", "Duplicate", { dis: !f.phases.length }), RB("del", "delete", "Delete", { dis: !f.phases.length })] },
         { group: "Update", items: [RB("refresh", "reset", "Refresh", { primary: true, tip: "Plans the case again and redraws this panel: size distribution, particle counts, recommended RVE and criteria (they also follow every change by themselves)" })] },
       ],
@@ -500,7 +512,7 @@
       ],
       results: [
         { group: "Views", items: [RB("c:vis", "view3d", "3D / 2D view", { on: state.center === "vis" }), RB("c:res", "table", "Result Viewer", { on: state.center === "res" }), RB("c:rep", "report", "Report", { on: state.center === "rep" })] },
-        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob }), RB("dl:run", "zip", "Run folder ZIP", { dis: !state.resultJob, tip: "The whole run folder - results, 3D view, structure, report - to open in MPSim on another PC (Runs - Import ZIP)" })] },
+        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:particles_set", "table", "Particles CSV", { dis: !state.resultJob || !realSizes(state.result), tip: "particles.csv (every particle: centre, size, dimensions, volume, orientation), polyhedra.csv and the conventions - to draw the same particles in another program" }), RB("dl:psa_set", "grains", "PSA CSV", { dis: !state.resultJob || !(realSizes(state.result) || (((state.result || {}).properties || {}).grains || {}).sizes), tip: "psa.csv and psa_summary.csv: the size distribution of every dimension realised in the structure against the input (number and volume, per bin and cumulative; means, D10/D50/D90)" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob }), RB("dl:run", "zip", "Run folder ZIP", { dis: !state.resultJob, tip: "The whole run folder - results, 3D view, structure, report - to open in MPSim on another PC (Runs - Import ZIP)" })] },
         { group: "Figures", items: [RB("shot", "camera", "Screen capture"), RB("render", "image", "Hi-res figure", { tip: "High-resolution figure rendered on the server (PyVista)" })] },
       ],
     };
@@ -531,7 +543,6 @@
       else {
         p = phaseEntry("al2o3", arg);
         if (arg === "spheroid") p.size.aspect = 0.2;
-        if (arg === "helix") { p.name = "Curled fibre"; p.fraction.value = 5; }
       }
       f.phases.push(p); state.sel = f.phases.length - 1;
       if (state.tab !== "structure") setTab("structure");
@@ -693,7 +704,7 @@
     body.innerHTML = { home: leftHome, ai: leftAI, material: leftMaterial, structure: leftStructure, domain: leftDomain, analysis: leftAnalysis, simulation: leftSimulation, doe: leftDoe, optimization: leftOptimization, calibration: leftCalibration, results: leftResults }[state.tab]();
     fillInputs(body);
     body.scrollTop = top;
-    if (state.tab === "structure") { renderComposition(); requestAnimationFrame(drawPsd); }
+    if (state.tab === "structure") { renderComposition(); requestAnimationFrame(drawPsd); requestAnimationFrame(drawImageHist); }
     if (state.tab === "ai" && window.AIMPSim) window.AIMPSim.mountLeft(body);
   }
   // the AI tab: AIMPSim (a separate project, used with the latest MPSim) when
@@ -933,7 +944,7 @@
 
   function sizeLabel(shape) {
     return { network: "Ligament width", cube: "Edge length d", cuboid: "Edge a (d)", superellipsoid: "Length a (d)",
-             polyhedron: "Circumscribed diameter d", helix: "Wire diameter d" }[shape] || "Diameter d";
+             polyhedron: "Circumscribed diameter d", spheroid: "Diameter d = 2a (x)" }[shape] || "Diameter d";
   }
   function shapePreview(ph) {
     const s = ph.size, W = 300, H = 84;
@@ -941,7 +952,6 @@
     if (ph.shape === "spheroid") len = +s.d * +s.aspect;
     if (ph.shape === "cylinder" || ph.shape === "spherocylinder") len = +s.length;
     if (ph.shape === "cuboid" || ph.shape === "superellipsoid") { len = +s.d; dia = +s.ly; }
-    if (ph.shape === "helix") { len = +s.pitch * +s.turns + +s.d; dia = +s.coil_d + +s.d; }
     if (!(len > 0 && dia > 0)) return "";
     const k = Math.min((W - 40) / Math.max(len, 1e-9), (H - 16) / Math.max(dia, 1e-9));
     const w = len * k, h = dia * k, x = (W - w) / 2, y = (H - h) / 2;
@@ -956,9 +966,6 @@
     else if (ph.shape === "polyhedron") { const r = h / 2, cx = W / 2, cy = H / 2; const n = { tetrahedron: 3, octahedron: 4, dodecahedron: 5, icosahedron: 6, irregular: 7 }[s.poly] || 6;
       const pts = Array.from({ length: n }, (_, k) => { const a = 2 * Math.PI * k / n - Math.PI / 2; const rr = s.poly === "irregular" ? r * (0.75 + 0.25 * ((k * 37) % 7) / 6) : r; return `${cx + rr * Math.cos(a)},${cy + rr * Math.sin(a)}`; }).join(" ");
       body = `<polygon points="${pts}" ${st}/>`; }
-    else if (ph.shape === "helix") { const turns = Math.max(0.5, +s.turns || 1), pts = [];
-      for (let t = 0; t <= 200; t++) { const u = t / 200; pts.push(`${x + u * (w - +s.d * k) + +s.d * k / 2},${H / 2 + (h - +s.d * k) / 2 * Math.sin(2 * Math.PI * turns * u)}`); }
-      body = `<polyline points="${pts.join(" ")}" fill="none" stroke="#0b62c4" stroke-width="${Math.max(1.5, +s.d * k)}" stroke-linecap="round" opacity=".85"/>`; }
     else body = `<path d="M30 56 C70 10 110 76 150 38 S230 10 270 48 C230 78 190 38 150 70 S60 82 30 56Z" ${st}/>`;
     let shell = "";
     // The engine takes d as the particle inside the shell and adds the shell
@@ -969,9 +976,10 @@
       shell = `<circle cx="${W / 2}" cy="${H / 2}" r="${h / 2 * d / (d + 2 * t)}" fill="#fff" stroke="#6e7781" stroke-dasharray="3 2"/>`;
     }
     const shT = ph.shell && ph.shell.enabled ? +ph.shell.thickness || 0 : 0;
-    const txt = ph.shape === "network" ? `ligament width ${s.d} ${u(s.unit)}` : `d ${s.d} ${u(s.unit)}` + (ph.shape === "spheroid" ? ` · c/a ${s.aspect}` : "") + (["cylinder", "spherocylinder"].includes(ph.shape) ? ` · L ${s.length} ${u(s.unit)}` : "")
+    const txt = ph.shape === "network" ? `ligament width ${s.d} ${u(s.unit)}` : `d ${s.d} ${u(s.unit)}` + (ph.size_basis === "volume" && ph.shape !== "sphere" ? " (volume-equivalent)" : "")
+      + (ph.shape === "spheroid" ? ` · c/a ${s.aspect}` + (+s.aspect_y && +s.aspect_y !== 1 ? ` · b/a ${s.aspect_y}` : "") : "") + (["cylinder", "spherocylinder"].includes(ph.shape) ? ` · L ${s.length} ${u(s.unit)}` : "")
       + (["cuboid", "superellipsoid"].includes(ph.shape) ? ` × ${s.ly} × ${s.lz} ${u(s.unit)}` : "") + (ph.shape === "superellipsoid" ? ` · n ${s.n}` : "")
-      + (ph.shape === "polyhedron" ? ` · ${(POLY_KINDS[s.poly] || "").toLowerCase()}` : "") + (ph.shape === "helix" ? ` · coil ${s.coil_d} · pitch ${s.pitch} · ${s.turns} turns` : "")
+      + (ph.shape === "polyhedron" ? ` · ${(POLY_KINDS[s.poly] || "").toLowerCase()}` : "")
       + (shT > 0 && ph.shape !== "network" ? ` · outer ${fmt(+s.d + 2 * shT)} ${u(s.unit)}` : "");
     return `<svg viewBox="0 0 ${W} ${H + 16}" width="100%">${body}${shell}<text x="${W / 2}" y="${H + 12}" font-size="11" text-anchor="middle" fill="#424a53">${esc(txt)}</text></svg>`;
   }
@@ -994,7 +1002,8 @@
         <div><label class="f">Content${(ph.section || {}).mode === "section" ? ' <span class="u">of its section</span>' : ""}</label><div class="row uin"><input type="number" step="any" data-k="phases.${i}.fraction.value" data-num><select data-k="phases.${i}.fraction.basis"><option value="vol">vol %</option><option value="wt">wt %</option></select></div></div>
         <div><label class="f">Length unit</label><select data-k="phases.${i}.size.unit"><option value="nm">nm</option><option value="um">µm</option><option value="mm">mm</option></select></div>
         <div><label class="f">${sizeLabel(ph.shape)} <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.d" data-num></div>
-        ${ph.shape === "spheroid" ? `<div><label class="f">Aspect ratio c/a</label><input type="number" step="any" data-k="phases.${i}.size.aspect" data-num></div>` : ""}
+        ${ph.shape === "spheroid" ? `<div><label class="f">Aspect ratio c/a <span class="u">z</span></label><input type="number" step="any" data-k="phases.${i}.size.aspect" data-num></div>
+          <div><label class="f">Aspect ratio b/a <span class="u">y · 1 = of revolution</span></label><input type="number" step="any" data-k="phases.${i}.size.aspect_y" data-num placeholder="1"></div>` : ""}
         ${["cylinder", "spherocylinder"].includes(ph.shape) ? `<div><label class="f">Total length <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.length" data-num></div>` : ""}
         ${["cuboid", "superellipsoid"].includes(ph.shape) ? `<div><label class="f">Edge b <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.ly" data-num></div>
           <div><label class="f">Edge c <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.lz" data-num></div>` : ""}
@@ -1002,16 +1011,15 @@
         ${ph.shape === "polyhedron" ? `<div><label class="f">Polyhedron</label><select data-k="phases.${i}.size.poly">${Object.entries(POLY_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>` : ""}
         ${ph.shape === "polyhedron" && ph.size.poly === "irregular" ? `<div><label class="f">Vertices per grain</label><input type="number" step="1" data-k="phases.${i}.size.n_vertices" data-num></div>
           <div><label class="f">Shape variants <span class="u">0 = one per grain</span></label><input type="number" step="1" min="0" max="20000" data-k="phases.${i}.size.variants" data-num></div>` : ""}
-        ${ph.shape === "helix" ? `<div><label class="f">Coil diameter <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.coil_d" data-num></div>
-          <div><label class="f">Pitch (rise per turn) <span class="u">${un}</span></label><input type="number" step="any" data-k="phases.${i}.size.pitch" data-num></div>
-          <div><label class="f">Number of turns</label><input type="number" step="any" data-k="phases.${i}.size.turns" data-num></div>` : ""}
-        ${!isNet ? `<div><label class="f">Size distribution</label><select data-k="phases.${i}.dist.type"><option value="mono">Monodisperse</option><option value="normal">Normal</option><option value="lognormal">Log-normal</option><option value="table">Measured (PSA file)</option></select></div>` : ""}
+        ${!isNet && ph.shape !== "sphere" ? `<div><label class="f">The size d is</label><select data-k="phases.${i}.size_basis"><option value="shape">${esc(sizeLabel(ph.shape).replace(/ d( = 2a \(x\))?$/, ""))} of the shape</option><option value="volume">Volume-equivalent diameter</option></select></div>` : ""}
+        ${!isNet ? `<div><label class="f">Size distribution${(SECONDARY[ph.shape] || []).length ? " of d" : ""}</label><select data-k="phases.${i}.dist.type"><option value="mono">Monodisperse</option><option value="normal">Normal</option><option value="lognormal">Log-normal</option><option value="table">Measured (PSA file)</option></select></div>` : ""}
         ${orientable ? `<div><label class="f">Orientation</label><select data-k="phases.${i}.orientation.mode"><option value="iso">Random 3D</option><option value="x">Aligned with x</option><option value="y">Aligned with y</option><option value="z">Aligned with z</option><option value="xy">Random in the xy plane</option></select></div>
           <div><label class="f">Orientation spread <span class="u">°</span></label><input type="number" step="any" data-k="phases.${i}.orientation.spread_deg" data-num></div>` : ""}
         ${!isNet && !ph.overlap ? `<div><label class="f">Minimum gap <span class="u">× d</span></label><input type="number" step="0.01" data-k="phases.${i}.gap_frac" data-num></div>` : ""}
         ${["spheroid", "cylinder", "cuboid", "superellipsoid"].includes(ph.shape) && !vd ? `<div><label class="f">Stacked platelets <span class="u">layers</span></label><input type="number" min="1" max="100" step="1" data-k="phases.${i}.stack_layers" data-num placeholder="1"></div>` : ""}
       </div>
-      ${!isNet ? distBlock(ph, i, un) : ""}
+      ${!isNet && ph.shape !== "sphere" && ph.size_basis === "volume" ? `<div class="hint">d is the diameter of the sphere of the same volume (as laser diffraction and image analysis report a size): every particle drawn is scaled to the volume of its drawn size, the dimensions without a distribution of their own following d. Grain analysis reports both this size and the shape's own d.</div>` : ""}
+      ${!isNet ? distBlock(ph, i, un) + dimDistBlock(ph, i, un) + (ph.shape !== "sphere" || ((ph.dist || {}).type || "mono") !== "mono" ? `<div data-live="dimexp" data-i="${i}">${dimExpHtml(i)}</div>` : "") : ""}
       ${["spheroid", "cylinder", "cuboid", "superellipsoid"].includes(ph.shape) && !vd && (+ph.stack_layers || 1) > 1 ? `<div class="hint">Each particle is a stack of ${+ph.stack_layers} platelets bonded face to face along its own z axis (its thickness: edge c of a box, the axis of a spheroid or disc). Through the thickness the thermal solve puts the ${+ph.stack_layers} layers and ${+ph.stack_layers - 1} plate–plate contacts R<sub>c</sub> in series; in the plane the platelets conduct side by side.</div>` : ""}
       ${!vd ? `<div class="subh">Interfacial thermal resistance</div><div class="g2">
           <div><label class="f">R<sub>int</sub> filler–matrix <span class="u">m²K/W</span></label><input type="number" step="any" data-k="phases.${i}.r_int" data-num></div>
@@ -1024,7 +1032,7 @@
           <div><label class="f">Shell material</label><select data-mat="phases.${i}.shell">${materialOptions(sh.material_id)}</select></div></div>
           ${(ph.dist || {}).type && (ph.dist || {}).type !== "mono" ? `<label class="chk"><input type="checkbox" data-k="phases.${i}.shell.scale_with_size"> Wall scales with particle size (constant t/R)</label>
           <div class="hint">${sh.scale_with_size ? `The thickness above belongs to a particle of the nominal diameter; every other particle keeps the same wall-to-radius ratio, so all share one hollow fraction — as in one density grade of glass bubbles.` : `Every particle gets the same wall, so small particles are relatively thick-walled and large ones mostly air.`}</div>` : ""}
-          <div class="hint">The sizes above are the particle <b>inside</b> the shell; the shell is added outside it${ph.shape === "polyhedron" ? " (every face moves out by the thickness)" : `, so the outer ${ph.shape === "helix" ? "wire diameter" : "size"} is d + 2 × thickness = <b>${fmt(+(ph.size || {}).d + 2 * (+sh.thickness || 0))} ${un}</b>`}. A hollow particle quoted by its outer size needs d = outer − 2 × wall. Hollow particles: phase material Air, shell material SiO₂. The content refers to the complete particle, shell included.</div>
+          <div class="hint">The sizes above are the particle <b>inside</b> the shell; the shell is added outside it${ph.shape === "polyhedron" ? " (every face moves out by the thickness)" : `, so the outer size is d + 2 × thickness = <b>${fmt(+(ph.size || {}).d + 2 * (+sh.thickness || 0))} ${un}</b>`}. A hollow particle quoted by its outer size needs d = outer − 2 × wall. Hollow particles: phase material Air, shell material SiO₂. The content refers to the complete particle, shell included.</div>
           <details class="more"><summary>Shell properties · ${esc((mat(sh.material_id) || {}).name || "")}</summary>${matSummary(`phases.${i}.shell`, sh)}</details>` : ""}
       <details class="more"><summary>Properties · ${esc(m ? m.name : "")}</summary>${m && m.note ? `<div class="hint">${esc(m.note)}</div>` : ""}${matSummary(`phases.${i}`, ph)}</details>
       <div class="preview">${shapePreview(ph)}</div>
@@ -1080,6 +1088,65 @@
       <div class="hint">Two columns: <b>diameter, then percentage</b> (a third column and header lines are ignored); separators comma, semicolon, tab or space. A file with the percentage first is recognised by its header or by its values; set Columns where it is not. The particles are drawn from this distribution - a volume distribution is turned into numbers by d³ - and the size entered above is replaced by its number mean, the other lengths of the shape scaling with it.</div>
       ${rows ? chart + stats : ""}`;
   }
+  // The dimensions that may have a size distribution of their own (5.6.6, shapes.SECONDARY), each independent
+  // of d: without one a length scales with d (the shape stays similar) and an aspect ratio stays as entered.
+  const SECONDARY = { spheroid: ["aspect", "aspect_y"], cylinder: ["length"], spherocylinder: ["length"], cuboid: ["ly", "lz"], superellipsoid: ["ly", "lz"] };
+  function dimLabel(shape, key) {
+    if (shape === "superellipsoid" && (key === "ly" || key === "lz")) return key === "ly" ? "Axis b" : "Axis c";
+    if (shape === "spherocylinder" && key === "length") return "Total length";
+    return { aspect: "Aspect ratio c/a", aspect_y: "Aspect ratio b/a", length: "Length", ly: "Edge b", lz: "Edge c" }[key] || key;
+  }
+  function dimDistBlock(ph, i, un) {
+    const keys = SECONDARY[ph.shape] || [];
+    if (!keys.length) return "";
+    ph.dists = ph.dists || {};
+    const rows = keys.map((key) => {
+      if (!ph.dists[key]) ph.dists[key] = { type: "same" };
+      const dd = ph.dists[key], t = dd.type || "same", ratio = key.startsWith("aspect");
+      const nom = +((ph.size || {})[key] || (key === "aspect_y" ? 1 : 0)), uu = ratio ? "–" : un, lab = dimLabel(ph.shape, key);
+      if ((t === "normal" || t === "lognormal") && (dd.std === undefined || dd.std === null || dd.std === "")) dd.std = +((ratio ? 0.1 : 0.25) * nom).toPrecision(3);
+      let body = "";
+      if (t === "normal" || t === "lognormal") {
+        body = `<div><label class="f">Standard deviation <span class="u">${uu}</span></label><input type="number" step="any" min="0" data-k="phases.${i}.dists.${key}.std" data-num></div>
+          <div><label class="f">Lower bound <span class="u">${uu}</span></label><input type="number" step="any" min="0" data-k="phases.${i}.dists.${key}.d_min" data-num placeholder="${t === "lognormal" ? "μ − 2σ" : "mean − 2σ"}"></div>
+          <div><label class="f">Upper bound <span class="u">${uu}</span></label><input type="number" step="any" min="0" data-k="phases.${i}.dists.${key}.d_max" data-num placeholder="${t === "lognormal" ? "μ + 2σ" : "mean + 2σ"}"></div>`;
+      } else if (t === "table") {
+        const n = (dd.d || []).length;
+        body = `<div><label class="f">File</label><div class="row wrap" style="gap:6px;align-items:center"><label class="btn sm">${I("open")}Load CSV or TXT<input type="file" accept=".csv,.txt,.tsv,.dat" data-psdfile="${i}:${key}" hidden></label><span class="hint">${n ? `${esc(dd.file || "table")} · ${n} rows` : "No file loaded"}</span></div></div>
+          <div><label class="f">Values by</label><select data-k="phases.${i}.dists.${key}.basis"><option value="number">Number (count)</option><option value="volume">Volume</option></select></div>
+          <div><label class="f">Values are</label><select data-k="phases.${i}.dists.${key}.form"><option value="auto">Detect</option><option value="differential">% per channel</option><option value="cumulative">Cumulative % passing</option></select></div>
+          ${ratio ? "" : `<div><label class="f">Lengths in</label><select data-k="phases.${i}.dists.${key}.unit"><option value="nm">nm</option><option value="um">µm</option><option value="mm">mm</option></select></div>`}
+          <div><label class="f">Columns</label><select data-k="phases.${i}.dists.${key}.cols"><option value="auto">Detect</option><option value="dv">Value, percentage</option><option value="vd">Percentage, value</option></select></div>`;
+        if (!dd.basis) dd.basis = "number";
+        if (!dd.form) dd.form = "auto";
+        if (!dd.cols) dd.cols = "auto";
+        if (!ratio && !dd.unit) dd.unit = "um";
+      }
+      const shown = t === "normal" || t === "lognormal" || (t === "table" && (dd.d || []).length);
+      return `<div class="g2"><div><label class="f">${lab}${ratio ? "" : ` <span class="u">${fmt(nom)} ${un}</span>`}</label><select data-k="phases.${i}.dists.${key}.type"><option value="same">${ratio ? "As entered, the same for every particle" : "Scales with d (the shape stays similar)"}</option><option value="normal">Normal, independent of d</option><option value="lognormal">Log-normal, independent of d</option><option value="table">Measured, independent of d (file)</option></select></div>${body}</div>
+        ${shown ? `<canvas class="chart" data-psd="${i}:${key}" style="height:150px"></canvas><div data-live="dimstats" data-i="${i}:${key}">${dimStatsHtml(i, key)}</div>` : ""}`;
+    }).join("");
+    return `<div class="subh">Distributions of the other dimensions</div>${rows}
+      <div class="hint">A dimension with a distribution of its own is drawn independently of d (a fibre's length and its diameter, a platelet's thickness and its width); the value entered above is its mean by number${ph.shape === "spheroid" ? ", and an aspect ratio multiplies each particle's own a" : ""}. Without one, ${ph.shape === "spheroid" ? "the aspect ratios are the same for every particle" : "it scales with d, so that every particle has the same proportions"}, as before 5.6.6.</div>`;
+  }
+  function dimStatsHtml(i, key) {
+    if (state.planErrors && state.planErrors.length) return "";
+    const pp = state.plan && state.plan.phases && state.plan.phases[+i], sm = pp && (pp.dists || {})[key];
+    if (!sm) return `<div class="hint">Computing the distribution…</div>`;
+    const un = key.startsWith("aspect") ? "" : " µm";
+    return `<div class="hint">Drawn (by number): mean <b>${fmt(sm.number_mean)}${un}</b>, standard deviation <b>${fmt(sm.std)}${un}</b> (CV ${fmt(sm.cv)}), median ${fmt(sm.number_median)}${un}, from ${fmt(sm.d_min)} to ${fmt(sm.d_max)}${un}.</div>`;
+  }
+  // every dimension of the particles the generator draws for a phase, from the plan
+  function dimExpHtml(i) {
+    if (state.planErrors && state.planErrors.length) return "";
+    const dims = state.plan && state.plan.phases && state.plan.phases[i] && state.plan.phases[i].dims;
+    if (!dims) return "";
+    const ph = state.form.phases[i] || {}, un = (d) => (d.unit === "um" ? " µm" : "");
+    // narrow panel: mean, CV and the medians by number and by volume (the Result Viewer shows the rest)
+    const rows = dims.map((d) => [esc(d.label) + `<span class="hint">${un(d)}</span>`, fmt(d.number_mean), fmt(d.cv), fmt(d.d50), fmt(d.d50v)]);
+    return `<div class="subh">What the generator draws</div>${tbl(["Dimension", "Mean", "CV", "D50", "D50 vol."], rows)}
+      <div class="hint">${fmt(dims[0].count)} particles drawn as the generator draws them${ph.shell && ph.shell.enabled ? " (without the shell)" : ""}; by number unless stated, the volume-weighted mean being D[4,3] for a diameter. Once the structure is generated, the Result Viewer sets the particles it holds against these (Particle sizes, or Grain analysis), and particles.csv and psa.csv hold both.</div>`;
+  }
   // A measured PSD file: the diameter in the first numeric column and its
   // percentage in the second. A file the other way round (percentage first)
   // is recognised by its header ("%", "vol", "cum", "pass" against "diameter",
@@ -1117,7 +1184,8 @@
     return { d, v };
   }
   function readPsdFile(input) {
-    const i = +input.dataset.psdfile, f = input.files && input.files[0];
+    // "i" the size d of phase i, "i:key" one of its other dimensions (SECONDARY)
+    const [is_, key] = String(input.dataset.psdfile).split(":"), i = +is_, f = input.files && input.files[0];
     if (!f) return;
     const rd = new FileReader();
     rd.onload = () => {
@@ -1131,20 +1199,23 @@
         else if (!a.length) header = line.trim().split(/[,;\t]+|\s{2,}/).filter((c) => c !== "");
       });
       const ph = state.form.phases[i];
-      const want = (ph.dist || {}).cols || "auto";
+      const cur = key ? ((ph.dists || {})[key] || {}) : (ph.dist || {});
+      const want = cur.cols || "auto";
       const order = want === "auto" ? psdOrder(a, b, header) : want;
       const { d, v } = psdColumns(a, b, order);
-      if (d.length < 2) { toast("No two numeric columns (diameter, percentage) were found in this file."); return; }
-      ph.dist = Object.assign({ type: "table", basis: "volume", form: "auto", unit: "um" }, ph.dist || {},
+      if (d.length < 2) { toast("No two numeric columns (value, percentage) were found in this file."); return; }
+      const nd = Object.assign({ type: "table", basis: key ? "number" : "volume", form: "auto", unit: "um" }, cur,
         { type: "table", d, v, file: f.name, cols_used: order, raw: { a, b, header } });
+      if (key) { ph.dists = ph.dists || {}; ph.dists[key] = nd; } else ph.dist = nd;
       saveForm(); renderLeft(); schedulePlan(0);
-      toast(`${d.length} rows read from ${f.name}: ${order === "vd" ? "percentage in the first column, diameter in the second" : "diameter in the first column, percentage in the second"}.`);
+      const what = key ? "value" : "diameter";
+      toast(`${d.length} rows read from ${f.name}: ${order === "vd" ? `percentage in the first column, ${what} in the second` : `${what} in the first column, percentage in the second`}.`);
     };
     rd.readAsText(f);
   }
   // the Columns setting changed after a file was read: its columns again
-  function psdReorder(i) {
-    const ph = state.form.phases[i], d0 = ph && ph.dist;
+  function psdReorder(i, key) {
+    const ph = state.form.phases[i], d0 = ph && (key ? (ph.dists || {})[key] : ph.dist);
     if (!d0 || !d0.raw) return;
     const want = d0.cols || "auto";
     const order = want === "auto" ? psdOrder(d0.raw.a, d0.raw.b, d0.raw.header) : want;
@@ -1160,6 +1231,7 @@
   // stayed as they were until another field was clicked)
   const LIVEF = {
     psdstats: (i) => psdStatsHtml(i), lnpar: (i) => lnParHtml(i), npar: (i) => nParHtml(i),
+    dimstats: (k) => dimStatsHtml(...String(k).split(":")), dimexp: (i) => dimExpHtml(i),
     domrec: () => domRecHtml(), domchecks: () => domChecksHtml(), filmgrid: () => filmGridHtml(), gridtxt: () => gridTxtHtml(),
     doedom: () => doeDomHtml(), ovshare: () => ovShareAutoHtml(),
   };
@@ -1171,7 +1243,8 @@
     $$("#lbody [data-live]").forEach((el) => {
       const fn = LIVEF[el.dataset.live];
       if (!fn) return;
-      const h = fn(el.dataset.i !== undefined ? +el.dataset.i : undefined);
+      const a = el.dataset.i;
+      const h = fn(a === undefined ? undefined : /^\d+$/.test(a) ? +a : a);
       if (el.innerHTML !== h) el.innerHTML = h;
     });
     drawPsd();
@@ -1221,11 +1294,13 @@
   }
   function drawPsd() {
     $$("canvas[data-psd]").forEach((cv) => {
-      const i = +cv.dataset.psd;
-      const sum = state.plan && state.plan.phases && state.plan.phases[i] && state.plan.phases[i].dist;
+      const [is_, key] = String(cv.dataset.psd).split(":"), i = +is_;
+      const pp = state.plan && state.plan.phases && state.plan.phases[i];
+      const sum = pp && (key ? (pp.dists || {})[key] : pp.dist);
       if (!sum || !sum.curve) return;
-      const c = sum.curve;
-      CH.line(cv, { xlog: true, xlabel: "Diameter (µm)", ylabel: "Density per log d", ymin: 0, series: [
+      const c = sum.curve, ph = state.form.phases[i] || {};
+      const xl = key ? dimLabel(ph.shape, key) + (key.startsWith("aspect") ? "" : " (µm)") : "Diameter (µm)";
+      CH.line(cv, { xlog: true, xlabel: xl, ylabel: key ? "Density per log value" : "Density per log d", ymin: 0, series: [
         { x: c.d, y: c.volume, color: "#d1242f", label: "by volume", width: 2 },
         { x: c.d, y: c.number, color: "#0b62c4", label: "by number", width: 2 }] });
     });
@@ -1277,15 +1352,131 @@
       <details class="more"><summary>Properties · ${esc(m ? m.name : "")}</summary>${matSummary(`matrix_regions.${k}`, mr)}</details>
     </div></div>`;
   }
+  // where the structure comes from: generated particles, or an image (5.6.6)
+  function sourceSeg() {
+    const im = state.form.source === "image";
+    return `<div class="seg" style="margin-bottom:8px"><button data-src="particles" class="${im ? "" : "on"}">Generated particles</button><button data-src="image" class="${im ? "on" : ""}">Image (TIFF)</button></div>`;
+  }
+  /* A structure from a TIFF image: a 3D stack (or one 2D image extruded along z) of grey values, colours or
+     palette indices; every value, colour or grey-value range is a class, and each class the matrix or a phase
+     with a material. */
+  function imagePanel() {
+    const im = state.form.image;
+    const load = `<label class="btn sm primary">${I("open")}${im && im.id ? "Load another TIFF" : "Load TIFF"}<input type="file" accept=".tif,.tiff" data-imgfile hidden></label>`;
+    const intro = `<div class="hint" style="margin-top:6px">A 3D image - a multi-page TIFF stack (ImageJ, a CT or FIB-SEM reconstruction, a segmented label image, MPSim's own structure.tif) or one 2D image extruded along z - read as the RVE: every grey value, colour or grey-value range is a class, and each class becomes the matrix or a phase of a material from the library. The pages of the stack are z, its rows y and its columns x.</div>`;
+    if (!im || !im.id) return `<div class="sec"><div class="sh">${I("image")}Structure from an image</div><div class="sb">${load}${intro}</div></div>`;
+    const [nx, ny, nz0] = im.shape, nz = im.is_2d ? (+im.extrude || 1) : nz0, un = im.unit || "um";
+    const h = +im.voxel || 0, hum = h * (LEN_UNITS[un] || 1);
+    const many = im.mode === "gray" && !(im.values_classes || []).length;
+    const split = im.mode === "gray" && (im.split === "ranges" || many);
+    const fileVox = im.voxel_from_file ? `the file gives ${fmt(im.voxel_from_file)} ${esc((im.unit_from_file || "").replace(/^um$/, "µm"))} per pixel` : "the file gives no voxel size";
+    const rows = (im.classes || []).map((c) => [
+      `<span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid #8c959f;vertical-align:middle;background:${esc(c.color)}"></span> ${esc(c.label)}`,
+      `${fmt(100 * c.fraction)} %`,
+      `<input type="radio" name="imgmatrix" data-imgmatrix="${esc(String(c.key))}" ${c.role === "matrix" ? "checked" : ""} title="This class is the matrix">`,
+      `<select data-imgmat="${esc(String(c.key))}" style="min-width:120px">${materialOptions(c.material_id)}</select>`,
+      `<input data-imgname="${esc(String(c.key))}" value="${esc(c.name || "")}" style="min-width:90px">`]);
+    const ax = state.imgAxis || "z", nAx = { x: nx, y: ny, z: nz0 }[ax], kk = Math.min(state.imgK ?? Math.floor(nAx / 2), nAx - 1);
+    const t = split && (im.thresholds || []).length ? `&t=${im.thresholds.join(",")}` : "";
+    return `<div class="sec"><div class="sh">${I("image")}Structure from an image</div><div class="sb">
+        <div class="row wrap" style="gap:8px;align-items:center">${load}<span class="hint"><b>${esc(im.name)}</b> · ${nx} × ${ny} × ${nz0} ${im.mode === "rgb" ? "colour" : im.mode === "palette" ? "palette" : "grey"} voxels${im.mode === "gray" ? ` · ${(im.n_values || 0).toLocaleString()} grey values` : ""}</span></div>
+        <div class="g2" style="margin-top:6px"><div><label class="f">Voxel size</label><div class="row uin"><input type="number" step="any" min="0" data-k="image.voxel" data-num><select data-k="image.unit"><option value="nm">nm</option><option value="um">µm</option><option value="mm">mm</option></select></div></div>
+          ${im.is_2d ? `<div><label class="f">Voxels along z <span class="u">2D image, extruded</span></label><input type="number" step="1" min="1" data-k="image.extrude" data-num></div>` : `<div><label class="f">RVE</label><div class="hint" style="padding-top:6px">${h > 0 ? `${fmt(nx * hum)} × ${fmt(ny * hum)} × ${fmt(nz * hum)} µm` : "—"}</div></div>`}</div>
+        <div class="hint">${fileVox}; the voxel size entered here is the one used.${im.is_2d ? " A 2D image is extruded along z: the structure is then uniform through z (a section of fibres aligned with z, for example) - a 2D picture of a 3D structure is not the same thing." : ""}</div>
+        ${im.mode === "gray" ? `<div class="subh">Classes</div>
+          <div class="g2"><div><label class="f">Classes from</label><select data-k="image.split">${many ? "" : `<option value="values">Each grey value</option>`}<option value="ranges">Grey-value ranges (thresholds)</option></select></div>
+          ${split ? `<div><label class="f">Thresholds <span class="u">a value ≥ t lies above t</span></label><input data-imgthr value="${esc((im.thresholds || []).join(", "))}" placeholder="e.g. 80, 170"></div>
+            <div><label class="f">Automatic (Otsu)</label><div class="row" style="gap:6px"><select data-imgauton style="width:auto">${[2, 3, 4, 5].map((n) => `<option value="${n}" ${n === (im.auto_n || 2) ? "selected" : ""}>${n} classes</option>`).join("")}</select><button class="btn sm" data-imgauto>${I("auto")}Find</button></div></div>` : ""}</div>
+          ${split ? `<canvas class="chart" id="imgHist" style="height:140px"></canvas>` : ""}` : ""}
+        ${tbl(["Class", "Share", "Matrix", "Material", "Name"], rows)}
+        <div class="hint">One class is the matrix (it fills what the phases leave free); every other class is a phase of its material, taking the share of the voxels it has. A gas (Air) makes a class pore space.</div>
+        <div class="subh">Slices</div>
+        <div class="row wrap" style="gap:6px;align-items:center"><select data-imgaxis style="width:auto">${["x", "y", "z"].map((a) => `<option value="${a}" ${a === ax ? "selected" : ""}>Normal to ${a}</option>`).join("")}</select>
+          <input type="range" min="0" max="${nAx - 1}" value="${kk}" data-imgk style="flex:1"><span class="hint">${kk + 1} / ${nAx}</span></div>
+        <img id="imgSlice" src="/api/images/${encodeURIComponent(im.id)}/slice?axis=${ax}&k=${kk}${t}" style="width:100%;image-rendering:pixelated;border:1px solid var(--line, #d0d7de);border-radius:6px;margin-top:6px" alt="Slice of the image">
+        <div class="hint">The image is one periodic cell: the solvers wrap it around its faces as they wrap a generated RVE, so an image cut out of a larger sample meets a mismatched neighbour at its faces. Grain analysis counts the connected regions of every phase as its grains (touching grains are one region).</div>
+      </div></div>
+      <div class="sec"><div class="sh">${I("morphology")}Composition</div><div class="sb" id="compBody"></div></div>`;
+  }
+  // the classes an image's grey values make: each value, or the ranges between thresholds
+  async function imageClasses(params) {
+    const im = state.form.image;
+    if (!im || !im.id) return;
+    try {
+      const r = await api("GET", `/api/images/${encodeURIComponent(im.id)}/classes?${params || ""}`);
+      if (params && params.startsWith("auto")) im.thresholds = r.thresholds.map((x) => +(+x).toPrecision(6));
+      const old = {};
+      (im.classes || []).forEach((c, k) => (old[k] = c));
+      im.classes = imageDefaults(r.classes, old);
+    } catch (err) { toast("The classes could not be made: " + err.message); }
+    saveForm(); renderLeft(); renderRibbon(); schedulePlan(0);
+  }
+  // roles and materials: kept by position where a class was there before; else the largest class is the matrix
+  function imageDefaults(classes, old) {
+    const big = classes.reduce((b, c, k) => (c.fraction > classes[b].fraction ? k : b), 0);
+    const out = classes.map((c, k) => {
+      const o = old && old[k];
+      if (o) return Object.assign({}, c, { role: o.role, material_id: o.material_id, name: o.name, props: o.props });
+      const id = k === big ? "epoxy" : "al2o3";
+      return Object.assign({}, c, { role: k === big ? "matrix" : "phase", material_id: id, name: mat(id).name, props: clone(mat(id).props) });
+    });
+    if (!out.some((c) => c.role === "matrix") && out.length) out[big].role = "matrix";
+    return out;
+  }
+  // a preset's image shipped with MPSim: stored as an upload is, the preset's classes kept by position
+  async function exampleImage() {
+    const im = state.form.image;
+    if (!im || !im.example || im.id) return;
+    try {
+      const r = await api("POST", "/api/images/example", { name: im.example });
+      const m = r.image;
+      Object.assign(im, { id: m.id, dir: m.dir, name: m.name, shape: m.shape, mode: m.mode, is_2d: !!m.is_2d, n_values: m.n_values,
+        hist: m.hist, voxel_from_file: m.voxel_from_file || null, unit_from_file: m.unit_from_file || null, values_classes: m.classes || [] });
+      im.classes = (im.classes || []).map((c) => Object.assign({}, c, { props: c.props || clone(mat(c.material_id).props), name: c.name || mat(c.material_id).name }));
+      await imageClasses(im.split === "ranges" ? `t=${(im.thresholds || []).join(",")}` : "");
+    } catch (err) { toast("The example image could not be loaded: " + err.message, 8000); }
+  }
+  async function uploadImage(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("file", f);
+    toast(`Reading ${f.name} …`, 60000);
+    try {
+      const r = await (await fetch("/api/images", { method: "POST", body: fd })).json();
+      if (!r.ok) throw new Error(r.error || "the image could not be read");
+      const m = r.image, prev = state.form.image || {};
+      const im = {
+        id: m.id, dir: m.dir, name: m.name, shape: m.shape, mode: m.mode, is_2d: !!m.is_2d, n_values: m.n_values,
+        voxel_from_file: m.voxel_from_file || null, unit_from_file: m.unit_from_file || null, hist: m.hist,
+        voxel: prev.voxel || (m.voxel_from_file && /^(um|nm|mm)$/.test(m.unit_from_file || "") ? m.voxel_from_file : 1), unit: prev.unit || (/^(um|nm|mm)$/.test(m.unit_from_file || "") ? m.unit_from_file : "um"),
+        extrude: m.is_2d ? Math.min(m.shape[0], m.shape[1], 32) : 0, values_classes: m.classes || [],
+        split: m.classes ? "values" : "ranges", thresholds: m.auto_thresholds || [], auto_n: 2,
+      };
+      im.classes = imageDefaults(m.classes || [], null);
+      state.form.image = im; state.form.source = "image"; state.imgK = null;
+      if (!m.classes) { state.form.image = im; await imageClasses(`t=${im.thresholds.join(",")}`); }
+      toast(`${m.name}: ${m.shape.join(" × ")} voxels${m.classes ? `, ${m.classes.length} classes` : `, ${m.n_values.toLocaleString()} grey values - split into ranges by thresholds`}.`, 7000);
+    } catch (err) { toast("The image could not be read: " + err.message, 9000); }
+    saveForm(); renderLeft(); renderRibbon(); schedulePlan(0);
+  }
+  function drawImageHist() {
+    const im = state.form.image, cv = $("#imgHist");
+    if (!im || !cv || !im.hist) return;
+    const tot = im.hist.n.reduce((a, b) => a + b, 0) || 1;
+    CH.line(cv, { xlabel: "Grey value", ylabel: "Voxels %", ymin: 0, series: [{ x: im.hist.x, y: im.hist.n.map((v) => 100 * v / tot), color: "#57606a", width: 1.5, label: "Histogram" }]
+      .concat((im.thresholds || []).map((t, k) => ({ x: [t, t], y: [0, Math.max(...im.hist.n) * 100 / tot], color: "#d1242f", width: 1.5, dash: [4, 3], label: k ? "" : "Thresholds" }))) });
+  }
   function leftStructure() {
     const f = state.form, cols = phaseColors();
+    if (f.source === "image") return sourceSeg() + imagePanel();
     if (state.sel >= f.phases.length) state.sel = Math.max(0, f.phases.length - 1);
     const rows = [`<div class="prow ${state.sel < 0 ? "on" : ""}" data-sel="-1"><i class="sw2" style="background:${isVoid(f.matrix) ? "#7fd3f7" : PHASE_COLORS[0]}"></i>${I("matrix")}<div class="nm">${esc(f.matrix.name)}<small>matrix${(mat(f.matrix.material_id) || {}).name && mat(f.matrix.material_id).name !== f.matrix.name ? " · " + esc(mat(f.matrix.material_id).name) : ""}${isVoid(f.matrix) ? " · gas" : ""}</small></div><span class="vf" id="vfMatrix"></span></div>`]
       .concat((f.matrix_regions || []).map((mr, k) => `<div class="prow ${state.sel === -2 - k ? "on" : ""}" data-sel="${-2 - k}"><i class="sw2" style="background:${matrixRegionColor(k, isVoid(mr))}"></i>${I("matrix")}<div class="nm">${esc(mr.name)}<small>matrix · ${secTxt(mr.section)}</small></div><span class="vf" id="vfMr${k}"></span></div>`))
       .concat(f.phases.map((p, i) => `<div class="prow ${i === state.sel ? "on" : ""}" data-sel="${i}"><i class="sw2" style="background:${cols[i]}"></i>${I(SHAPES[p.shape].icon)}<div class="nm">${esc(p.name)}<small>${SHAPES[p.shape].label.toLowerCase()} · ${p.shape === "network" ? "width" : "d"} ${p.size.d} ${u(p.size.unit)}${isVoid(p) ? " · void" : ""}</small></div><span class="vf">${fmt(p.fraction.value)} ${p.fraction.basis === "wt" ? "wt%" : "vol%"}${(p.section || {}).mode === "section" ? ` <small>of ${secTxt(p.section)}</small>` : ""}</span></div>`));
     const add = PARTICLE_SHAPES.map((s) => `<button class="btn sm" data-add="${s}" title="Add ${SHAPES[s].label.toLowerCase()} phase">${I(SHAPES[s].icon)}</button>`).join("") +
       `<button class="btn sm" data-add="network" title="Add a bicontinuous network (any material)">${I("network")}</button>`;
-    return `<div class="row wrap" style="margin-bottom:8px"><span class="hint">Add</span>${add}</div>
+    return sourceSeg() + `<div class="row wrap" style="margin-bottom:8px"><span class="hint">Add</span>${add}</div>
       <div class="hint" style="margin:-4px 0 8px">A phase is pore space when its material is a gas (Air) — any shape can be a pore. The matrix can be Air too: the phases then form a packed bed or a porous solid.</div>
       <div class="plist">${rows.join("")}</div>
       ${state.sel <= -2 && (f.matrix_regions || [])[-2 - state.sel] ? matrixRegionEditor(-2 - state.sel) : state.sel < 0 ? matrixEditor() : f.phases.length ? phaseEditor(state.sel) : '<div class="note">No phases are defined; only the matrix is analysed. Phases are added with the buttons above or in the ribbon.</div>'}
@@ -1332,18 +1523,28 @@
     const c = state.plan.composition;
     const vm = $("#vfMatrix"); if (vm) vm.textContent = `${fmt(100 * c.vf_matrix)} vol%`;
     let h = `<table class="grid"><tr><th>Region</th><th class="n">vol %</th><th class="n">wt %</th></tr>
-      <tr><td>${esc(state.form.matrix.name)}</td><td class="n">${fmt(100 * c.vf_matrix)}</td><td class="n">${fmt(100 * c.wt_matrix)}</td></tr>`;
+      <tr><td>${esc(((state.plan.labels || [])[0] || {}).name || state.form.matrix.name)}</td><td class="n">${fmt(100 * c.vf_matrix)}</td><td class="n">${fmt(100 * c.wt_matrix)}</td></tr>`;
     (c.matrix_regions || []).forEach((r, k) => {
       h += `<tr><td>${esc(r.name)}</td><td class="n">${fmt(100 * r.vf)}</td><td class="n">${fmt(100 * r.wt)}</td></tr>`;
       const el2 = $("#vfMr" + k); if (el2) el2.textContent = `${fmt(100 * r.vf)} vol%`;
     });
-    state.form.phases.forEach((p, i) => { h += `<tr><td>${esc(p.name)}</td><td class="n">${fmt(100 * c.vf[i])}</td><td class="n">${fmt(100 * c.wt[i])}</td></tr>`; });
+    // the names the plan gives (an image's classes are not the form's phases)
+    (state.plan.phases || state.form.phases).forEach((p, i) => { h += `<tr><td>${esc(p.name)}</td><td class="n">${fmt(100 * c.vf[i])}</td><td class="n">${fmt(100 * c.wt[i])}</td></tr>`; });
     h += `</table><div class="hint" style="margin-top:5px">Density ${fmt(c.density)} g/cm³ · specific heat ${fmt(c.cp)} J/kg·K</div>`;
     el.innerHTML = h;
   }
 
   function leftDomain() {
     const f = state.form, pl = state.plan && state.plan.plan;
+    if (f.source === "image") {
+      const im = f.image || {};
+      return `<div class="sec"><div class="sh">${I(f.rve.quality)}Accuracy level</div><div class="sb">
+          <div class="seg" id="qualitySeg">${["fast", "standard", "accurate"].map((q) => `<button data-q="${q}" class="${f.rve.quality === q ? "on" : ""}">${q[0].toUpperCase() + q.slice(1)}</button>`).join("")}</div>
+          <div class="hint" style="margin-top:6px">${QUALITY_HINT[f.rve.quality]}</div></div></div>
+        <div class="sec"><div class="sh">${I("cube")}Domain</div><div class="sb">
+          <div class="note">The structure is the image ${esc(im.name || "")}: its grid and voxel size are the RVE (Structure tab). There is one realisation; the image is taken as one periodic cell.</div>
+          <div data-live="domrec">${domRecHtml()}</div><div data-live="domchecks">${domChecksHtml()}</div></div></div>`;
+    }
     return `<div class="sec"><div class="sh">${I(f.rve.quality)}Accuracy level</div><div class="sb">
         <div class="seg" id="qualitySeg">${["fast", "standard", "accurate"].map((q) => `<button data-q="${q}" class="${f.rve.quality === q ? "on" : ""}">${q[0].toUpperCase() + q.slice(1)}</button>`).join("")}</div>
         <div class="hint" style="margin-top:6px">${QUALITY_HINT[f.rve.quality]}</div></div></div>
@@ -1661,8 +1862,8 @@
     else if ("num" in el.dataset) v = el.value === "" ? null : Number(el.value) * unitScale(el);
     else v = el.value;
     setPath(state.form, el.dataset.k, v);
-    const mcols = /^phases\.(\d+)\.dist\.cols$/.exec(el.dataset.k);
-    if (mcols) { psdReorder(+mcols[1]); saveForm(); renderLeft(); schedulePlan(0); return; }
+    const mcols = /^phases\.(\d+)\.(?:dist|dists\.(\w+))\.cols$/.exec(el.dataset.k);
+    if (mcols) { psdReorder(+mcols[1], mcols[2]); saveForm(); renderLeft(); schedulePlan(0); return; }
     // the grid size follows from the edge length and the voxel size; an old
     // form's fixed grid size would otherwise override them silently
     if (/^rve\.(L_um|voxel_um)$/.test(el.dataset.k)) state.form.rve.N = null;
@@ -2310,7 +2511,9 @@
     if (P.percolation) add("percolation", "Percolation paths", "tortuosity", "var(--c-struct)", "Structure analysis", secPercolation(P.percolation));
     if (P.porosimetry) add("porosimetry", "Porosimetry", "porosimetry", "var(--c-struct)", "Structure analysis", secPorosimetry(P.porosimetry));
     if (P.pore_network) add("pore_network", "Pore network", "pore_network", "var(--c-struct)", "Structure analysis", secNetwork(P.pore_network));
-    if (P.grains) add("grains", "Grain analysis", "grains", "var(--c-struct)", "Structure analysis", secGrains(P.grains));
+    if (P.grains) add("grains", "Grain analysis", "grains", "var(--c-struct)", "Structure analysis", secGrains(P.grains, realSizes(r)));
+    // without a grain analysis the sizes realised stand on their own
+    else if (realSizes(r)) add("sizes", "Particle sizes", "grains", "var(--c-struct)", "Structure analysis", secSizes(realSizes(r)));
     // each realisation's own values under the section of its property
     secs_.forEach((s) => { const p = P[s.id]; if (p && (p.by_realisation || []).length) s.html += realTables(p.by_realisation); });
     add("checks", `Verification (${r.check_counts.fail ? r.check_counts.fail + " failed" : r.check_counts.pass + " passed"})`, "checks", "var(--c-diff)", "Verification", `<div class="box">${`<div class="tablewrap"><table class="grid">${checksRows(r.checks)}</table></div>`}</div>`);
@@ -3095,13 +3298,79 @@
         .map(([l, v, un]) => `<div class="tile"><div class="l">${l}</div><div class="v">${fmt(v)} <span style="font-size:12px;color:var(--muted)">${un}</span></div></div>`).join("")}</div>
       <div class="rgrid"><div class="box"><div class="bt">Pore sizes<div class="grow"></div>${state.result.view ? `<button class="btn sm" data-network>${I("pore_network")}Show network</button>` : ""}</div>${canvas("pnP", 240)}</div><div class="box"><div class="bt">Throat sizes</div>${canvas("pnT", 240)}</div><div class="box"><div class="bt">Coordination numbers</div>${canvas("pnZ", 240)}</div></div>`;
   }
-  function secGrains(g) {
+  // the sizes the structure holds against the input, every dimension (5.6.6): from the first realisation
+  const realSizes = (r) => { const z = ((r || {}).realisations || [])[0]; const s = z && z.particle_sizes; return s && Object.keys(s).length ? s : null; };
+  function secSizes(sizes) {
+    return `<div class="rgrid">${Object.entries(sizes).map(([pi, e]) => sizeBox(pi, e)).join("")}</div>${sizeFilesNote()}`;
+  }
+  function sizeFilesNote(img) {
+    if (img) return `<div class="row wrap" style="gap:6px;margin-top:6px"><a class="btn sm" href="${jobUrl("download/psa_set")}">${I("zip")}Size distributions (CSV)</a></div>
+      <p class="hint">grains.csv lists every connected region of every phase (voxels, volume, volume-equivalent diameter); psa.csv their distribution in bins (number and volume %, per bin and cumulative), psa_summary.csv its statistics.</p>`;
+    return `<div class="row wrap" style="gap:6px;margin-top:6px"><a class="btn sm" href="${jobUrl("download/particles_set")}">${I("zip")}Particles (CSV)</a><a class="btn sm" href="${jobUrl("download/psa_set")}">${I("zip")}Size distributions (CSV)</a></div>
+      <p class="hint">particles.csv lists every particle as built - centre, size d, volume-equivalent diameter, volume, the extents along its own axes, length, aspect ratios, polyhedron shape and orientation (rows of the rotation = the particle's axes in the box) - so that another program draws the same structure (polyhedra.csv: the vertices of each polyhedron; particles_README.txt: the conventions). psa.csv holds the realised and the input distributions of every dimension in common bins (number and volume %, per bin and cumulative), psa_summary.csv their statistics. The structure drawn from particles.csv at the voxel centres reproduces structure.tif voxel for voxel.</p>`;
+  }
+  function sizeBox(pi, e, li) {
+    const v = state.szView[pi] || (state.szView[pi] = { dim: e.basis === "eqd" ? "eqd" : "d", w: "number", cum: false });
+    if (!(e.dimensions || []).some((d) => d.key === v.dim)) v.dim = (e.dimensions[0] || {}).key;
+    const un = (d) => (d.unit === "um" ? " µm" : "");
+    const dev = (a, b) => (b ? `${a / b - 1 >= 0 ? "+" : ""}${fmt(100 * (a / b - 1))} %` : "—");
+    const rows = [];
+    (e.dimensions || []).forEach((d) => {
+      const r = d.real, own = (e.own || []).includes(d.key);
+      if (!d.input) {
+        // an image: its regions, no input to set them against
+        const row = [`${esc(d.label)}<span class="hint">${un(d)}</span>`, "<b>regions</b>", `<b>${fmt(r.number_mean)}</b>`, fmt(r.std), fmt(r.cv), `<b>${fmt(r.d10)} / ${fmt(r.d50)} / ${fmt(r.d90)}</b>`, fmt(r.volume_mean), `<b>${fmt(r.d10v)} / ${fmt(r.d50v)} / ${fmt(r.d90v)}</b>`, "—", "—"];
+        row._cls = "sum";
+        rows.push(row);
+        return;
+      }
+      const s = d.input;
+      const lab = `${esc(d.label)}<span class="hint">${un(d)}${own ? " · own distribution" : ""}${d.key === (e.basis || "d") ? " · as entered" : ""}</span>`;
+      rows.push([lab, "input", fmt(s.number_mean), fmt(s.std), fmt(s.cv), `${fmt(s.d10)} / ${fmt(s.d50)} / ${fmt(s.d90)}`, fmt(s.volume_mean), `${fmt(s.d10v)} / ${fmt(s.d50v)} / ${fmt(s.d90v)}`, "", ""]);
+      const ks = d.ks || {}, bad = ks.p !== undefined && ks.p < 0.01;
+      const row = ["", `<b>realised</b>`, `<b>${fmt(r.number_mean)}</b>`, fmt(r.std), fmt(r.cv), `<b>${fmt(r.d10)} / ${fmt(r.d50)} / ${fmt(r.d90)}</b>`, fmt(r.volume_mean), `<b>${fmt(r.d10v)} / ${fmt(r.d50v)} / ${fmt(r.d90v)}</b>`, dev(r.number_mean, s.number_mean), ks.D !== undefined ? `${fmt(ks.D)} (p ${fmt(ks.p)})${bad ? " ⚠" : ""}` : "—"];
+      row._cls = "sum";
+      rows.push(row);
+    });
+    const opt = (val, txt, cur) => `<option value="${val}" ${val === cur ? "selected" : ""}>${txt}</option>`;
+    draws.push(() => drawSize(pi, e));
+    return `<div class="box" style="grid-column:1/-1"><div class="bt">${esc(e.name)} <span class="hint">${e.regions ? "connected regions of the image" : esc((SHAPES[e.shape] || {}).label || e.shape)} · ${e.n_particles} ${e.regions ? "regions" : "particles"}${e.shell_um ? ` · sizes include the ${fmt(e.shell_um)} µm shell` : ""}</span></div>
+      ${tbl(["Dimension", "", "Mean", "Std", "CV", "D10 / D50 / D90", "Mean by volume", "D10 / D50 / D90 by volume", "Mean vs input", "Two-sample test D"], rows)}
+      <div class="row wrap" style="gap:6px;margin:8px 0 2px">
+        <select style="width:auto" data-szdim="${pi}">${(e.dimensions || []).map((d) => opt(d.key, esc(d.label), v.dim)).join("")}</select>
+        <select style="width:auto" data-szw="${pi}">${opt("number", "By number", v.w)}${opt("volume", "By volume", v.w)}</select>
+        <select style="width:auto" data-szcum="${pi}">${opt("bin", "Per bin", v.cum ? "cum" : "bin")}${opt("cum", "Cumulative", v.cum ? "cum" : "bin")}</select></div>
+      ${canvas("szc_" + pi, 240)}
+      <p class="hint">Bars: the particles the structure holds; line: the distribution entered, sampled as the generator samples it (20,000 particles), in the same bins - after its cut at the bounds or at ±2σ, so that its standard deviation is up to about 12 % below the one entered. The two-sample (Kolmogorov–Smirnov) test compares the cumulative number distributions: D is their largest gap, and a p below 0.01 (⚠) says the particles are unlikely to be a sample of the input - with few particles (a small box) the largest may be missing and the realised spread is narrower.</p></div>`;
+  }
+  function drawSize(pi, e) {
+    const v = state.szView[pi], d = (e.dimensions || []).find((x) => x.key === v.dim), cv = $("#szc_" + pi);
+    if (!d || !cv) return;
+    const b = d.bins, w = v.w === "volume" ? "volume" : "number", c = v.cum ? "_cum" : "";
+    CH.compare(cv, { edges: b.edges, real: b[`real_${w}${c}`], input: b[`input_${w}${c}`], xlog: d.unit === "um" && b.edges[0] > 0, cumulative: v.cum,
+      xlabel: d.label + (d.unit === "um" ? " (µm)" : ""), ylabel: `${w === "volume" ? "Volume" : "Number"} %${v.cum ? ", cumulative" : " per bin"}`,
+      labels: [e.regions ? `Connected regions (${e.n_particles})` : `Realised (${e.n_particles} particles)`, d.input ? "Input" : ""] });
+  }
+  function secGrains(g, sizes) {
     if (g.error) return `<div class="box"><div class="errs">${esc(g.error)}</div></div>`;
     let h = `<div class="rgrid">`;
+    const sz = sizes || g.sizes || {};
     Object.entries(g.phases || {}).forEach(([li, p]) => {
       if (!p.n_particles) return;
       const hs = p.size_histogram;
-      if (hs) draws.push(() => CH.hist($("#gr_" + li), { x: hs.center_um, y: hs.number, xlabel: "Equivalent diameter (µm)", ylabel: "Fraction", label: "Number-weighted", line: { y: hs.volume, label: "Volume-weighted", color: "#e36209" } }));
+      // the sizes against the input replace the histogram where they exist (5.6.6)
+      const se = Object.entries(sz).find(([, e]) => e.name === p.name);
+      if (g.image) {
+        // an image: every phase's connected regions (joined across the periodic faces)
+        h += `<div class="box"><div class="bt">${esc(p.name)} <span class="hint">connected regions of the image</span></div>
+          ${kv([["Regions in the RVE", String(p.n_particles)], ["Number density", withUnit(p.number_density_per_mm3, "1/mm³")], ["Equivalent diameter D10 / D50 / D90 (number)", `${fmt(p.eq_diameter_um.number.d10)} / ${fmt(p.eq_diameter_um.number.d50)} / ${fmt(p.eq_diameter_um.number.d90)} µm`],
+            ["D50 (volume)", withUnit(p.eq_diameter_um.volume.d50, "µm")], ["Regions of a single voxel", String(p.single_voxel_regions)], ["Specific surface (voxel faces)", withUnit(p.specific_surface_voxel_1pm, "1/m")],
+            ["Percolating x / y / z", ["x", "y", "z"].map((a) => (p.voxel.percolates[a] ? "●" : "○")).join(" ")]])}
+          <p class="hint">Grains that touch are one region (no watershed separation), so a packed powder reads as fewer, larger grains than it holds; regions of one voxel are often noise of the segmentation.</p></div>`;
+        if (se) h += sizeBox(se[0], se[1]);
+        return;
+      }
+      if (hs && !se) draws.push(() => CH.hist($("#gr_" + li), { x: hs.center_um, y: hs.number, xlabel: "Equivalent diameter (µm)", ylabel: "Fraction", label: "Number-weighted", line: { y: hs.volume, label: "Volume-weighted", color: "#e36209" } }));
       const T = p.orientation_tensor, Ti = p.orientation_tensor_image;
       h += `<div class="box"><div class="bt">${esc(p.name)} <span class="hint">${esc(p.shape)}</span></div>
         ${kv([["Particles in the RVE", String(p.n_particles)], ["Number density", withUnit(p.number_density_per_mm3, "1/mm³")], ["D10 / D50 / D90 (number)", `${fmt(p.eq_diameter_um.number.d10)} / ${fmt(p.eq_diameter_um.number.d50)} / ${fmt(p.eq_diameter_um.number.d90)} µm`],
@@ -3110,8 +3379,10 @@
           ["Clark–Evans index (1 = random, > 1 regular)", fmt(p.clark_evans_index)], ["Clusters / particles per cluster", `${p.voxel.clusters.n_clusters} / ${fmt(p.voxel.particles_per_cluster)}`], ["Percolating x / y / z", ["x", "y", "z"].map((a) => (p.voxel.percolates[a] ? "●" : "○")).join(" ")]])}
         ${T ? `<div class="bt" style="margin-top:6px">Orientation tensor ⟨u u⟩ <span class="hint">particle list</span></div>${tbl(["", "x", "y", "z"], ["x", "y", "z"].map((a, i) => [a, ...T[i].map(fmt)]))}` : ""}
         ${Ti ? `<div class="bt" style="margin-top:6px">Orientation tensor <span class="hint">PuMA structure tensor of the voxel image</span></div>${tbl(["", "x", "y", "z"], ["x", "y", "z"].map((a, i) => [a, ...Ti[i].map(fmt)]))}` : ""}
-        ${hs ? canvas("gr_" + li, 220) : ""}</div>`;
+        ${hs && !se ? canvas("gr_" + li, 220) : ""}</div>`;
+      if (se) h += sizeBox(se[0], se[1]);
     });
+    if (Object.keys(sz).length) h += `<div style="grid-column:1/-1">${sizeFilesNote(!!g.image)}</div>`;
     const ml = g.matrix_ligament;
     if (ml) {
       draws.push(() => CH.hist($("#grML"), { x: ml.diameter_um, y: ml.volume_fraction, xlabel: "Matrix ligament thickness (µm)", ylabel: "Volume fraction", color: "#8c959f", color2: "#e1e4e8", label: "Distribution", line: { y: ml.cdf, label: "Cumulative", color: "#0b62c4" } }));
@@ -3123,7 +3394,7 @@
   function secInput(r) {
     const pl = r.plan;
     const rz = r.realisations.map((z) => [String(z.seed), esc(z.route || ""), `${fmt(z.seconds)} s`, z.contacts_mode === "separate" ? `${z.contacts_removed} trimmed` : `${(z.touching_pairs || 0).toLocaleString()} pairs · ${(z.contact_faces || 0).toLocaleString()} faces`, r.spec.labels.map((l, i) => `${esc(l.name)} ${fmt(100 * z.vf_labels[i])} %`).join(" · ")]);
-    const phases = r.spec.phases.map((p) => [esc(p.name), SHAPES[p.shape].label, `${fmt(p.size_um.d)} µm`, `${fmt(100 * p.vf)} %`, p.orientation.mode, p.overlap ? "overlapping" : "separated", p.shell ? fmt(p.shell.thickness_um) + " µm" : "—", p.r_int ? fmt(p.r_int) : "—"]);
+    const phases = r.spec.phases.map((p) => [esc(p.name), p.shape === "image" ? "Image voxels" : (SHAPES[p.shape] || { label: p.shape }).label, p.shape === "image" ? "—" : `${fmt(p.size_um.d)} µm`, `${fmt(100 * p.vf)} %`, p.orientation.mode, p.overlap ? "overlapping" : "separated", p.shell ? fmt(p.shell.thickness_um) + " µm" : "—", p.r_int ? fmt(p.r_int) : "—"]);
     return `<div class="rgrid"><div class="box"><div class="bt">Input</div><p>Matrix: ${esc(r.spec.matrix.name)}</p>${tbl(["Phase", "Shape", "Size", "vol %", "Orientation", "Placement", "Shell", "R_int"], phases)}</div>
       <div class="box"><div class="bt">RVE plan</div><p>Grid ${gridTxt(pl)}${pl.film ? ` (film ${fmt(pl.T_um)} µm thick)` : ""} · voxel ${fmt(pl.h_um)} µm (recommended ${fmt(pl.recommended.h_um)}) · edge ${fmt(pl.L_um)} µm (recommended ${fmt(pl.recommended.L_um)}, ${esc(pl.recommended.reason)})</p>
         ${pl.notes.map((n) => `<div class="note warn">${esc(n)}</div>`).join("")}<div class="tablewrap"><table class="grid">${checksRows(pl.checks)}</table></div></div>
@@ -4709,6 +4980,14 @@
         state.libFilter = t.value; const pos = t.selectionStart; renderLeft();
         const el = $("#lbody [data-libfilter]"); if (el) { el.focus(); el.setSelectionRange(pos, pos); }
       }
+      else if (t.dataset.imgk !== undefined) {
+        // the slice follows the slider at once
+        state.imgK = +t.value;
+        const im = state.form.image, ax = state.imgAxis || "z", img = $("#imgSlice");
+        const tq = im.split === "ranges" && (im.thresholds || []).length ? `&t=${im.thresholds.join(",")}` : "";
+        if (img) img.src = `/api/images/${encodeURIComponent(im.id)}/slice?axis=${ax}&k=${t.value}${tq}`;
+        const lab = t.nextElementSibling; if (lab) lab.textContent = `${+t.value + 1} / ${+t.max + 1}`;
+      }
       else if (t.dataset.k) { onField(e); refreshLive(); }
       else if (t.dataset.ln) onLinkField(e);
       else if (t.dataset.pi !== undefined || t.dataset.doe) onDoeField(e);
@@ -4730,6 +5009,34 @@
       }
       else if (t.dataset.libimport !== undefined) importLibrary(t);
       else if (t.dataset.psdfile !== undefined) readPsdFile(t);
+      else if (t.dataset.imgfile !== undefined) uploadImage(t);
+      else if (t.dataset.imgmatrix !== undefined) {
+        (state.form.image.classes || []).forEach((c) => { c.role = String(c.key) === t.dataset.imgmatrix ? "matrix" : "phase"; });
+        saveForm(); schedulePlan(0); renderComposition();
+      }
+      else if (t.dataset.imgmat !== undefined) {
+        const c = (state.form.image.classes || []).find((x) => String(x.key) === t.dataset.imgmat), m = mat(t.value);
+        if (c && m) { const auto = !c.name || c.name === (mat(c.material_id) || {}).name; c.material_id = m.id; c.props = clone(m.props); if (auto) c.name = m.name; }
+        saveForm(); schedulePlan(0); renderLeft();
+      }
+      else if (t.dataset.imgname !== undefined) {
+        const c = (state.form.image.classes || []).find((x) => String(x.key) === t.dataset.imgname);
+        if (c) c.name = t.value;
+        saveForm(); schedulePlan(0);
+      }
+      else if (t.dataset.imgthr !== undefined) {
+        const v = t.value.split(/[,;\s]+/).map(Number).filter((x) => isFinite(x)).sort((a, b) => a - b);
+        state.form.image.thresholds = v;
+        imageClasses(`t=${v.join(",")}`);
+      }
+      else if (t.dataset.imgauton !== undefined) state.form.image.auto_n = +t.value;
+      else if (t.dataset.imgaxis !== undefined) { state.imgAxis = t.value; state.imgK = null; renderLeft(); }
+      else if (t.dataset.k === "image.split") {
+        onField(e);
+        const im = state.form.image;
+        if (im.split === "values") { im.classes = imageDefaults(im.values_classes || [], null); im.thresholds = []; saveForm(); renderLeft(); schedulePlan(0); }
+        else imageClasses(`t=${(im.thresholds || []).join(",")}`);
+      }
       else if (t.dataset.k) onField(e);
       else if (t.dataset.mat) onMaterial(e);
       else if (t.dataset.an) { state.form.analyses[t.dataset.an] = t.checked; saveForm(); schedulePlan(); renderLeft(); renderRibbon(); }
@@ -4745,10 +5052,12 @@
       else if (t.dataset.cm !== undefined || t.dataset.cu !== undefined || t.dataset.cal || t.dataset.calopt) onCalField(e);
     });
     lb.addEventListener("click", (e) => {
-      const t = e.target.closest("[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-arr],[data-disp],[data-anall],[data-annone],[data-pdel],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory],[data-curclink],[data-curcsep],[data-curcadd],[data-lnadd],[data-lndel]");
+      const t = e.target.closest("[data-src],[data-imgauto],[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-arr],[data-disp],[data-anall],[data-annone],[data-pdel],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory],[data-curclink],[data-curcsep],[data-curcadd],[data-lnadd],[data-lndel]");
       if (!t) return;
       if (onLinkClick(t)) return;
       if (onCalClick(t)) return;
+      if (t.dataset.src) { state.form.source = t.dataset.src; saveForm(); renderLeft(); renderRibbon(); schedulePlan(0); return; }
+      if (t.dataset.imgauto !== undefined) { imageClasses(`auto=${(state.form.image || {}).auto_n || 2}`); return; }
       if (t.dataset.libsel) { state.libSel = t.dataset.libsel; renderLeft(); renderRibbon(); return; }
       // an explicit button, not a click on the matrix row, opens the library
       if (t.dataset.editmat) { state.libSel = t.dataset.editmat; setTab("material"); return; }
@@ -4823,6 +5132,7 @@
       if (t.dataset.preset) {
         const p = state.presets.find((x) => x.id === t.dataset.preset);
         state.form = completeForm(p.form); state.sel = 0;
+        if (state.form.source === "image") exampleImage();
         if (p.doe) {
           // a DOE preset: the study's settings too, ready in the DOE tab
           state.doe = Object.assign({ name: "", design: "full", samples: 12, seed: 1, parameters: [], edge: "fixed" }, clone(p.doe));
@@ -4969,6 +5279,18 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
       }
       else if (b.dataset.libmatrix) { state.form.matrix = matEntry(b.dataset.libmatrix); state.sel = -1; $("#modal").hidden = true; setTab("structure"); schedulePlan(0); saveForm(); toast("The matrix material has been changed."); }
       else if (b.dataset.libadd) { const m = mat(b.dataset.libadd); state.form.phases.push(phaseEntry(m.id, "sphere")); state.sel = state.form.phases.length - 1; $("#modal").hidden = true; setTab("structure"); schedulePlan(0); saveForm(); toast(`Phase added: ${m.name}`); }
+    });
+    // the size charts: which dimension, by number or volume, per bin or cumulative
+    $("#rvBody").addEventListener("change", (e) => {
+      const t = e.target, pi = t.dataset.szdim ?? t.dataset.szw ?? t.dataset.szcum;
+      if (pi === undefined || !state.result) return;
+      const v = state.szView[pi];
+      if (!v) return;
+      if (t.dataset.szdim !== undefined) v.dim = t.value;
+      else if (t.dataset.szw !== undefined) v.w = t.value;
+      else v.cum = t.value === "cum";
+      const sizes = realSizes(state.result) || ((state.result.properties || {}).grains || {}).sizes || {};
+      if (sizes[pi]) drawSize(pi, sizes[pi]);
     });
     $("#rvBody").addEventListener("scroll", () => {
       const top = $("#rvBody").getBoundingClientRect().top;

@@ -1,335 +1,2401 @@
 {
-  "schema": "mpsim.presets/1",
-  "presets": [
-    {"id": "emc_silica", "name": "EMC · epoxy + fused silica 50 vol%",
-     "description": "Semiconductor mould compound. Spherical silica with a log-normal size distribution governs the CTE and the thermal conductivity.",
-     "form": {"name": "EMC · epoxy + SiO₂ 50 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 20, "unit": "um"},
-                  "dist": {"type": "lognormal", "std": 5.0}, "fraction": {"value": 50, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"thermal": true, "cte": true, "dielectric": true, "morphology": true, "grains": true},
-      "options": {"directions": "z", "delta_T": 100}}},
-
-    {"id": "underfill", "name": "Underfill · epoxy + SiO₂ 40 vol% (1 µm)",
-     "description": "Flip-chip underfill; the objective is CTE matching with the solder bumps.",
-     "form": {"name": "Underfill · epoxy + SiO₂ 40 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "sio2", "name": "SiO₂", "shape": "sphere", "size": {"d": 1, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 40, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"thermal": true, "cte": true, "dielectric": true},
-      "options": {"directions": "z", "delta_T": 100}}},
-
-    {"id": "tim_al2o3", "name": "TIM · silicone + Al₂O₃ 50 vol% with interfacial resistance",
-     "description": "Thermal gap filler. The interfacial (Kapitza) resistance introduces a filler-size effect.",
-     "form": {"name": "TIM · silicone + Al₂O₃ 50 vol%",
-      "matrix": {"material_id": "silicone"},
-      "phases": [{"material_id": "al2o3", "name": "Al₂O₃", "shape": "sphere", "size": {"d": 5, "unit": "um"},
-                  "dist": {"type": "lognormal", "std": 1.25}, "fraction": {"value": 50, "basis": "vol"},
-                  "orientation": {"mode": "iso"}, "r_int": 1e-8}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"thermal": true, "grains": true},
-      "options": {"directions": "z", "thickness_mm": 0.2}}},
-
-    {"id": "tim_aln", "name": "TIM · epoxy + AlN 40 vol%",
-     "description": "High-conductivity epoxy composite. With the large filler contrast, the resin films and the contacts between particles govern k.",
-     "form": {"name": "TIM · epoxy + AlN 40 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "aln", "name": "AlN", "shape": "sphere", "size": {"d": 1, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 40, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"thermal": true, "cte": true, "grains": true},
-      "options": {"directions": "z", "delta_T": 100, "thickness_mm": 0.1}}},
-
-    {"id": "bn_sheet", "name": "Thermal sheet · silicone + h-BN platelets 25 vol% (in-plane aligned)",
-     "description": "Platelets lying in the xy plane produce very different in-plane and through-plane conductivities.",
-     "form": {"name": "Silicone + h-BN platelets 25 vol%",
-      "matrix": {"material_id": "silicone"},
-      "phases": [{"material_id": "hbn", "name": "h-BN platelet", "shape": "spheroid", "size": {"d": 12, "aspect": 0.15, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 25, "basis": "vol"}, "orientation": {"mode": "z", "spread_deg": 10}}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"thermal": true, "grains": true},
-      "options": {"directions": "zx", "thickness_mm": 0.3}}},
-
-    {"id": "lowk_porous", "name": "Porous low-k film · SiO₂ + 30 % connected porosity",
-     "description": "Mesoporous silica low-k dielectric; permittivity, stiffness, thermal conductivity with rarefied gas in the nanopores, and the pore-entry size distribution.",
-     "form": {"name": "Porous low-k · SiO₂ + 30 % open pores",
-      "matrix": {"material_id": "sio2"},
-      "phases": [{"material_id": "air", "name": "Pores", "shape": "network", "size": {"d": 5, "unit": "nm"},
-                  "fraction": {"value": 30, "basis": "vol"}}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"dielectric": true, "thermal": true, "cte": true, "morphology": true, "porosimetry": true},
-      "options": {"directions": "z", "delta_T": 100, "knudsen": true, "thickness_mm": 0.0003}}},
-
-    {"id": "sinter_ag", "name": "Sintered silver die attach · Ag + 15 % porosity",
-     "description": "Power-module die attach; reduction of thermal and electrical conductivity and stiffness by porosity.",
-     "form": {"name": "Sintered Ag · 15 % porosity",
-      "matrix": {"material_id": "ag"},
-      "phases": [{"material_id": "air", "name": "Pores", "shape": "network", "size": {"d": 0.5, "unit": "um"},
-                  "fraction": {"value": 15, "basis": "vol"}}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"thermal": true, "electrical": true, "cte": true, "morphology": true},
-      "options": {"directions": "z", "delta_T": 100, "thickness_mm": 0.05}}},
-
-    {"id": "eca_ag_flake", "name": "Conductive adhesive · epoxy + Ag flakes 20 vol%",
-     "description": "Oblate spheroids (thickness/diameter 0.15) aligned in plane; in-plane and through-plane percolation are compared.",
-     "form": {"name": "ECA · epoxy + Ag flakes 20 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "ag", "name": "Ag flake", "shape": "spheroid", "size": {"d": 10, "aspect": 0.15, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 20, "basis": "vol"}, "orientation": {"mode": "z", "spread_deg": 15},
-                  "overlap": true}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"electrical": true, "thermal": true, "grains": true, "percolation": true},
-      "options": {"directions": "zx", "thickness_mm": 0.03}}},
-
-    {"id": "emi_ni_rod", "name": "EMI shielding · epoxy + Ni rods 12 vol%",
-     "description": "Magnetic metal rods; electrical percolation and permeability determine the shielding effectiveness.",
-     "form": {"name": "EMI · epoxy + Ni rods 12 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "ni", "name": "Ni rod", "shape": "spherocylinder", "size": {"d": 2, "length": 16, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 12, "basis": "vol"}, "orientation": {"mode": "iso"}, "overlap": true}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"emi": true, "thermal": true, "grains": true},
-      "options": {"directions": "zx", "emi": {"thickness_mm": 1.0, "f_min_hz": 1e6, "f_max_hz": 1e10}}}},
-
-    {"id": "lowdk_hollow", "name": "Low-Dk substrate · PPE + hollow silica 30 vol%",
-     "description": "Hollow silica (0.3 µm shell) lowers Dk; the shell thickness sets the required resolution.",
-     "form": {"name": "Low-Dk · PPE + hollow silica 30 vol%",
-      "matrix": {"material_id": "ppe"},
-      "phases": [{"material_id": "air", "name": "Hollow silica", "shape": "sphere", "size": {"d": 3, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 30, "basis": "vol"}, "orientation": {"mode": "iso"},
-                  "shell": {"enabled": true, "thickness": 0.3, "material_id": "sio2", "name": "SiO₂ shell"}}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"dielectric": true, "thermal": true, "cte": true},
-      "options": {"directions": "z", "delta_T": 100, "thickness_mm": 0.05}}},
-
-    {"id": "nte_epoxy", "name": "Low CTE · epoxy + ZrW₂O₈ 40 vol%",
-     "description": "Negative-thermal-expansion filler lowering the composite CTE (conditions of the NTE study).",
-     "form": {"name": "Low CTE · epoxy + ZrW₂O₈ 40 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "zrw2o8", "name": "ZrW₂O₈", "shape": "sphere", "size": {"d": 500, "unit": "nm"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 40, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"cte": true, "thermal": true},
-      "options": {"directions": "z", "delta_T": 100}}},
-
-    {"id": "highk_batio3", "name": "High-k · epoxy + BaTiO₃ 30 vol%",
-     "description": "Embedded-capacitor dielectric. The ferroelectric filler contrast makes the inter-particle distance govern Dk and the local field enhancement.",
-     "form": {"name": "High-k · epoxy + BaTiO₃ 30 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "batio3", "name": "BaTiO₃", "shape": "sphere", "size": {"d": 0.5, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 30, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"dielectric": true, "grains": true},
-      "options": {"directions": "z", "thickness_mm": 0.01}}},
-
-    {"id": "porous_filter", "name": "Porous ceramic · Al₂O₃ + 35 % porosity (vacuum chuck, filter)",
-     "description": "Porous chuck and filter ceramics: permeability, tortuosity, intrusion porosimetry, pore network, radiative extinction and thermal conductivity in one run.",
-     "form": {"name": "Porous Al₂O₃ · 35 % open pores",
-      "matrix": {"material_id": "al2o3"},
-      "phases": [{"material_id": "air", "name": "Pores", "shape": "network", "size": {"d": 2, "unit": "um"},
-                  "fraction": {"value": 35, "basis": "vol"}}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"permeability": true, "tortuosity": true, "morphology": true, "thermal": true,
-                   "porosimetry": true, "pore_network": true, "radiation": true, "percolation": true},
-      "options": {"directions": "z", "radiation": {"temperature_K": 1000}}}},
-
-    {"id": "ptfe_membrane", "name": "UPW filter membrane · PTFE + 70 % porosity (bubble point)",
-     "description": "Wet-process filter membrane: largest through-pore and isopropanol bubble point, flow resistance, tortuosity and pore network.",
-     "form": {"name": "PTFE membrane · 70 % porosity",
-      "matrix": {"material_id": "ptfe"},
-      "phases": [{"material_id": "air", "name": "Pores", "shape": "network", "size": {"d": 0.2, "unit": "um"},
-                  "fraction": {"value": 70, "basis": "vol"}}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"permeability": true, "tortuosity": true, "porosimetry": true, "pore_network": true,
-                   "morphology": true, "percolation": true},
-      "options": {"directions": "z", "porosimetry": {"fluid": "isopropanol"}, "thickness_mm": 0.05}}},
-
-    {"id": "sus_filter", "name": "Sintered gas filter · SUS316L + 40 % porosity",
-     "description": "Point-of-use gas filter: permeability, pore-entry size, bubble point, filtration efficiency, pore network and thermal conductivity of sintered stainless steel.",
-     "form": {"name": "Sintered SUS316L · 40 % porosity",
-      "matrix": {"material_id": "sus316l"},
-      "phases": [{"material_id": "air", "name": "Pores", "shape": "network", "size": {"d": 5, "unit": "um"},
-                  "fraction": {"value": 40, "basis": "vol"}}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"permeability": true, "filtration": true, "porosimetry": true, "pore_network": true, "thermal": true},
-      "options": {"directions": "z", "porosimetry": {"fluid": "isopropanol"}, "thickness_mm": 2.0}}},
-
-    {"id": "fibre_insulation", "name": "Fibrous insulation · E-glass fibres 8 vol% in air",
-     "description": "Equipment insulation and acoustic lining: fibres lying in the xy plane; thermal conductivity, sound absorption (JCA) and radiative extinction.",
-     "form": {"name": "Glass-fibre insulation · 8 vol%",
-      "matrix": {"material_id": "air"},
-      "phases": [{"material_id": "eglass", "name": "Glass fibre", "shape": "cylinder", "size": {"d": 8, "length": 80, "unit": "um"},
-                  "dist": {"type": "mono"}, "fraction": {"value": 8, "basis": "vol"}, "orientation": {"mode": "xy", "spread_deg": 10},
-                  "overlap": true}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"thermal": true, "acoustics": true, "radiation": true, "morphology": true},
-      "options": {"directions": "xz", "acoustics": {"thickness_mm": 25, "f_min_hz": 100, "f_max_hz": 10000},
-                  "radiation": {"temperature_K": 600}, "thickness_mm": 25}}},
-
-    {"id": "muf_bimodal", "name": "MUF · epoxy + silica 15 + 3 µm 55 vol% (flowability, thermal conductivity)",
-     "description": "Moulded underfill: effective viscosity, flow curve, maximum packing fraction, capillary filling of a 50 µm bump gap and filler settling before cure, and the thermal conductivity of the cured compound. Every input is backed in guide 32.1 (\"Why these input values\"): 55–70 vol% silica in encapsulants, the largest particle at most a third of the gap, a 70/30 bimodal blend; resin, wetting and rate values are representative and marked to be replaced by measurements. Replace the two silica phases with one 5 µm phase to see why the blend flows about twice as easily.",
-     "form": {"name": "MUF · silica 15 + 3 µm 55 vol%",
-      "matrix": {"material_id": "epoxy", "name": "MUF epoxy resin"},
-      "phases": [{"material_id": "sio2", "name": "Silica 15 µm", "shape": "sphere", "size": {"d": 15, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 38.5, "basis": "vol"}, "orientation": {"mode": "iso"}},
-                 {"material_id": "sio2", "name": "Silica 3 µm", "shape": "sphere", "size": {"d": 3, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 16.5, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": false, "L_um": 60, "voxel_um": 0.5, "quality": "fast"},
-      "analyses": {"viscosity": true, "thermal": true},
-      "options": {"directions": "z", "viscosity": {"model": {"type": "carreau", "mu0": 2, "mu_inf": 0.2, "lam": 0.05, "n": 0.6}, "gd_min": 0.1, "gd_max": 1000, "gd_ref": 10, "phi_m_mode": "auto", "friction": "none", "density_resin": 1150, "settle_min": 30, "underfill": {"gap_um": 50, "length_mm": 10, "gamma_mN_m": 35, "theta_deg": 30}}}}},
-
-    {"id": "muf_cured", "name": "MUF · from flow to the cured part (silica 15 + 3 µm 55 vol%, after shear flow)",
-     "description": "The MUF of the viscosity example, cured where its flow leaves it: the packing is sheared in the resin by particle dynamics to a strain of 10 (Domain → Particle arrangement → After shear flow), flow along x and its gradient through z - across the gap the compound fills. The viscosity, flow curve, filling time and settling come from the particle dynamics; thermal conductivity, CTE and modulus, Dk/Df and moisture uptake are solved on that one cured structure (60 µm, 240³ voxels). Computed with touching particles: k 0.596 W/m·K through the gap (0.576 for the random packing it started from), CTE 16.5 ppm/K, E 15.0 GPa, Dk 3.84, Df 0.0068, 0.77 wt% moisture at saturation; the flow raised the close pairs of particles from 1.7 to 3.8 per sphere. The shear takes minutes on an NVIDIA GPU and about 17 minutes on 14 CPU cores; the solves need about 6 GB (the three conduction directions side by side).",
-     "form": {"name": "MUF · cured after shear flow, silica 15 + 3 µm 55 vol%",
-      "matrix": {"material_id": "epoxy", "name": "MUF epoxy resin"},
-      "phases": [{"material_id": "sio2", "name": "Silica 15 µm", "shape": "sphere", "size": {"d": 15, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 38.5, "basis": "vol"}, "orientation": {"mode": "iso"}},
-                 {"material_id": "sio2", "name": "Silica 3 µm", "shape": "sphere", "size": {"d": 3, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 16.5, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": false, "L_um": 60, "voxel_um": 0.25, "quality": "fast", "auto_enlarge": false, "arrangement": "sheared", "shear_strain": 10},
-      "analyses": {"viscosity": true, "thermal": true, "cte": true, "dielectric": true, "moisture": true},
-      "options": {"viscosity": {"model": {"type": "carreau", "mu0": 2, "mu_inf": 0.2, "lam": 0.05, "n": 0.6}, "gd_min": 0.1, "gd_max": 1000, "gd_ref": 10, "phi_m_mode": "auto", "friction": "none", "density_resin": 1150, "settle_min": 30, "underfill": {"gap_um": 50, "length_mm": 10, "gamma_mN_m": 35, "theta_deg": 30}}, "directions": "xyz"}}},
-
-    {"id": "muf_bn_doe", "name": "DOE · MUF Al₂O₃ 250 nm + BN platelet stacks 55 vol% (BN 5–50 % of the filler)",
-     "description": "A study, ready in the DOE tab: 55 vol% filler of 250 nm alumina spheres, 5 to 50 % of which (in steps of 5) is replaced by h-BN as stacks of 4 platelets (2 µm × 300 nm × 4 × 50 nm, rounded edges), lying in the plane of the part (thickness axis within 15° of z). The platelets conduct 300 W/m·K in their plane and 30 through it; through a stack the 4 layers and the 3 plate-plate contacts (1.2e-8 m²K/W) are in series, about 4.7 W/m·K. Filler-resin interface resistance 4.8e-8 and contact resistance 1.2e-8 m²K/W for both fillers. Thermal conductivity (x, y in the plane; z through it) and viscosity of every case (particle dynamics of the RVE's own particles, rigid multi-sphere stacks with the spheres - an NVIDIA GPU is recommended). Every case on one fixed grid, 4 µm at 25 nm voxels (160³). Single 50 nm platelets dispersed among the spheres cannot fill 55 vol% beyond about 5 % BN; as stacks the packing reaches the target size, and after the exact-shape repair the RVE holds 53.5 vol% at 25 % BN (13.0 vol% BN) and 51.1 vol% at 50 % (24.4 vol% BN, a share of 48 %) - each run reports the content it reached.",
-     "form": {"name": "MUF · Al₂O₃ 250 nm + BN platelet stacks 55 vol%",
-      "matrix": {"material_id": "epoxy", "name": "MUF epoxy resin"},
-      "phases": [{"material_id": "al2o3", "name": "Al₂O₃ 250 nm", "shape": "sphere", "size": {"d": 0.25, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 52.25, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 4.8e-08, "r_contact": 1.2e-08},
-                 {"material_id": "hbn_platelet", "name": "BN platelet stacks", "shape": "superellipsoid", "size": {"d": 2.0, "ly": 0.3, "lz": 0.2, "n": 6.0, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 2.75, "basis": "vol"}, "orientation": {"mode": "z", "spread_deg": 15}, "r_int": 4.8e-08, "r_contact": 1.2e-08, "stack_layers": 4}],
-      "rve": {"auto": false, "L_um": 4.0, "voxel_um": 0.025, "auto_enlarge": false, "quality": "standard"},
-      "analyses": {"thermal": true, "viscosity": true},
-      "options": {"directions": "xyz", "viscosity": {"model": {"type": "carreau", "mu0": 2, "mu_inf": 0.2, "lam": 0.05, "n": 0.6}, "gd_min": 0.1, "gd_max": 1000, "gd_ref": 10, "phi_m_mode": "auto", "friction": "none", "density_resin": 1150, "settle_min": 30, "underfill": {"gap_um": 50, "length_mm": 10, "gamma_mN_m": 35, "theta_deg": 30}, "dem": {"strain": 10, "rates": 0}}}},
-     "doe": {"name": "MUF · BN share of the filler 5–50 %", "design": "full", "parameters": [{"path": "mix.1", "label": "BN share of the filler", "unit": "% of filler", "min": 5, "max": 50, "steps": 10, "scale": "lin"}], "edge": "fixed"}},
-
-    {"id": "cal_muf_al2o3", "name": "Calibration · MUF Al₂O₃ 250 nm 55 vol%: interface and contact resistance from k = 1.4 W/m·K",
-     "description": "A calibration, ready in the Calibration tab: a moulded underfill of 250 nm alumina spheres at 55 vol% in the MUF epoxy, measured at 1.4 W/m·K (± 5 %). The unknowns are the filler-resin interfacial resistance R_int and the contact resistance R_c on the faces where the touching particles meet (gap 0), each searched from 1e-10 to 1e-6 m²K/W. Computed on 70³ voxels of 25 nm (14 solves, about 12 s on 18 threads): the contacts carry most of the heat, so this one measurement fixes R_c ≈ 9.4e-9 m²K/W (95 % 8.1e-10 – 2.3e-8) and leaves R_int open - with R_c at 1e-8, R_int from 1e-10 to 1e-8 moves k only from 1.46 to 1.36. A second sample in which the contacts weigh differently, a lower content or another particle size, separates the two. Linking R_c = 2·R_int instead (one unknown) gives R_int = 5.1e-9 (95 % 3.5e-9 – 7.3e-9) from this measurement, with the factor 2 as an assumption; R_int alone, with contacts free of resistance, moves k only from 3.00 to 2.16 and never reaches 1.4. The values are effective ones for this grid, since touching spheres meet over whole voxel faces; compare samples on the same voxel size.",
-     "form": {"name": "MUF · Al₂O₃ 250 nm 55 vol%",
-      "matrix": {"material_id": "epoxy", "name": "MUF epoxy resin"},
-      "phases": [{"material_id": "al2o3", "name": "Al₂O₃ 250 nm", "shape": "sphere", "size": {"d": 0.25, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 55, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 0}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"thermal": true},
-      "options": {"directions": "z"}},
-     "cal": {"name": "MUF · Al₂O₃ 250 nm 55 vol% · R_int and R_c from k = 1.4",
-      "measurements": [{"label": "MUF 55 vol%", "set": [], "property": "k", "direction": "iso", "value": 1.4, "unc": 5}],
-      "unknowns": [{"path": "phases.0.r_int", "label": "Al₂O₃ 250 nm: interfacial resistance R_int", "unit": "m²K/W", "lo": 1e-10, "hi": 1e-6, "scale": "log", "prior": "uniform", "center": "", "sigma_dec": 1},
-                   {"path": "phases.0.r_contact", "label": "Al₂O₃ 250 nm: contact resistance R_c", "unit": "m²K/W", "lo": 1e-10, "hi": 1e-6, "scale": "log", "prior": "uniform", "center": "", "sigma_dec": 1}],
-      "options": {"model_unc": 2, "refine_rounds": 3}}},
-
-    {"id": "emc_reliability", "name": "EMC reliability · epoxy + silica 40 vol% (moisture, swelling, above Tg)",
-     "description": "Moisture diffusivity, saturated uptake, the uptake curve of a 0.5 mm part at 85 °C / 85 % RH and the hygroscopic swelling (CME), together with the CTE and modulus below and above the glass transition (α1 / α2) of a moulding compound (guide chapter 14). Computed with touching particles (the default): 1.125 wt% at saturation, α1 27.2 / α2 61 ppm/K, E 8.90 / 0.33 GPa. Above Tg the touching particles form a rigid skeleton; with a gap between particles of 2 voxels (Structure tab) α2 is 95.5 ppm/K and the hot modulus 0.126 GPa (guide 14.5).",
-     "form": {"name": "EMC · epoxy + silica 40 vol% (reliability)",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 4, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 40, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": false, "L_um": 28.5, "voxel_um": 0.285, "quality": "standard"},
-      "analyses": {"cte": true, "moisture": true},
-      "options": {"directions": "z", "above_tg": true, "moisture": {"thickness_mm": 0.5, "hours": 168, "sides": "both"}}}},
-    {"id": "dense_overlap", "name": "Highly filled · epoxy + silica 66 vol%, one size (above random close packing: progressive overlap)",
-     "description": "66 vol% of equal silica spheres, above the random close packing of equal spheres (about 64 %): no arrangement without overlap reaches it. With progressive overlap (Structure → Gap between particles, on by default) the packing is made again with an overlap of 1 voxel allowed, then 2, two tries at each step, until the content is reached; the RVE checks report the overlap the structure needed. Untick it to see the earlier behaviour: every sphere drawn smaller until they fit, and the content short of the target.",
-     "form": {"name": "Epoxy + silica 66 vol% (progressive overlap)", "matrix": {"material_id": "epoxy"}, "phases": [{"material_id": "sio2", "name": "Silica 5 µm", "shape": "sphere", "size": {"d": 5, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 66, "basis": "vol"}, "orientation": {"mode": "iso"}}], "rve": {"auto": false, "L_um": 35, "voxel_um": 0.5, "quality": "standard", "auto_enlarge": false}, "analyses": {"thermal": true}, "options": {"directions": "z", "overlap_steps": {"on": true, "tries": 2, "max_vox": 3, "share": "none"}}}},
-
-    {"id": "film_pi_bn", "name": "Thin film · polyimide + h-BN platelets 25 vol%, 15 µm",
-     "description": "A 15 µm film: x and y periodic, z the real thickness, every platelet inside the film. The platelets lie in the plane, so the in-plane thermal conductivity is about 2.5 times the through-plane value that a heat-spreading film is judged by (0.71 against 0.29 W/m·K; guide 6.5).",
-     "form": {"name": "Film · polyimide + h-BN 25 vol%, 15 µm",
-      "matrix": {"material_id": "polyimide"},
-      "phases": [{"material_id": "hbn", "name": "h-BN platelet", "shape": "spheroid", "size": {"d": 6, "aspect": 0.25, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 25, "basis": "vol"}, "orientation": {"mode": "z", "spread_deg": 10}}],
-      "rve": {"auto": true, "quality": "standard", "film": true, "T_um": 15},
-      "analyses": {"thermal": true, "dielectric": true},
-      "options": {"directions": "zx", "thickness_mm": 0.015}}},
-
-    {"id": "nss_sendust", "name": "Noise-suppression sheet · epoxy + Sendust flakes 25 vol% (permeability)",
-     "description": "Flat magnetic flakes lying in the plane of the sheet: the in-plane permeability is nearly three times the through-plane value (μr 5.55 against 1.95), because the flux crosses fewer resin gaps (guide chapter 10). Compare with spheres of the same content.",
-     "form": {"name": "Sheet · epoxy + Sendust flakes 25 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "sendust", "name": "Sendust flake", "shape": "spheroid", "size": {"d": 10, "aspect": 0.2, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 25, "basis": "vol"}, "orientation": {"mode": "z", "spread_deg": 10}}],
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"magnetic": true, "grains": true},
-      "options": {"directions": "zx", "thickness_mm": 0.1}}},
-
-    {"id": "tim_hybrid", "name": "Hybrid TIM · silicone + Al₂O₃ 10 µm + AlN 3 µm 55 vol% (blend, contacts)",
-     "description": "Two fillers of different size and material: the small AlN fills the gaps between the large Al₂O₃. Each filler has its own interfacial resistance, and the contact resistance between the two fillers is set separately (Structure tab). Particles may touch, as in a real gap filler; Fast quality keeps the run short - use Standard for values to report.",
-     "form": {"name": "Hybrid TIM · Al₂O₃ 10 µm + AlN 3 µm",
-      "matrix": {"material_id": "silicone"},
-      "phases": [{"material_id": "al2o3", "name": "Al₂O₃ 10 µm", "shape": "sphere", "size": {"d": 10, "unit": "um"}, "dist": {"type": "lognormal", "std": 2.0}, "fraction": {"value": 40, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 1e-08, "r_contact": 2e-08},
-                 {"material_id": "aln", "name": "AlN 3 µm", "shape": "sphere", "size": {"d": 3, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 15, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 1e-08, "r_contact": 2e-08}],
-      "contact_rc": {"0-1": 3e-08},
-      "rve": {"auto": true, "quality": "fast"},
-      "analyses": {"thermal": true, "grains": true, "percolation": true},
-      "options": {"directions": "z", "thickness_mm": 0.2}}},
-    {"id": "stat_rve_tim", "name": "Statistical RVE · TIM silicone + Al₂O₃ 50 vol%: small boxes until the mean settles",
-     "description": "An RVE too large to solve, replaced by small boxes: the gap filler is solved on a 60 µm box of 10 µm alumina (six diameters, below the Standard level's seven), again and again with a new random arrangement, until the 95 % confidence interval of the mean conductivity is within 2 % (at least 3, at most 40 realisations; Domain → Realisations → Until the mean settles). Kanit et al. (Int. J. Solids Struct. 40 (2003) 3647, doi:10.1016/S0020-7683(03)00143-4) showed that the mean over enough small volumes gives the effective property, provided the volume is not so small that it biases the mean. It settles within 2 % after 20 realisations (52 s on 18 threads). The RVE checks report the realisations used, their scatter and how many a ±1 % interval would need. A box of four diameters would scatter by 7.2 % and, worse, its mean lies 9 % low - biased; from six diameters on the means agree (guide 6.7). Run the compound once at a larger RVE to confirm.",
-     "form": {"name": "Statistical RVE · TIM silicone + Al₂O₃ 50 vol%", "matrix": {"material_id": "silicone"}, "phases": [{"material_id": "al2o3", "name": "Al₂O₃", "shape": "sphere", "size": {"d": 10, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 50, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 1e-08}], "rve": {"auto": false, "L_um": 60, "voxel_um": 1.0, "quality": "fast", "auto_enlarge": false, "realisations": {"mode": "settle", "target_pct": 2, "n_min": 3, "n_max": 40}}, "analyses": {"thermal": true}, "options": {"directions": "z", "thickness_mm": 0.2}}},
-    {"id": "cu_diamond", "name": "Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement)",
-     "description": "Cu/diamond for high-power, GaN and SiC devices. Wang et al. (Materials 18 (2025) 3882, doi:10.3390/ma18163882) hot-pressed 400 µm diamond (1717 W/m·K) at 50 vol% in Cu (385 W/m·K) with a 200 nm W coating and measured 640 W/m·K. The RVE gives 646 W/m·K with an interface conductance of 12.5 MW/m²K (R_int 8e-8 m²K/W; touching diamonds 1.6e-7) - what the measurement says about the bonded interface. The 36-56 MW/m²K the paper estimates from effective-medium models give 749-777 W/m·K here, and a differential effective medium with the same inputs 775: the difference lies in the model's assumptions, not in the solve. The Calibration tab finds R_int from a measurement of your own.",
-     "form": {"name": "Cu/diamond · 50 vol% 400 µm",
-      "matrix": {"material_id": "cu", "props": {"k": 385.0, "sigma": 59600000.0, "eps_r": 1.0, "tan_d": 0.0, "mu_r": 1.0, "E": 120.0, "nu": 0.34, "alpha": 16.5, "rho": 8.96, "cp": 385}},
-      "phases": [{"material_id": "diamond_grit", "name": "Diamond 400 µm", "shape": "polyhedron", "size": {"d": 580, "poly": "octahedron", "unit": "um"}, "dist": {"type": "lognormal", "std": 87.0}, "fraction": {"value": 50, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 8e-08, "r_contact": 1.6e-07}],
-      "rve": {"auto": true, "quality": "standard"},
-      "analyses": {"thermal": true, "cte": true},
-      "options": {"directions": "z", "delta_T": 100, "thickness_mm": 1.0}}},
-    {"id": "alsic_baseplate", "name": "Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC)",
-     "description": "AlSiC for IGBT and SiC module baseplates and lids: a CTE near the ceramic substrate with the conductivity of aluminium. Guo et al. (J. Univ. Sci. Technol. Beijing 36 (2014) 489-495, doi:10.13374/j.issn1001-053x.2014.04.011; tabulated in Lai et al., Micromachines 14 (2023) 1491, Table 2) measured pseudo-semi-solid thixoformed SiCp/Al at 63 vol%: 178 W/m·K and 8.21 ppm/K (56 vol%: 176 W/m·K, 9.25 ppm/K); this case gives 189 W/m·K and 8.85 ppm/K (+6 %, +8 %). Bimodal SiC grit (60 + 20 µm, 3:1) as needed for such loadings, Al/SiC interface 1e-8 m²K/W, one fixed grid of 140³.",
-     "form": {"name": "AlSiC · SiC 63 vol%",
-      "matrix": {"material_id": "a356"},
-      "phases": [{"material_id": "sic_grit", "name": "SiC 60 µm", "shape": "sphere", "size": {"d": 60, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 47.25, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 1e-08},
-                 {"material_id": "sic_grit", "name": "SiC 20 µm", "shape": "sphere", "size": {"d": 20, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 15.75, "basis": "vol"}, "orientation": {"mode": "iso"}, "r_int": 1e-08}],
-      "rve": {"auto": false, "L_um": 420, "voxel_um": 3.0, "quality": "standard", "auto_enlarge": false},
-      "analyses": {"thermal": true, "cte": true},
-      "options": {"directions": "z", "delta_T": 100, "thickness_mm": 3.0}}},
-    {"id": "ptfe_silica_5g", "name": "mmWave substrate · PTFE + fused silica 60 wt%",
-     "description": "PTFE-silica laminate for 5G/6G antennas and RF front ends: silica brings the CTE of PTFE towards copper and keeps Dk near 3. Murali et al. (Composites Part A 40 (2009) 1179-1185, doi:10.1016/j.compositesa.2009.05.007) report Dk 2.9 and tan δ 0.0024 at X band for PTFE with 60 wt% micron silica; this case gives Dk 3.01. The loss of a real laminate comes from interfaces, moisture and voids that a mixture of perfect PTFE and silica does not have (here tan δ 0.0001): read the computed tan δ as the lower limit.",
-     "form": {"name": "PTFE + SiO₂ 60 wt%",
-      "matrix": {"material_id": "ptfe"},
-      "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 10, "unit": "um"}, "dist": {"type": "lognormal", "std": 2.5}, "fraction": {"value": 60, "basis": "wt"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": false, "L_um": 140, "voxel_um": 1.0, "quality": "standard", "auto_enlarge": false},
-      "analyses": {"dielectric": true, "cte": true, "thermal": true},
-      "options": {"directions": "z", "delta_T": 100, "thickness_mm": 0.127}}},
-    {"id": "pcb_thermal_vias", "name": "PCB thermal vias · FR-4 with Cu-plated vias (0.3 mm, 1 mm pitch)",
-     "description": "The thermal pad of a QFN or power package sits on plated through-holes: 0.3 mm drill, 25 µm Cu plating, 1 mm pitch, 1.6 mm board. Each via is drawn as a copper rod with the cross-section of its plating (0.166 mm). Through the board the vias are parallel paths: k_z 9.3 W/m·K, the area-weighted mean of the drawn copper (2.24 %) and the FR-4 exactly - 32 times the laminate's 0.29; in the plane 0.85 (FR-4 0.81). That equality is a check of the solver against the exact solution for straight vias, not a measurement: a real board adds the pads and copper planes that spread the heat. A thin-film domain of the board thickness, so that the vias span it; change the content (the pitch) or the rod diameter (the plating) for the trade-off.",
-     "form": {"name": "FR-4 + thermal vias",
-      "matrix": {"material_id": "fr4"},
-      "phases": [{"material_id": "cu", "name": "Via plating (Cu)", "shape": "cylinder", "size": {"d": 0.166, "length": 1.6, "unit": "mm"}, "dist": {"type": "mono"}, "fraction": {"value": 2.16, "basis": "vol"}, "orientation": {"mode": "z", "spread_deg": 0}}],
-      "rve": {"auto": false, "film": true, "L_um": 5000, "T_um": 1600, "voxel_um": 20.0, "skin_um": 0, "quality": "fast", "auto_enlarge": false},
-      "analyses": {"thermal": true},
-      "options": {"directions": "zx", "thickness_mm": 1.6}}},
-    {"id": "glass_core_tgv", "name": "Glass core substrate · Cu-filled TGVs (50 µm, 150 µm pitch)",
-     "description": "Glass core substrates for large AI and HPC packages: a low-CTE glass core with copper-filled through-glass vias. Through the core the vias are parallel paths: k_z 36.0 W/m·K, the area-weighted mean of copper (8.7 %) and glass exactly - a check of the solver against the exact solution for straight vias; in the plane 1.32 W/m·K (the 2D Maxwell value 1.31). The CTE of the core rises from the 3.2 ppm/K of the glass with the copper - the warpage budget of the package. A thin-film domain of the core thickness: the vias span it.",
-     "form": {"name": "Glass core + Cu TGV",
-      "matrix": {"material_id": "glass_core"},
-      "phases": [{"material_id": "cu", "name": "Cu TGV", "shape": "cylinder", "size": {"d": 50, "length": 300, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 8.73, "basis": "vol"}, "orientation": {"mode": "z", "spread_deg": 0}}],
-      "rve": {"auto": false, "film": true, "L_um": 900, "T_um": 300, "voxel_um": 5.0, "skin_um": 0, "quality": "fast", "auto_enlarge": false},
-      "analyses": {"thermal": true, "cte": true},
-      "options": {"directions": "zx", "delta_T": 100, "thickness_mm": 0.3}}},
-    {"id": "solder_voids", "name": "Die-attach solder · SAC305 with 15 % voids",
-     "description": "X-ray inspection limits voiding in solder die attach to a few to 25 %. The voids are insulating spheres: this case gives 76.9 % of the dense conductivity at 15 %, below 2(1 - φ)/(2 + φ) = 79.1 %, Maxwell's upper bound for insulating spheres (a consistency check, not a measurement; a real joint adds the shape and place of its voids); the thermal resistance of the joint rises by the inverse. Vary the void content in the DOE tab for the resistance-voiding curve.",
-     "form": {"name": "SAC305 + 15 % voids",
-      "matrix": {"material_id": "sac305"},
-      "phases": [{"material_id": "air", "name": "Voids", "shape": "sphere", "size": {"d": 25, "unit": "um"}, "dist": {"type": "lognormal", "std": 7.5}, "fraction": {"value": 15, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": false, "L_um": 420, "voxel_um": 2.0, "quality": "standard", "auto_enlarge": false},
-      "analyses": {"thermal": true, "electrical": true},
-      "options": {"directions": "z", "thickness_mm": 0.08}}},
-    {"id": "inductor_cip", "name": "Package-level power inductor · epoxy + carbonyl iron 54 vol%",
-     "description": "Magnetic core of a planar inductor for package-level power delivery. Sugawa et al. (IEEE Trans. Magn. 49 (2013) 4172-4175, doi:10.1109/TMAG.2013.2250925) report μr 7.5 for a screen-printed 54 vol% carbonyl-iron/epoxy core; spheres of iron (μr 50) in this case, touching where they meet, give 5.98. The resin gaps between the particles, not the iron, set the permeability: a printed paste has particle chains and agglomerates along which the flux crosses fewer gaps - try a higher content, flake-like particles or permitted overlap to see how fast μr rises.",
-     "form": {"name": "Epoxy + carbonyl iron 54 vol%",
-      "matrix": {"material_id": "epoxy"},
-      "phases": [{"material_id": "carbonyl_iron", "name": "Carbonyl iron", "shape": "sphere", "size": {"d": 4.4, "unit": "um"}, "dist": {"type": "lognormal", "std": 1.76}, "fraction": {"value": 54, "basis": "vol"}, "orientation": {"mode": "iso"}}],
-      "rve": {"auto": false, "L_um": 50, "voxel_um": 0.3, "quality": "standard", "auto_enlarge": false},
-      "analyses": {"magnetic": true, "thermal": true},
-      "options": {"directions": "z", "thickness_mm": 0.05}}},
-    {"id": "mechtest_emc", "name": "EMC · compression test (epoxy + silica 50 vol%)",
-     "description": "A compression test of a moulding compound as a universal testing machine runs it: a specimen 10 mm long with 10 mm² loaded to 100 MPa along z, sides free, and a matrix strength of 120 MPa entered as an input. The load runs through the effective stiffness of the RVE (elasticity is computed with it) and one more FANS solve gives the stress fields (guide 12.8). Computed on 70³ voxels of 0.5 µm (5 µm silica, 14 s on 18 threads): apparent modulus 14.29 GPa (Hill E 14.08 GPa), 1000 N for a shortening of 70.0 µm, Poisson's ratio 0.234 / 0.239; the most stressed 0.1 % of the epoxy reaches 120 MPa at 1033 N (103 MPa applied), the estimated onset of yielding between the particles. Linear elastic: tension gives the same line with the opposite sign.",
-     "form": {"name": "EMC · compression test (epoxy + silica 50 vol%)", "matrix": {"material_id": "epoxy", "name": "Epoxy"}, "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 5, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 50, "basis": "vol"}, "orientation": {"mode": "iso"}}], "rve": {"auto": false, "L_um": 35, "voxel_um": 0.5, "quality": "standard"}, "analyses": {"mechtest": true}, "options": {"directions": "z", "mechtest": {"mode": "compression", "axis": "z", "lateral": "free", "control": "pressure", "value": 100, "area_mm2": 10, "length_mm": 10, "strength_MPa": 120}}}},
-    {"id": "press_closed_mould", "name": "Compression · closed mould: epoxy + silica 30 vol% with 10 % voids, sides held",
-     "description": "A compound with trapped voids pressed in a closed mould: the RVE is shortened by 8 % along z with x and y held, so the volume lost must come from the voids. They close while the resin (1 Pa·s) flows around the rigid silica - three-dimensional creeping flow on the voxels, the voids a compressible gas, material markers for the resin (guide 5.5). Computed on 70³ voxels of 0.5 µm (206 s): voids 10.0 → 2.25 vol% (2.15 from the volume lost alone), the resin 60.0 → 65.0 % of the box, axial stress 70 Pa at 1 1/s, and k_z of the pressed part 0.369 W/m·K. Result Viewer → Compression replays the voids shrinking step by step in 3D.",
-     "form": {"name": "Compression · closed mould: epoxy + silica 30 vol% with 10 % voids, sides held", "matrix": {"material_id": "epoxy", "name": "Epoxy"}, "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 5, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 30, "basis": "vol"}, "orientation": {"mode": "iso"}}, {"material_id": "air", "name": "Voids", "shape": "sphere", "size": {"d": 5, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 10, "basis": "vol"}, "orientation": {"mode": "iso"}}], "rve": {"auto": false, "L_um": 35, "voxel_um": 0.5, "quality": "standard", "arrangement": "pressed", "press_compression": 8, "press_rate": 1, "press_lateral": "none"}, "analyses": {"thermal": true}, "options": {"directions": "z"}}},
-    {"id": "press_two_resins", "name": "Compression · two resins side by side, sides free (resin + silica 40 vol% beside a neat resin)",
-     "description": "A neat resin beside a resin filled with 40 vol% silica, each in one half of the box along x, compressed by 30 % along z with the sides free. Both resins flow at 1 Pa·s; the rigid particles stiffen the filled half, so the neat half spreads more (guide 5.5). Computed on 70³ voxels of 0.5 µm (109 s): the box goes from 35³ µm to 43.5 × 40.5 × 24.5 µm, the neat half strains +0.237 along x and the filled half +0.188, and the resin between the particles takes -0.564 along z where its half as a whole takes -0.354. Axial stress 58 Pa at 1 1/s; k_z after the compression 0.333 W/m·K. Each resin keeps its volume share (0.500 → 0.502, 0.300 → 0.299).",
-     "form": {"name": "Compression · two resins side by side, sides free (resin + silica 40 vol% beside a neat resin)", "matrix": {"material_id": "epoxy", "name": "Neat resin"}, "matrix_regions": [{"name": "Filled resin", "material_id": "epoxy", "mu_pas": 1.0, "section": {"mode": "section", "axis": "x", "from": 50, "to": 100}}], "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 5, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 40, "basis": "vol"}, "orientation": {"mode": "iso"}, "section": {"mode": "section", "axis": "x", "from": 50, "to": 100}}], "rve": {"auto": false, "L_um": 35, "voxel_um": 0.5, "quality": "standard", "arrangement": "pressed", "press_compression": 30, "press_rate": 1, "press_lateral": "xy"}, "analyses": {"thermal": true}, "options": {"directions": "z"}}},
-    {"id": "muf_cure_press", "name": "Cure–flow · MUF pressed at 175 °C while it cures (silica 40 vol%, 1 %/s closing)",
-     "description": "A moulded underfill pressed at 1 %/s (a strain rate of 0.01 1/s) in a mould at 175 °C while its epoxy cures: Kamal-Sourour kinetics of an EMC from DSC (E1 67.91 / E2 67.34 kJ/mol, log A1 5.65 / A2 6.48, m 1.09, n 1.06; Franieck et al., Polymers 13 (2021) 1734, doi:10.3390/polym13111734) and the Castro-Macosko viscosity rising to the gel point (α_g 0.71, A -0.18, B 4.22; measured on a neat epoxy, not an EMC: Romberg et al., ACS Appl. Polym. Mater. 6 (2024), doi:10.1021/acsapm.4c00607). The mould asks for 55 %. Computed on 70³ voxels of 0.5 µm (230 s, 20 steps): the axial stress rises from 0.95 Pa (α 0) to 14 Pa at 38 % (α 0.47, 48 s), 114 Pa at 44 % (α 0.59, 58 s) and 2847 Pa at 47.8 % (α 0.67, 65 s); the compound gels at 69.2 s with the mould closed by 49.9 %. The RVE stays within 0.66 K of the mould (heat of reaction 177 J/g of resin, exchange time 0.32 s for a 1 mm part). A faster closing or a cooler mould lets it close before the gel point (guide 5.5).",
-     "form": {"name": "Cure–flow · MUF pressed at 175 °C while it cures (silica 40 vol%, 1 %/s closing)", "matrix": {"material_id": "epoxy", "name": "MUF epoxy"}, "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 5, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 40, "basis": "vol"}, "orientation": {"mode": "iso"}}], "rve": {"auto": false, "L_um": 35, "voxel_um": 0.5, "quality": "standard", "arrangement": "pressed", "press_compression": 55, "press_rate": 0.01, "press_lateral": "xy", "press_cure": true, "press_mold_C": 175, "press_control": "rate", "press_stress_Pa": 100, "press_part_mm": 1.0, "press_time_s": 600}, "analyses": {"thermal": true}, "options": {"directions": "z", "viscosity": {"model": {"type": "newtonian", "mu": 2.0}}}}},
-    {"id": "warpage_muf_die", "name": "Thermal stress and warpage · MUF 300 µm on a Si die in operation (die 125 °C, top 95 °C)",
-     "description": "A 300 µm moulded underfill (silica 8 µm, 50 vol%) on a 300 µm Si die in operation: the die side at 125 °C, the top at 95 °C, stress-free at the cure temperature of 175 °C (guide 12.9). Heat flows through the film with the conductivities of the thermal analysis; every voxel takes the thermal strain of its own temperature; classical laminate theory releases the film bonded to the die. Computed on 70 × 70 × 375 voxels of 0.8 µm (168 s): 51.4 kW/m² through the film (k_z 0.514 W/m·K), κ -1.03 1/m, warpage -12.89 µm over 10 mm (edges up; -11.97 µm at the uniform mean temperature, so the gradient adds -0.92 µm), the die at -36.9 MPa on its top face and +26.5 MPa at its bottom; in the epoxy the largest principal stress reaches 27.2 MPa and the peeling stress 25.9 MPa (99.9th percentiles), in the silica the von Mises stress 160 MPa. Elastic: no relaxation, no cure shrinkage.",
-     "form": {"name": "Thermal stress and warpage · MUF 300 µm on a Si die in operation (die 125 °C, top 95 °C)", "matrix": {"material_id": "epoxy", "name": "MUF epoxy"}, "phases": [{"material_id": "sio2", "name": "Fused silica", "shape": "sphere", "size": {"d": 8, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 50, "basis": "vol"}, "orientation": {"mode": "iso"}}], "rve": {"auto": false, "L_um": 56, "voxel_um": 0.8, "quality": "standard", "film": true, "T_um": 300}, "analyses": {"thermomech": true}, "options": {"directions": "z", "thermomech": {"T_ref": 175, "T_bottom": 125, "T_top": 95, "support": "substrate", "substrate": {"material_id": "si", "thickness_um": 300}, "span_mm": 10, "compare_uniform": true}}}},
-    {"id": "joule_eca_joint", "name": "Joule heating · Ag-filled adhesive joint 25 µm, current up to thermal runaway",
-     "description": "A silver-filled conductive adhesive joint 25 µm thick (5 µm Ag spheres, 45 vol%, touching the electrodes: no matrix skin) carrying a rising current density. The silver's resistance rises with temperature (TCR 0.0038 1/K, from the resistivity of Ag at 293 and 400 K in Matula, J. Phys. Chem. Ref. Data 8 (1979) 1147, doi:10.1063/1.555614), and the joint's path to ambient is a thermal resistance of 1e-4 K·m²/W (guide 8.8). Computed on 70 × 70 × 50 voxels of 0.5 µm (81 s): 0.95 MS/m through the joint at 5e7 A/m² (31.6 °C); 2.5e8 A/m² settles at 426 °C with the conductivity fallen to 0.39 MS/m, the film itself only 1.7 K above its faces - the path to ambient sets the temperature; at 3e8 A/m² the steady state lies above 1000 °C (1697 °C extrapolated) and the sweep stops. As one resistor the joint has a TCR of 0.0038 1/K and 25 µΩ·mm² at 20 °C, so a set current runs away above J ≈ 1/√(TCR·R20·R_th) = 3.2e8 A/m². Touching particles conduct across whole voxel faces (no electrical contact resistance): the conductivity is that of ideal contacts.",
-     "form": {"name": "Joule heating · Ag-filled adhesive joint 25 µm, current up to thermal runaway", "matrix": {"material_id": "epoxy", "name": "Epoxy"}, "phases": [{"material_id": "ag", "name": "Silver", "shape": "sphere", "size": {"d": 5, "unit": "um"}, "dist": {"type": "mono"}, "fraction": {"value": 45, "basis": "vol"}, "orientation": {"mode": "iso"}}], "rve": {"auto": false, "L_um": 35, "voxel_um": 0.5, "quality": "standard", "film": true, "T_um": 25, "skin_um": 0}, "analyses": {"joule": true}, "options": {"directions": "z", "joule": {"control": "current", "values": "5e7, 1e8, 1.5e8, 2e8, 2.5e8, 3e8", "T_amb": 25, "R_th": 0.0001}}}}
-  ]
+ "schema": "mpsim.presets/1",
+ "presets": [
+  {
+   "id": "emc_silica",
+   "name": "EMC · epoxy + fused silica 50 vol%",
+   "description": "Semiconductor mould compound. Spherical silica with a log-normal size distribution governs the CTE and the thermal conductivity.",
+   "form": {
+    "name": "EMC · epoxy + SiO₂ 50 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 20,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 5.0
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true,
+     "cte": true,
+     "dielectric": true,
+     "morphology": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100
+    }
+   }
+  },
+  {
+   "id": "underfill",
+   "name": "Underfill · epoxy + SiO₂ 40 vol% (1 µm)",
+   "description": "Flip-chip underfill; the objective is CTE matching with the solder bumps.",
+   "form": {
+    "name": "Underfill · epoxy + SiO₂ 40 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "SiO₂",
+      "shape": "sphere",
+      "size": {
+       "d": 1,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true,
+     "cte": true,
+     "dielectric": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100
+    }
+   }
+  },
+  {
+   "id": "tim_al2o3",
+   "name": "TIM · silicone + Al₂O₃ 50 vol% with interfacial resistance",
+   "description": "Thermal gap filler. The interfacial (Kapitza) resistance introduces a filler-size effect.",
+   "form": {
+    "name": "TIM · silicone + Al₂O₃ 50 vol%",
+    "matrix": {
+     "material_id": "silicone"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Al₂O₃",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 1.25
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z",
+     "thickness_mm": 0.2
+    }
+   }
+  },
+  {
+   "id": "tim_aln",
+   "name": "TIM · epoxy + AlN 40 vol%",
+   "description": "High-conductivity epoxy composite. With the large filler contrast, the resin films and the contacts between particles govern k.",
+   "form": {
+    "name": "TIM · epoxy + AlN 40 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "aln",
+      "name": "AlN",
+      "shape": "sphere",
+      "size": {
+       "d": 1,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true,
+     "cte": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100,
+     "thickness_mm": 0.1
+    }
+   }
+  },
+  {
+   "id": "bn_sheet",
+   "name": "Thermal sheet · silicone + h-BN platelets 25 vol% (in-plane aligned)",
+   "description": "Platelets lying in the xy plane produce very different in-plane and through-plane conductivities.",
+   "form": {
+    "name": "Silicone + h-BN platelets 25 vol%",
+    "matrix": {
+     "material_id": "silicone"
+    },
+    "phases": [
+     {
+      "material_id": "hbn",
+      "name": "h-BN platelet",
+      "shape": "spheroid",
+      "size": {
+       "d": 12,
+       "aspect": 0.15,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 25,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 10
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "thermal": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "zx",
+     "thickness_mm": 0.3
+    }
+   }
+  },
+  {
+   "id": "lowk_porous",
+   "name": "Porous low-k film · SiO₂ + 30 % connected porosity",
+   "description": "Mesoporous silica low-k dielectric; permittivity, stiffness, thermal conductivity with rarefied gas in the nanopores, and the pore-entry size distribution.",
+   "form": {
+    "name": "Porous low-k · SiO₂ + 30 % open pores",
+    "matrix": {
+     "material_id": "sio2"
+    },
+    "phases": [
+     {
+      "material_id": "air",
+      "name": "Pores",
+      "shape": "network",
+      "size": {
+       "d": 5,
+       "unit": "nm"
+      },
+      "fraction": {
+       "value": 30,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "dielectric": true,
+     "thermal": true,
+     "cte": true,
+     "morphology": true,
+     "porosimetry": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100,
+     "knudsen": true,
+     "thickness_mm": 0.0003
+    }
+   }
+  },
+  {
+   "id": "sinter_ag",
+   "name": "Sintered silver die attach · Ag + 15 % porosity",
+   "description": "Power-module die attach; reduction of thermal and electrical conductivity and stiffness by porosity.",
+   "form": {
+    "name": "Sintered Ag · 15 % porosity",
+    "matrix": {
+     "material_id": "ag"
+    },
+    "phases": [
+     {
+      "material_id": "air",
+      "name": "Pores",
+      "shape": "network",
+      "size": {
+       "d": 0.5,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 15,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true,
+     "electrical": true,
+     "cte": true,
+     "morphology": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100,
+     "thickness_mm": 0.05
+    }
+   }
+  },
+  {
+   "id": "eca_ag_flake",
+   "name": "Conductive adhesive · epoxy + Ag flakes 20 vol%",
+   "description": "Oblate spheroids (thickness/diameter 0.15) aligned in plane; in-plane and through-plane percolation are compared.",
+   "form": {
+    "name": "ECA · epoxy + Ag flakes 20 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "ag",
+      "name": "Ag flake",
+      "shape": "spheroid",
+      "size": {
+       "d": 10,
+       "aspect": 0.15,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 20,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 15
+      },
+      "overlap": true
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "electrical": true,
+     "thermal": true,
+     "grains": true,
+     "percolation": true
+    },
+    "options": {
+     "directions": "zx",
+     "thickness_mm": 0.03
+    }
+   }
+  },
+  {
+   "id": "emi_ni_rod",
+   "name": "EMI shielding · epoxy + Ni rods 12 vol%",
+   "description": "Magnetic metal rods; electrical percolation and permeability determine the shielding effectiveness.",
+   "form": {
+    "name": "EMI · epoxy + Ni rods 12 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "ni",
+      "name": "Ni rod",
+      "shape": "spherocylinder",
+      "size": {
+       "d": 2,
+       "length": 16,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 12,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "overlap": true
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "emi": true,
+     "thermal": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "zx",
+     "emi": {
+      "thickness_mm": 1.0,
+      "f_min_hz": 1000000.0,
+      "f_max_hz": 10000000000.0
+     }
+    }
+   }
+  },
+  {
+   "id": "lowdk_hollow",
+   "name": "Low-Dk substrate · PPE + hollow silica 30 vol%",
+   "description": "Hollow silica (0.3 µm shell) lowers Dk; the shell thickness sets the required resolution.",
+   "form": {
+    "name": "Low-Dk · PPE + hollow silica 30 vol%",
+    "matrix": {
+     "material_id": "ppe"
+    },
+    "phases": [
+     {
+      "material_id": "air",
+      "name": "Hollow silica",
+      "shape": "sphere",
+      "size": {
+       "d": 3,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 30,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "shell": {
+       "enabled": true,
+       "thickness": 0.3,
+       "material_id": "sio2",
+       "name": "SiO₂ shell"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "dielectric": true,
+     "thermal": true,
+     "cte": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100,
+     "thickness_mm": 0.05
+    }
+   }
+  },
+  {
+   "id": "nte_epoxy",
+   "name": "Low CTE · epoxy + ZrW₂O₈ 40 vol%",
+   "description": "Negative-thermal-expansion filler lowering the composite CTE (conditions of the NTE study).",
+   "form": {
+    "name": "Low CTE · epoxy + ZrW₂O₈ 40 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "zrw2o8",
+      "name": "ZrW₂O₈",
+      "shape": "sphere",
+      "size": {
+       "d": 500,
+       "unit": "nm"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "cte": true,
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100
+    }
+   }
+  },
+  {
+   "id": "highk_batio3",
+   "name": "High-k · epoxy + BaTiO₃ 30 vol%",
+   "description": "Embedded-capacitor dielectric. The ferroelectric filler contrast makes the inter-particle distance govern Dk and the local field enhancement.",
+   "form": {
+    "name": "High-k · epoxy + BaTiO₃ 30 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "batio3",
+      "name": "BaTiO₃",
+      "shape": "sphere",
+      "size": {
+       "d": 0.5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 30,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "dielectric": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z",
+     "thickness_mm": 0.01
+    }
+   }
+  },
+  {
+   "id": "porous_filter",
+   "name": "Porous ceramic · Al₂O₃ + 35 % porosity (vacuum chuck, filter)",
+   "description": "Porous chuck and filter ceramics: permeability, tortuosity, intrusion porosimetry, pore network, radiative extinction and thermal conductivity in one run.",
+   "form": {
+    "name": "Porous Al₂O₃ · 35 % open pores",
+    "matrix": {
+     "material_id": "al2o3"
+    },
+    "phases": [
+     {
+      "material_id": "air",
+      "name": "Pores",
+      "shape": "network",
+      "size": {
+       "d": 2,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 35,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "permeability": true,
+     "tortuosity": true,
+     "morphology": true,
+     "thermal": true,
+     "porosimetry": true,
+     "pore_network": true,
+     "radiation": true,
+     "percolation": true
+    },
+    "options": {
+     "directions": "z",
+     "radiation": {
+      "temperature_K": 1000
+     }
+    }
+   }
+  },
+  {
+   "id": "ptfe_membrane",
+   "name": "UPW filter membrane · PTFE + 70 % porosity (bubble point)",
+   "description": "Wet-process filter membrane: largest through-pore and isopropanol bubble point, flow resistance, tortuosity and pore network.",
+   "form": {
+    "name": "PTFE membrane · 70 % porosity",
+    "matrix": {
+     "material_id": "ptfe"
+    },
+    "phases": [
+     {
+      "material_id": "air",
+      "name": "Pores",
+      "shape": "network",
+      "size": {
+       "d": 0.2,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 70,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "permeability": true,
+     "tortuosity": true,
+     "porosimetry": true,
+     "pore_network": true,
+     "morphology": true,
+     "percolation": true
+    },
+    "options": {
+     "directions": "z",
+     "porosimetry": {
+      "fluid": "isopropanol"
+     },
+     "thickness_mm": 0.05
+    }
+   }
+  },
+  {
+   "id": "sus_filter",
+   "name": "Sintered gas filter · SUS316L + 40 % porosity",
+   "description": "Point-of-use gas filter: permeability, pore-entry size, bubble point, filtration efficiency, pore network and thermal conductivity of sintered stainless steel.",
+   "form": {
+    "name": "Sintered SUS316L · 40 % porosity",
+    "matrix": {
+     "material_id": "sus316l"
+    },
+    "phases": [
+     {
+      "material_id": "air",
+      "name": "Pores",
+      "shape": "network",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "permeability": true,
+     "filtration": true,
+     "porosimetry": true,
+     "pore_network": true,
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "porosimetry": {
+      "fluid": "isopropanol"
+     },
+     "thickness_mm": 2.0
+    }
+   }
+  },
+  {
+   "id": "fibre_insulation",
+   "name": "Fibrous insulation · E-glass fibres 8 vol% in air",
+   "description": "Equipment insulation and acoustic lining: fibres lying in the xy plane; thermal conductivity, sound absorption (JCA) and radiative extinction.",
+   "form": {
+    "name": "Glass-fibre insulation · 8 vol%",
+    "matrix": {
+     "material_id": "air"
+    },
+    "phases": [
+     {
+      "material_id": "eglass",
+      "name": "Glass fibre",
+      "shape": "cylinder",
+      "size": {
+       "d": 8,
+       "length": 80,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 8,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "xy",
+       "spread_deg": 10
+      },
+      "overlap": true
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "thermal": true,
+     "acoustics": true,
+     "radiation": true,
+     "morphology": true
+    },
+    "options": {
+     "directions": "xz",
+     "acoustics": {
+      "thickness_mm": 25,
+      "f_min_hz": 100,
+      "f_max_hz": 10000
+     },
+     "radiation": {
+      "temperature_K": 600
+     },
+     "thickness_mm": 25
+    }
+   }
+  },
+  {
+   "id": "muf_bimodal",
+   "name": "MUF · epoxy + silica 15 + 3 µm 55 vol% (flowability, thermal conductivity)",
+   "description": "Moulded underfill: effective viscosity, flow curve, maximum packing fraction, capillary filling of a 50 µm bump gap and filler settling before cure, and the thermal conductivity of the cured compound. Every input is backed in guide 32.1 (\"Why these input values\"): 55–70 vol% silica in encapsulants, the largest particle at most a third of the gap, a 70/30 bimodal blend; resin, wetting and rate values are representative and marked to be replaced by measurements. Replace the two silica phases with one 5 µm phase to see why the blend flows about twice as easily.",
+   "form": {
+    "name": "MUF · silica 15 + 3 µm 55 vol%",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "MUF epoxy resin"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Silica 15 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 15,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 38.5,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     },
+     {
+      "material_id": "sio2",
+      "name": "Silica 3 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 3,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 16.5,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 60,
+     "voxel_um": 0.5,
+     "quality": "fast"
+    },
+    "analyses": {
+     "viscosity": true,
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "viscosity": {
+      "model": {
+       "type": "carreau",
+       "mu0": 2,
+       "mu_inf": 0.2,
+       "lam": 0.05,
+       "n": 0.6
+      },
+      "gd_min": 0.1,
+      "gd_max": 1000,
+      "gd_ref": 10,
+      "phi_m_mode": "auto",
+      "friction": "none",
+      "density_resin": 1150,
+      "settle_min": 30,
+      "underfill": {
+       "gap_um": 50,
+       "length_mm": 10,
+       "gamma_mN_m": 35,
+       "theta_deg": 30
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "muf_cured",
+   "name": "MUF · from flow to the cured part (silica 15 + 3 µm 55 vol%, after shear flow)",
+   "description": "The MUF of the viscosity example, cured where its flow leaves it: the packing is sheared in the resin by particle dynamics to a strain of 10 (Domain → Particle arrangement → After shear flow), flow along x and its gradient through z - across the gap the compound fills. The viscosity, flow curve, filling time and settling come from the particle dynamics; thermal conductivity, CTE and modulus, Dk/Df and moisture uptake are solved on that one cured structure (60 µm, 240³ voxels). Computed with touching particles: k 0.596 W/m·K through the gap (0.576 for the random packing it started from), CTE 16.5 ppm/K, E 15.0 GPa, Dk 3.84, Df 0.0068, 0.77 wt% moisture at saturation; the flow raised the close pairs of particles from 1.7 to 3.8 per sphere. The shear takes minutes on an NVIDIA GPU and about 17 minutes on 14 CPU cores; the solves need about 6 GB (the three conduction directions side by side).",
+   "form": {
+    "name": "MUF · cured after shear flow, silica 15 + 3 µm 55 vol%",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "MUF epoxy resin"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Silica 15 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 15,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 38.5,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     },
+     {
+      "material_id": "sio2",
+      "name": "Silica 3 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 3,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 16.5,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 60,
+     "voxel_um": 0.25,
+     "quality": "fast",
+     "auto_enlarge": false,
+     "arrangement": "sheared",
+     "shear_strain": 10
+    },
+    "analyses": {
+     "viscosity": true,
+     "thermal": true,
+     "cte": true,
+     "dielectric": true,
+     "moisture": true
+    },
+    "options": {
+     "viscosity": {
+      "model": {
+       "type": "carreau",
+       "mu0": 2,
+       "mu_inf": 0.2,
+       "lam": 0.05,
+       "n": 0.6
+      },
+      "gd_min": 0.1,
+      "gd_max": 1000,
+      "gd_ref": 10,
+      "phi_m_mode": "auto",
+      "friction": "none",
+      "density_resin": 1150,
+      "settle_min": 30,
+      "underfill": {
+       "gap_um": 50,
+       "length_mm": 10,
+       "gamma_mN_m": 35,
+       "theta_deg": 30
+      }
+     },
+     "directions": "xyz"
+    }
+   }
+  },
+  {
+   "id": "muf_bn_doe",
+   "name": "DOE · MUF Al₂O₃ 250 nm + BN platelet stacks 55 vol% (BN 5–50 % of the filler)",
+   "description": "A study, ready in the DOE tab: 55 vol% filler of 250 nm alumina spheres, 5 to 50 % of which (in steps of 5) is replaced by h-BN as stacks of 4 platelets (2 µm × 300 nm × 4 × 50 nm, rounded edges), lying in the plane of the part (thickness axis within 15° of z). The platelets conduct 300 W/m·K in their plane and 30 through it; through a stack the 4 layers and the 3 plate-plate contacts (1.2e-8 m²K/W) are in series, about 4.7 W/m·K. Filler-resin interface resistance 4.8e-8 and contact resistance 1.2e-8 m²K/W for both fillers. Thermal conductivity (x, y in the plane; z through it) and viscosity of every case (particle dynamics of the RVE's own particles, rigid multi-sphere stacks with the spheres - an NVIDIA GPU is recommended). Every case on one fixed grid, 4 µm at 25 nm voxels (160³). Single 50 nm platelets dispersed among the spheres cannot fill 55 vol% beyond about 5 % BN; as stacks the packing reaches the target size, and after the exact-shape repair the RVE holds 53.8 vol% at 25 % BN (13.2 vol% BN) and 51.4 vol% at 50 % (24.8 vol% BN, a share of 48 %) - each run reports the content it reached.",
+   "form": {
+    "name": "MUF · Al₂O₃ 250 nm + BN platelet stacks 55 vol%",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "MUF epoxy resin"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Al₂O₃ 250 nm",
+      "shape": "sphere",
+      "size": {
+       "d": 0.25,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 52.25,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 4.8e-08,
+      "r_contact": 1.2e-08
+     },
+     {
+      "material_id": "hbn_platelet",
+      "name": "BN platelet stacks",
+      "shape": "superellipsoid",
+      "size": {
+       "d": 2.0,
+       "ly": 0.3,
+       "lz": 0.2,
+       "n": 6.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 2.75,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 15
+      },
+      "r_int": 4.8e-08,
+      "r_contact": 1.2e-08,
+      "stack_layers": 4
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 4.0,
+     "voxel_um": 0.025,
+     "auto_enlarge": false,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true,
+     "viscosity": true
+    },
+    "options": {
+     "directions": "xyz",
+     "viscosity": {
+      "model": {
+       "type": "carreau",
+       "mu0": 2,
+       "mu_inf": 0.2,
+       "lam": 0.05,
+       "n": 0.6
+      },
+      "gd_min": 0.1,
+      "gd_max": 1000,
+      "gd_ref": 10,
+      "phi_m_mode": "auto",
+      "friction": "none",
+      "density_resin": 1150,
+      "settle_min": 30,
+      "underfill": {
+       "gap_um": 50,
+       "length_mm": 10,
+       "gamma_mN_m": 35,
+       "theta_deg": 30
+      },
+      "dem": {
+       "strain": 10,
+       "rates": 0
+      }
+     }
+    }
+   },
+   "doe": {
+    "name": "MUF · BN share of the filler 5–50 %",
+    "design": "full",
+    "parameters": [
+     {
+      "path": "mix.1",
+      "label": "BN share of the filler",
+      "unit": "% of filler",
+      "min": 5,
+      "max": 50,
+      "steps": 10,
+      "scale": "lin"
+     }
+    ],
+    "edge": "fixed"
+   }
+  },
+  {
+   "id": "cal_muf_al2o3",
+   "name": "Calibration · MUF Al₂O₃ 250 nm 55 vol%: interface and contact resistance from k = 1.4 W/m·K",
+   "description": "A calibration, ready in the Calibration tab: a moulded underfill of 250 nm alumina spheres at 55 vol% in the MUF epoxy, measured at 1.4 W/m·K (± 5 %). The unknowns are the filler-resin interfacial resistance R_int and the contact resistance R_c on the faces where the touching particles meet (gap 0), each searched from 1e-10 to 1e-6 m²K/W. Computed on 70³ voxels of 25 nm (14 solves, about 12 s on 18 threads): the contacts carry most of the heat, so this one measurement fixes R_c ≈ 9.4e-9 m²K/W (95 % 8.1e-10 – 2.3e-8) and leaves R_int open - with R_c at 1e-8, R_int from 1e-10 to 1e-8 moves k only from 1.46 to 1.36. A second sample in which the contacts weigh differently, a lower content or another particle size, separates the two. Linking R_c = 2·R_int instead (one unknown) gives R_int = 5.1e-9 (95 % 3.5e-9 – 7.3e-9) from this measurement, with the factor 2 as an assumption; R_int alone, with contacts free of resistance, moves k only from 3.00 to 2.16 and never reaches 1.4. The values are effective ones for this grid, since touching spheres meet over whole voxel faces; compare samples on the same voxel size.",
+   "form": {
+    "name": "MUF · Al₂O₃ 250 nm 55 vol%",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "MUF epoxy resin"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Al₂O₃ 250 nm",
+      "shape": "sphere",
+      "size": {
+       "d": 0.25,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 55,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 0
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   },
+   "cal": {
+    "name": "MUF · Al₂O₃ 250 nm 55 vol% · R_int and R_c from k = 1.4",
+    "measurements": [
+     {
+      "label": "MUF 55 vol%",
+      "set": [],
+      "property": "k",
+      "direction": "iso",
+      "value": 1.4,
+      "unc": 5
+     }
+    ],
+    "unknowns": [
+     {
+      "path": "phases.0.r_int",
+      "label": "Al₂O₃ 250 nm: interfacial resistance R_int",
+      "unit": "m²K/W",
+      "lo": 1e-10,
+      "hi": 1e-06,
+      "scale": "log",
+      "prior": "uniform",
+      "center": "",
+      "sigma_dec": 1
+     },
+     {
+      "path": "phases.0.r_contact",
+      "label": "Al₂O₃ 250 nm: contact resistance R_c",
+      "unit": "m²K/W",
+      "lo": 1e-10,
+      "hi": 1e-06,
+      "scale": "log",
+      "prior": "uniform",
+      "center": "",
+      "sigma_dec": 1
+     }
+    ],
+    "options": {
+     "model_unc": 2,
+     "refine_rounds": 3
+    }
+   }
+  },
+  {
+   "id": "emc_reliability",
+   "name": "EMC reliability · epoxy + silica 40 vol% (moisture, swelling, above Tg)",
+   "description": "Moisture diffusivity, saturated uptake, the uptake curve of a 0.5 mm part at 85 °C / 85 % RH and the hygroscopic swelling (CME), together with the CTE and modulus below and above the glass transition (α1 / α2) of a moulding compound (guide chapter 14). Computed with touching particles (the default): 1.125 wt% at saturation, α1 27.2 / α2 61 ppm/K, E 8.90 / 0.33 GPa. Above Tg the touching particles form a rigid skeleton; with a gap between particles of 2 voxels (Structure tab) α2 is 95.5 ppm/K and the hot modulus 0.126 GPa (guide 14.5).",
+   "form": {
+    "name": "EMC · epoxy + silica 40 vol% (reliability)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 4,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 28.5,
+     "voxel_um": 0.285,
+     "quality": "standard"
+    },
+    "analyses": {
+     "cte": true,
+     "moisture": true
+    },
+    "options": {
+     "directions": "z",
+     "above_tg": true,
+     "moisture": {
+      "thickness_mm": 0.5,
+      "hours": 168,
+      "sides": "both"
+     }
+    }
+   }
+  },
+  {
+   "id": "dense_overlap",
+   "name": "Highly filled · epoxy + silica 66 vol%, one size (above random close packing: progressive overlap)",
+   "description": "66 vol% of equal silica spheres, above the random close packing of equal spheres (about 64 %): no arrangement without overlap reaches it. With progressive overlap (Structure → Gap between particles, on by default) the packing is made again with an overlap of 1 voxel allowed, then 2, two tries at each step, until the content is reached; the RVE checks report the overlap the structure needed. Untick it to see the earlier behaviour: every sphere drawn smaller until they fit, and the content short of the target.",
+   "form": {
+    "name": "Epoxy + silica 66 vol% (progressive overlap)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Silica 5 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 66,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 35,
+     "voxel_um": 0.5,
+     "quality": "standard",
+     "auto_enlarge": false
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "overlap_steps": {
+      "on": true,
+      "tries": 2,
+      "max_vox": 3,
+      "share": "none"
+     }
+    }
+   }
+  },
+  {
+   "id": "film_pi_bn",
+   "name": "Thin film · polyimide + h-BN platelets 25 vol%, 15 µm",
+   "description": "A 15 µm film: x and y periodic, z the real thickness, every platelet inside the film. The platelets lie in the plane, so the in-plane thermal conductivity is about 2.4 times the through-plane value that a heat-spreading film is judged by (0.69 against 0.29 W/m·K; guide 6.5).",
+   "form": {
+    "name": "Film · polyimide + h-BN 25 vol%, 15 µm",
+    "matrix": {
+     "material_id": "polyimide"
+    },
+    "phases": [
+     {
+      "material_id": "hbn",
+      "name": "h-BN platelet",
+      "shape": "spheroid",
+      "size": {
+       "d": 6,
+       "aspect": 0.25,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 25,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 10
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard",
+     "film": true,
+     "T_um": 15
+    },
+    "analyses": {
+     "thermal": true,
+     "dielectric": true
+    },
+    "options": {
+     "directions": "zx",
+     "thickness_mm": 0.015
+    }
+   }
+  },
+  {
+   "id": "nss_sendust",
+   "name": "Noise-suppression sheet · epoxy + Sendust flakes 25 vol% (permeability)",
+   "description": "Flat magnetic flakes lying in the plane of the sheet: the in-plane permeability is nearly four times the through-plane value (μr 7.04 against 1.86), because the flux crosses fewer resin gaps (guide chapter 10). Compare with spheres of the same content.",
+   "form": {
+    "name": "Sheet · epoxy + Sendust flakes 25 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sendust",
+      "name": "Sendust flake",
+      "shape": "spheroid",
+      "size": {
+       "d": 10,
+       "aspect": 0.2,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 25,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 10
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "magnetic": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "zx",
+     "thickness_mm": 0.1
+    }
+   }
+  },
+  {
+   "id": "tim_hybrid",
+   "name": "Hybrid TIM · silicone + Al₂O₃ 10 µm + AlN 3 µm 55 vol% (blend, contacts)",
+   "description": "Two fillers of different size and material: the small AlN fills the gaps between the large Al₂O₃. Each filler has its own interfacial resistance, and the contact resistance between the two fillers is set separately (Structure tab). Particles may touch, as in a real gap filler; Fast quality keeps the run short - use Standard for values to report.",
+   "form": {
+    "name": "Hybrid TIM · Al₂O₃ 10 µm + AlN 3 µm",
+    "matrix": {
+     "material_id": "silicone"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Al₂O₃ 10 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 10,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 2.0
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08,
+      "r_contact": 2e-08
+     },
+     {
+      "material_id": "aln",
+      "name": "AlN 3 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 3,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 15,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08,
+      "r_contact": 2e-08
+     }
+    ],
+    "contact_rc": {
+     "0-1": 3e-08
+    },
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "thermal": true,
+     "grains": true,
+     "percolation": true
+    },
+    "options": {
+     "directions": "z",
+     "thickness_mm": 0.2
+    }
+   }
+  },
+  {
+   "id": "stat_rve_tim",
+   "name": "Statistical RVE · TIM silicone + Al₂O₃ 50 vol%: small boxes until the mean settles",
+   "description": "An RVE too large to solve, replaced by small boxes: the gap filler is solved on a 60 µm box of 10 µm alumina (six diameters, below the Standard level's seven), again and again with a new random arrangement, until the 95 % confidence interval of the mean conductivity is within 2 % (at least 3, at most 40 realisations; Domain → Realisations → Until the mean settles). Kanit et al. (Int. J. Solids Struct. 40 (2003) 3647, doi:10.1016/S0020-7683(03)00143-4) showed that the mean over enough small volumes gives the effective property, provided the volume is not so small that it biases the mean. It settles within 2 % after 20 realisations (52 s on 18 threads). The RVE checks report the realisations used, their scatter and how many a ±1 % interval would need. A box of four diameters would scatter by 7.2 % and, worse, its mean lies 9 % low - biased; from six diameters on the means agree (guide 6.7). Run the compound once at a larger RVE to confirm.",
+   "form": {
+    "name": "Statistical RVE · TIM silicone + Al₂O₃ 50 vol%",
+    "matrix": {
+     "material_id": "silicone"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Al₂O₃",
+      "shape": "sphere",
+      "size": {
+       "d": 10,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 60,
+     "voxel_um": 1.0,
+     "quality": "fast",
+     "auto_enlarge": false,
+     "realisations": {
+      "mode": "settle",
+      "target_pct": 2,
+      "n_min": 3,
+      "n_max": 40
+     }
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "thickness_mm": 0.2
+    }
+   }
+  },
+  {
+   "id": "cu_diamond",
+   "name": "Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement)",
+   "description": "Cu/diamond for high-power, GaN and SiC devices. Wang et al. (Materials 18 (2025) 3882, doi:10.3390/ma18163882) hot-pressed 400 µm diamond (1717 W/m·K) at 50 vol% in Cu (385 W/m·K) with a 200 nm W coating and measured 640 W/m·K. The RVE gives 646 W/m·K with an interface conductance of 12.5 MW/m²K (R_int 8e-8 m²K/W; touching diamonds 1.6e-7) - what the measurement says about the bonded interface. The 36-56 MW/m²K the paper estimates from effective-medium models give 749-777 W/m·K here, and a differential effective medium with the same inputs 775: the difference lies in the model's assumptions, not in the solve. The Calibration tab finds R_int from a measurement of your own.",
+   "form": {
+    "name": "Cu/diamond · 50 vol% 400 µm",
+    "matrix": {
+     "material_id": "cu",
+     "props": {
+      "k": 385.0,
+      "sigma": 59600000.0,
+      "eps_r": 1.0,
+      "tan_d": 0.0,
+      "mu_r": 1.0,
+      "E": 120.0,
+      "nu": 0.34,
+      "alpha": 16.5,
+      "rho": 8.96,
+      "cp": 385
+     }
+    },
+    "phases": [
+     {
+      "material_id": "diamond_grit",
+      "name": "Diamond 400 µm",
+      "shape": "polyhedron",
+      "size": {
+       "d": 580,
+       "poly": "octahedron",
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 87.0
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 8e-08,
+      "r_contact": 1.6e-07
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "thermal": true,
+     "cte": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100,
+     "thickness_mm": 1.0
+    }
+   }
+  },
+  {
+   "id": "alsic_baseplate",
+   "name": "Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC)",
+   "description": "AlSiC for IGBT and SiC module baseplates and lids: a CTE near the ceramic substrate with the conductivity of aluminium. Guo et al. (J. Univ. Sci. Technol. Beijing 36 (2014) 489-495, doi:10.13374/j.issn1001-053x.2014.04.011; tabulated in Lai et al., Micromachines 14 (2023) 1491, Table 2) measured pseudo-semi-solid thixoformed SiCp/Al at 63 vol%: 178 W/m·K and 8.21 ppm/K (56 vol%: 176 W/m·K, 9.25 ppm/K); this case gives 189 W/m·K and 8.85 ppm/K (+6 %, +8 %). Bimodal SiC grit (60 + 20 µm, 3:1) as needed for such loadings, Al/SiC interface 1e-8 m²K/W, one fixed grid of 140³.",
+   "form": {
+    "name": "AlSiC · SiC 63 vol%",
+    "matrix": {
+     "material_id": "a356"
+    },
+    "phases": [
+     {
+      "material_id": "sic_grit",
+      "name": "SiC 60 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 60,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 47.25,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08
+     },
+     {
+      "material_id": "sic_grit",
+      "name": "SiC 20 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 20,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 15.75,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 420,
+     "voxel_um": 3.0,
+     "quality": "standard",
+     "auto_enlarge": false
+    },
+    "analyses": {
+     "thermal": true,
+     "cte": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100,
+     "thickness_mm": 3.0
+    }
+   }
+  },
+  {
+   "id": "ptfe_silica_5g",
+   "name": "mmWave substrate · PTFE + fused silica 60 wt%",
+   "description": "PTFE-silica laminate for 5G/6G antennas and RF front ends: silica brings the CTE of PTFE towards copper and keeps Dk near 3. Murali et al. (Composites Part A 40 (2009) 1179-1185, doi:10.1016/j.compositesa.2009.05.007) report Dk 2.9 and tan δ 0.0024 at X band for PTFE with 60 wt% micron silica; this case gives Dk 3.01. The loss of a real laminate comes from interfaces, moisture and voids that a mixture of perfect PTFE and silica does not have (here tan δ 0.0001): read the computed tan δ as the lower limit.",
+   "form": {
+    "name": "PTFE + SiO₂ 60 wt%",
+    "matrix": {
+     "material_id": "ptfe"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 10,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 2.5
+      },
+      "fraction": {
+       "value": 60,
+       "basis": "wt"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 140,
+     "voxel_um": 1.0,
+     "quality": "standard",
+     "auto_enlarge": false
+    },
+    "analyses": {
+     "dielectric": true,
+     "cte": true,
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "delta_T": 100,
+     "thickness_mm": 0.127
+    }
+   }
+  },
+  {
+   "id": "pcb_thermal_vias",
+   "name": "PCB thermal vias · FR-4 with Cu-plated vias (0.3 mm, 1 mm pitch)",
+   "description": "The thermal pad of a QFN or power package sits on plated through-holes: 0.3 mm drill, 25 µm Cu plating, 1 mm pitch, 1.6 mm board. Each via is drawn as a copper rod with the cross-section of its plating (0.166 mm). Through the board the vias are parallel paths: k_z 8.95 W/m·K, the area-weighted mean of the drawn copper (2.16 %) and the FR-4 exactly - 31 times the laminate's 0.29; in the plane 0.85 (FR-4 0.81). That equality is a check of the solver against the exact solution for straight vias, not a measurement: a real board adds the pads and copper planes that spread the heat. A thin-film domain of the board thickness, so that the vias span it; change the content (the pitch) or the rod diameter (the plating) for the trade-off.",
+   "form": {
+    "name": "FR-4 + thermal vias",
+    "matrix": {
+     "material_id": "fr4"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Via plating (Cu)",
+      "shape": "cylinder",
+      "size": {
+       "d": 0.166,
+       "length": 1.6,
+       "unit": "mm"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 2.16,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 0
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "film": true,
+     "L_um": 5000,
+     "T_um": 1600,
+     "voxel_um": 20.0,
+     "skin_um": 0,
+     "quality": "fast",
+     "auto_enlarge": false
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "zx",
+     "thickness_mm": 1.6
+    }
+   }
+  },
+  {
+   "id": "glass_core_tgv",
+   "name": "Glass core substrate · Cu-filled TGVs (50 µm, 150 µm pitch)",
+   "description": "Glass core substrates for large AI and HPC packages: a low-CTE glass core with copper-filled through-glass vias. Through the core the vias are parallel paths: k_z 35.9 W/m·K, the area-weighted mean of copper (8.7 %) and glass exactly - a check of the solver against the exact solution for straight vias; in the plane 1.32 W/m·K (the 2D Maxwell value 1.31). The CTE of the core rises from the 3.2 ppm/K of the glass with the copper - the warpage budget of the package. A thin-film domain of the core thickness: the vias span it.",
+   "form": {
+    "name": "Glass core + Cu TGV",
+    "matrix": {
+     "material_id": "glass_core"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu TGV",
+      "shape": "cylinder",
+      "size": {
+       "d": 50,
+       "length": 300,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 8.73,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 0
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "film": true,
+     "L_um": 900,
+     "T_um": 300,
+     "voxel_um": 5.0,
+     "skin_um": 0,
+     "quality": "fast",
+     "auto_enlarge": false
+    },
+    "analyses": {
+     "thermal": true,
+     "cte": true
+    },
+    "options": {
+     "directions": "zx",
+     "delta_T": 100,
+     "thickness_mm": 0.3
+    }
+   }
+  },
+  {
+   "id": "solder_voids",
+   "name": "Die-attach solder · SAC305 with 15 % voids",
+   "description": "X-ray inspection limits voiding in solder die attach to a few to 25 %. The voids are insulating spheres: this case gives 76.9 % of the dense conductivity at 15 %, below 2(1 - φ)/(2 + φ) = 79.1 %, Maxwell's upper bound for insulating spheres (a consistency check, not a measurement; a real joint adds the shape and place of its voids); the thermal resistance of the joint rises by the inverse. Vary the void content in the DOE tab for the resistance-voiding curve.",
+   "form": {
+    "name": "SAC305 + 15 % voids",
+    "matrix": {
+     "material_id": "sac305"
+    },
+    "phases": [
+     {
+      "material_id": "air",
+      "name": "Voids",
+      "shape": "sphere",
+      "size": {
+       "d": 25,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 7.5
+      },
+      "fraction": {
+       "value": 15,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 420,
+     "voxel_um": 2.0,
+     "quality": "standard",
+     "auto_enlarge": false
+    },
+    "analyses": {
+     "thermal": true,
+     "electrical": true
+    },
+    "options": {
+     "directions": "z",
+     "thickness_mm": 0.08
+    }
+   }
+  },
+  {
+   "id": "inductor_cip",
+   "name": "Package-level power inductor · epoxy + carbonyl iron 54 vol%",
+   "description": "Magnetic core of a planar inductor for package-level power delivery. Sugawa et al. (IEEE Trans. Magn. 49 (2013) 4172-4175, doi:10.1109/TMAG.2013.2250925) report μr 7.5 for a screen-printed 54 vol% carbonyl-iron/epoxy core; spheres of iron (μr 50) in this case, touching where they meet, give 5.98. The resin gaps between the particles, not the iron, set the permeability: a printed paste has particle chains and agglomerates along which the flux crosses fewer gaps - try a higher content, flake-like particles or permitted overlap to see how fast μr rises.",
+   "form": {
+    "name": "Epoxy + carbonyl iron 54 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "carbonyl_iron",
+      "name": "Carbonyl iron",
+      "shape": "sphere",
+      "size": {
+       "d": 4.4,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 1.76
+      },
+      "fraction": {
+       "value": 54,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 50,
+     "voxel_um": 0.3,
+     "quality": "standard",
+     "auto_enlarge": false
+    },
+    "analyses": {
+     "magnetic": true,
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "thickness_mm": 0.05
+    }
+   }
+  },
+  {
+   "id": "mechtest_emc",
+   "name": "EMC · compression test (epoxy + silica 50 vol%)",
+   "description": "A compression test of a moulding compound as a universal testing machine runs it: a specimen 10 mm long with 10 mm² loaded to 100 MPa along z, sides free, and a matrix strength of 120 MPa entered as an input. The load runs through the effective stiffness of the RVE (elasticity is computed with it) and one more FANS solve gives the stress fields (guide 12.8). Computed on 70³ voxels of 0.5 µm (5 µm silica, 14 s on 18 threads): apparent modulus 14.29 GPa (Hill E 14.08 GPa), 1000 N for a shortening of 70.0 µm, Poisson's ratio 0.234 / 0.239; the most stressed 0.1 % of the epoxy reaches 120 MPa at 1033 N (103 MPa applied), the estimated onset of yielding between the particles. Linear elastic: tension gives the same line with the opposite sign.",
+   "form": {
+    "name": "EMC · compression test (epoxy + silica 50 vol%)",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 35,
+     "voxel_um": 0.5,
+     "quality": "standard"
+    },
+    "analyses": {
+     "mechtest": true
+    },
+    "options": {
+     "directions": "z",
+     "mechtest": {
+      "mode": "compression",
+      "axis": "z",
+      "lateral": "free",
+      "control": "pressure",
+      "value": 100,
+      "area_mm2": 10,
+      "length_mm": 10,
+      "strength_MPa": 120
+     }
+    }
+   }
+  },
+  {
+   "id": "press_closed_mould",
+   "name": "Compression · closed mould: epoxy + silica 30 vol% with 10 % voids, sides held",
+   "description": "A compound with trapped voids pressed in a closed mould: the RVE is shortened by 8 % along z with x and y held, so the volume lost must come from the voids. They close while the resin (1 Pa·s) flows around the rigid silica - three-dimensional creeping flow on the voxels, the voids a compressible gas, material markers for the resin (guide 5.5). Computed on 70³ voxels of 0.5 µm (206 s): voids 10.0 → 2.25 vol% (2.15 from the volume lost alone), the resin 60.0 → 65.0 % of the box, axial stress 70 Pa at 1 1/s, and k_z of the pressed part 0.369 W/m·K. Result Viewer → Compression replays the voids shrinking step by step in 3D.",
+   "form": {
+    "name": "Compression · closed mould: epoxy + silica 30 vol% with 10 % voids, sides held",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 30,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     },
+     {
+      "material_id": "air",
+      "name": "Voids",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 10,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 35,
+     "voxel_um": 0.5,
+     "quality": "standard",
+     "arrangement": "pressed",
+     "press_compression": 8,
+     "press_rate": 1,
+     "press_lateral": "none"
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   }
+  },
+  {
+   "id": "press_two_resins",
+   "name": "Compression · two resins side by side, sides free (resin + silica 40 vol% beside a neat resin)",
+   "description": "A neat resin beside a resin filled with 40 vol% silica, each in one half of the box along x, compressed by 30 % along z with the sides free. Both resins flow at 1 Pa·s; the rigid particles stiffen the filled half, so the neat half spreads more (guide 5.5). Computed on 70³ voxels of 0.5 µm (109 s): the box goes from 35³ µm to 43.5 × 40.5 × 24.5 µm, the neat half strains +0.237 along x and the filled half +0.188, and the resin between the particles takes -0.564 along z where its half as a whole takes -0.354. Axial stress 58 Pa at 1 1/s; k_z after the compression 0.333 W/m·K. Each resin keeps its volume share (0.500 → 0.502, 0.300 → 0.299).",
+   "form": {
+    "name": "Compression · two resins side by side, sides free (resin + silica 40 vol% beside a neat resin)",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Neat resin"
+    },
+    "matrix_regions": [
+     {
+      "name": "Filled resin",
+      "material_id": "epoxy",
+      "mu_pas": 1.0,
+      "section": {
+       "mode": "section",
+       "axis": "x",
+       "from": 50,
+       "to": 100
+      }
+     }
+    ],
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "section": {
+       "mode": "section",
+       "axis": "x",
+       "from": 50,
+       "to": 100
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 35,
+     "voxel_um": 0.5,
+     "quality": "standard",
+     "arrangement": "pressed",
+     "press_compression": 30,
+     "press_rate": 1,
+     "press_lateral": "xy"
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   }
+  },
+  {
+   "id": "muf_cure_press",
+   "name": "Cure–flow · MUF pressed at 175 °C while it cures (silica 40 vol%, 1 %/s closing)",
+   "description": "A moulded underfill pressed at 1 %/s (a strain rate of 0.01 1/s) in a mould at 175 °C while its epoxy cures: Kamal-Sourour kinetics of an EMC from DSC (E1 67.91 / E2 67.34 kJ/mol, log A1 5.65 / A2 6.48, m 1.09, n 1.06; Franieck et al., Polymers 13 (2021) 1734, doi:10.3390/polym13111734) and the Castro-Macosko viscosity rising to the gel point (α_g 0.71, A -0.18, B 4.22; measured on a neat epoxy, not an EMC: Romberg et al., ACS Appl. Polym. Mater. 6 (2024), doi:10.1021/acsapm.4c00607). The mould asks for 55 %. Computed on 70³ voxels of 0.5 µm (230 s, 20 steps): the axial stress rises from 0.95 Pa (α 0) to 14 Pa at 38 % (α 0.47, 48 s), 114 Pa at 44 % (α 0.59, 58 s) and 2847 Pa at 47.8 % (α 0.67, 65 s); the compound gels at 69.2 s with the mould closed by 49.9 %. The RVE stays within 0.66 K of the mould (heat of reaction 177 J/g of resin, exchange time 0.32 s for a 1 mm part). A faster closing or a cooler mould lets it close before the gel point (guide 5.5).",
+   "form": {
+    "name": "Cure–flow · MUF pressed at 175 °C while it cures (silica 40 vol%, 1 %/s closing)",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "MUF epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 35,
+     "voxel_um": 0.5,
+     "quality": "standard",
+     "arrangement": "pressed",
+     "press_compression": 55,
+     "press_rate": 0.01,
+     "press_lateral": "xy",
+     "press_cure": true,
+     "press_mold_C": 175,
+     "press_control": "rate",
+     "press_stress_Pa": 100,
+     "press_part_mm": 1.0,
+     "press_time_s": 600
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "viscosity": {
+      "model": {
+       "type": "newtonian",
+       "mu": 2.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "warpage_muf_die",
+   "name": "Thermal stress and warpage · MUF 300 µm on a Si die in operation (die 125 °C, top 95 °C)",
+   "description": "A 300 µm moulded underfill (silica 8 µm, 50 vol%) on a 300 µm Si die in operation: the die side at 125 °C, the top at 95 °C, stress-free at the cure temperature of 175 °C (guide 12.9). Heat flows through the film with the conductivities of the thermal analysis; every voxel takes the thermal strain of its own temperature; classical laminate theory releases the film bonded to the die. Computed on 70 × 70 × 375 voxels of 0.8 µm (168 s): 51.4 kW/m² through the film (k_z 0.514 W/m·K), κ -1.03 1/m, warpage -12.89 µm over 10 mm (edges up; -11.97 µm at the uniform mean temperature, so the gradient adds -0.92 µm), the die at -36.9 MPa on its top face and +26.5 MPa at its bottom; in the epoxy the largest principal stress reaches 27.2 MPa and the peeling stress 25.9 MPa (99.9th percentiles), in the silica the von Mises stress 160 MPa. Elastic: no relaxation, no cure shrinkage.",
+   "form": {
+    "name": "Thermal stress and warpage · MUF 300 µm on a Si die in operation (die 125 °C, top 95 °C)",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "MUF epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica",
+      "shape": "sphere",
+      "size": {
+       "d": 8,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 56,
+     "voxel_um": 0.8,
+     "quality": "standard",
+     "film": true,
+     "T_um": 300
+    },
+    "analyses": {
+     "thermomech": true
+    },
+    "options": {
+     "directions": "z",
+     "thermomech": {
+      "T_ref": 175,
+      "T_bottom": 125,
+      "T_top": 95,
+      "support": "substrate",
+      "substrate": {
+       "material_id": "si",
+       "thickness_um": 300
+      },
+      "span_mm": 10,
+      "compare_uniform": true
+     }
+    }
+   }
+  },
+  {
+   "id": "joule_eca_joint",
+   "name": "Joule heating · Ag-filled adhesive joint 25 µm, current up to thermal runaway",
+   "description": "A silver-filled conductive adhesive joint 25 µm thick (5 µm Ag spheres, 45 vol%, touching the electrodes: no matrix skin) carrying a rising current density. The silver's resistance rises with temperature (TCR 0.0038 1/K, from the resistivity of Ag at 293 and 400 K in Matula, J. Phys. Chem. Ref. Data 8 (1979) 1147, doi:10.1063/1.555614), and the joint's path to ambient is a thermal resistance of 1e-4 K·m²/W (guide 8.8). Computed on 70 × 70 × 50 voxels of 0.5 µm (81 s): 0.95 MS/m through the joint at 5e7 A/m² (31.6 °C); 2.5e8 A/m² settles at 426 °C with the conductivity fallen to 0.39 MS/m, the film itself only 1.7 K above its faces - the path to ambient sets the temperature; at 3e8 A/m² the steady state lies above 1000 °C (1697 °C extrapolated) and the sweep stops. As one resistor the joint has a TCR of 0.0038 1/K and 25 µΩ·mm² at 20 °C, so a set current runs away above J ≈ 1/√(TCR·R20·R_th) = 3.2e8 A/m². Touching particles conduct across whole voxel faces (no electrical contact resistance): the conductivity is that of ideal contacts.",
+   "form": {
+    "name": "Joule heating · Ag-filled adhesive joint 25 µm, current up to thermal runaway",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "ag",
+      "name": "Silver",
+      "shape": "sphere",
+      "size": {
+       "d": 5,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 45,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 35,
+     "voxel_um": 0.5,
+     "quality": "standard",
+     "film": true,
+     "T_um": 25,
+     "skin_um": 0
+    },
+    "analyses": {
+     "joule": true
+    },
+    "options": {
+     "directions": "z",
+     "joule": {
+      "control": "current",
+      "values": "5e7, 1e8, 1.5e8, 2e8, 2.5e8, 3e8",
+      "T_amb": 25,
+      "R_th": 0.0001
+     }
+    }
+   }
+  },
+  {
+   "id": "fibre_length_dist",
+   "name": "Short glass fibres · epoxy + 12 vol% with diameter and length distributed independently",
+   "description": "Chopped or milled glass fibres: the diameter (normal, 6 ± 0.6 µm) and the length (log-normal, 36 ± 12 µm) each have a distribution of their own, so short thick and long thin fibres both occur. Thermal conductivity in and through the plane; Grain analysis sets the diameters, lengths and aspect ratios the structure holds against the input, and particles.csv lists every fibre.",
+   "form": {
+    "name": "Short glass fibres · 12 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "eglass",
+      "name": "Glass fibre",
+      "shape": "cylinder",
+      "size": {
+       "d": 6,
+       "length": 36,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "normal",
+       "std": 0.6
+      },
+      "dists": {
+       "length": {
+        "type": "lognormal",
+        "std": 12
+       }
+      },
+      "fraction": {
+       "value": 12,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "xy",
+       "spread_deg": 10
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "thermal": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "xz"
+    }
+   }
+  },
+  {
+   "id": "flakes_triaxial",
+   "name": "Alumina flakes · epoxy + 20 vol% triaxial flakes (three axes, c/a distributed)",
+   "description": "Platelets that are not round: the axes 2a = d (log-normal, 12 ± 3 µm), 2b = 0.6 d and the thickness 2c = c/a · d with c/a normal 0.25 ± 0.05 of its own, lying in the xy plane. Thermal conductivity in and through the plane; Grain analysis reports every axis and both aspect ratios against the input.",
+   "form": {
+    "name": "Triaxial alumina flakes · 20 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Alumina flake",
+      "shape": "spheroid",
+      "size": {
+       "d": 12,
+       "aspect": 0.25,
+       "aspect_y": 0.6,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 3
+      },
+      "dists": {
+       "aspect": {
+        "type": "normal",
+        "std": 0.05
+       }
+      },
+      "fraction": {
+       "value": 20,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "z",
+       "spread_deg": 15
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "thermal": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "xz"
+    }
+   }
+  },
+  {
+   "id": "crushed_silica_volume",
+   "name": "Crushed silica · epoxy + 40 vol% irregular grains sized by their volume-equivalent diameter",
+   "description": "Angular fused silica as a laser-diffraction report gives it: the size entered (log-normal, mean 8 ± 3 µm) is the diameter of the sphere of the same volume, and every irregular grain is scaled to it. Thermal conductivity and CTE; Grain analysis reports the volume-equivalent diameter (as entered) and the circumscribed diameter of the grains against the input.",
+   "form": {
+    "name": "Crushed silica · 40 vol% (volume-equivalent size)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Crushed silica",
+      "shape": "polyhedron",
+      "size": {
+       "d": 8,
+       "poly": "irregular",
+       "n_vertices": 14,
+       "variants": 8,
+       "unit": "um"
+      },
+      "size_basis": "volume",
+      "dist": {
+       "type": "lognormal",
+       "std": 3
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "fast"
+    },
+    "analyses": {
+     "thermal": true,
+     "cte": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   }
+  },
+  {
+   "id": "image_ct_emc",
+   "name": "Structure from a TIFF · a grey CT-like stack of an EMC (epoxy, silica, voids), split by thresholds",
+   "description": "An 8-bit image of 64 × 64 × 64 voxels of 1 µm shipped with MPSim (emc_ct_example.tif: voids dark, epoxy mid-grey, silica bright, with blur and noise, as a scan looks before segmentation). Three grey-value ranges from automatic (Otsu) thresholds become the voids, the epoxy matrix and the silica; thermal conductivity and Grain analysis of the connected regions run on the image as on a generated RVE. Your own image: Structure tab, Image (TIFF), Load TIFF.",
+   "form": {
+    "name": "EMC from a CT-like image",
+    "source": "image",
+    "image": {
+     "example": "emc_ct_example.tif",
+     "voxel": 1,
+     "unit": "um",
+     "split": "ranges",
+     "thresholds": [
+      72,
+      137
+     ],
+     "auto_n": 3,
+     "classes": [
+      {
+       "key": 0,
+       "role": "phase",
+       "material_id": "air",
+       "name": "Voids"
+      },
+      {
+       "key": 1,
+       "role": "matrix",
+       "material_id": "epoxy",
+       "name": "Epoxy"
+      },
+      {
+       "key": 2,
+       "role": "phase",
+       "material_id": "sio2",
+       "name": "Fused silica"
+      }
+     ]
+    },
+    "rve": {
+     "quality": "fast"
+    },
+    "analyses": {
+     "thermal": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   }
+  }
+ ]
 }

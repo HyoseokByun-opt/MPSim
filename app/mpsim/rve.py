@@ -108,14 +108,15 @@ def feature_stats(phases):
     for i, ph in enumerate(phases):
         vf = float(ph["vf"])
         name = ph.get("name") or f"Phase {i+1}"
-        if ph["shape"] == G.NETWORK:
+        if ph["shape"] in G.NON_PARTICLE:
+            # a network (its ligament width) or an image's phase (its voxel): no particles
             pore = float(ph["size_um"]["d"])
             out.append({"index": i, "name": name, "network": True, "vf": vf,
                         "min_dim": pore, "min_dim_min": pore, "eqd_max": 2.0 * pore,
                         "extent_max": 2.0 * pore, "elongated": False, "mean_volume": None,
                         "shell": None})
             continue
-        st = G.phase_size_stats(ph["shape"], ph["size_um"], ph.get("dist"))
+        st = G.phase_size_stats(ph["shape"], ph["size_um"], ph.get("dist"), ph.get("dists"), ph.get("size_basis"))
         ar = G.aspect_ratio(ph["shape"], ph["size_um"])
         shell = ph.get("shell") or None
         t_shell = float(shell["thickness_um"]) if shell else None
@@ -160,6 +161,8 @@ def plan(phases, rve=None, props=None, limits=None):
     lim = dict(DEFAULT_LIMITS)
     lim.update(limits or {})
     q = QUALITY.get(rve.get("quality", "standard"), QUALITY["standard"])
+    if rve.get("image"):
+        return image_plan(rve, props, q)
     active = [p for p in phases if float(p["vf"]) > 0]
     feats = feature_stats(active)
     notes = []
@@ -461,6 +464,34 @@ def plan(phases, rve=None, props=None, limits=None):
         "capped": capped, "budget": (None if budget == math.inf else int(budget)),
         "memory_gb": mem,
     }
+
+
+def image_plan(rve, props, q):
+    """The plan of a structure read from an image: its own grid and voxel size, one realisation."""
+    im = rve["image"]
+    nx, ny, nz = (int(v) for v in im["shape"])
+    h = float(im["h_um"])
+    n = nx * ny * nz
+    mem = memory_estimate(1, props, nz=n, elastic=rve.get("elastic_method", "fans"))
+    peak = max(mem.values()) if mem else 0.0
+    ram = machine_ram_gb()
+    warn_at, fail_at = (0.5 * ram, 0.9 * ram) if ram else (8.0, 32.0)
+    checks = [{"id": "memory", "group": "Problem size", "label": "Estimated peak memory",
+               "value": peak, "target": warn_at, "unit": "GB",
+               "status": "pass" if peak <= warn_at else ("warn" if peak <= fail_at else "fail"),
+               "note": " · ".join(f"{k} {v:.1f} GB" for k, v in mem.items())
+                       + (f". This machine has {ram:.0f} GB (warning above half of it, failure above 90 %)" if ram else "")}]
+    notes = [f"The structure is the image {im.get('name') or ''}: {nx} × {ny} × {nz} voxels of {h:g} µm, taken as one "
+             f"periodic cell (the solvers wrap it around its faces as they wrap a generated RVE; an image cut from a "
+             f"larger sample meets a mismatched neighbour at its faces)."]
+    if nz == 1 or min(nx, ny, nz) < 8:
+        notes.append("The image is very thin in one direction; a 2D image should be extruded along z.")
+    return {"N": nx, "h_um": h, "L_um": nx * h, "film": False, "Nz": nz, "T_um": nz * h,
+            "shape": [nx, ny, nz], "box_um": [nx * h, ny * h, nz * h], "image": True,
+            "recommended": {"h_um": h, "h_exact": h, "L_um": nx * h, "reason": "the image's own grid"},
+            "quality": rve.get("quality", "standard"), "quality_label": q["label"], "seeds": 1, "settle": None,
+            "vf_tol": q["vf_tol"], "features": [], "checks": checks, "notes": notes, "capped": False, "budget": None,
+            "memory_gb": mem}
 
 
 def machine_ram_gb():

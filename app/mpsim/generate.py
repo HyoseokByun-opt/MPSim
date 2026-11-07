@@ -3214,13 +3214,13 @@ def phase_templates(phases, rng, V=None):
 
 
 def _draw(ph, nom, n, rng, poly_meta):
-    """n particles of one phase: code, scaled P, rotation, scale factors."""
-    s = G.sample_scales(n, ph.get("dist"), rng)
+    """n particles of one phase: scaled P, rotations, the size factors of d. The sizes are those of
+    shapes.sample_params (every dimension with a distribution of its own where it has one, 5.6.6) and, for a
+    size read as a volume-equivalent diameter, the dimensions that follow d scaled to it. Without own
+    distributions the random numbers are drawn as up to 5.6.5, so the structures are the same."""
+    Ps, s = SH.sample_params(ph["shape"], nom["P"], n, ph.get("dist"), ph.get("dists"), rng)
     ori = ph.get("orientation") or {}
     Rs = SH.sample_rotations(n, ori.get("mode", "iso"), ori.get("spread_deg", 0.0), rng)
-    Ps = np.tile(nom["P"], (n, 1))
-    lin = _linear_slots(nom["code"])
-    Ps[:, lin] *= s[:, None]
     if nom["code"] == 6 and nom["poly_ids"] and len(nom["poly_ids"]) > 1:
         if nom.get("unique"):
             # one shape per grain: the shapes in turn (reused only when the
@@ -3230,7 +3230,43 @@ def _draw(ph, nom, n, rng, poly_meta):
             nom["next"] += n
         else:
             Ps[:, 1] = rng.choice(nom["poly_ids"], n)
+    if ph.get("size_basis") == "volume":
+        SH.to_volume_basis(ph["shape"], Ps, float(ph["size_um"]["d"]) * s, ph.get("dists"), poly_meta)
     return Ps, Rs, s
+
+
+def varied_proportions(ph):
+    """Whether a phase's particles differ in proportions, not only in size: a dimension with a distribution
+    of its own (a fibre's length, a spheroid's aspect ratios), or sizes read as volume-equivalent diameters."""
+    return ph.get("size_basis") == "volume" or any(SH.has_own(ph.get("dists"), k) for k in SH.SECONDARY.get(ph["shape"], ()))
+
+
+def proportioned(code, P_nom, P, varied):
+    """(Pn, key): the nominal particle with P's proportions to 5 % (its clump template, scaled by P[0] / Pn[0],
+    then has P's shape), and the key of those proportions; the nominal particle itself when the phase's
+    proportions do not vary (the clump of every particle, as up to 5.6.5)."""
+    Pn = np.array(P_nom, float)
+    if code == 6:
+        Pn[1] = P[1]
+    if not varied:
+        return Pn, ()
+    prop = []
+    for j in {1: [1, 2], 2: [1], 3: [1], 4: [1, 2], 5: [1, 2]}.get(int(code), []):
+        ratio = (P[j] / P[0]) / max(P_nom[j] / P_nom[0], 1e-12)
+        qj = int(round(math.log(max(ratio, 1e-9)) / math.log(1.05)))
+        prop.append(qj)
+        Pn[j] = P_nom[j] * 1.05 ** qj
+    return Pn, tuple(prop)
+
+
+def _mean_volume(ph, nom, poly_meta, n_draw, n_use):
+    """The mean particle volume of a phase, from what _draw draws (a random stream of its own, so the
+    estimate does not move the structure's)."""
+    Ps, s = SH.sample_params(ph["shape"], nom["P"], n_draw, ph.get("dist"), ph.get("dists"), np.random.default_rng(7))
+    Ps, s = Ps[:n_use], s[:n_use]
+    if ph.get("size_basis") == "volume":
+        SH.to_volume_basis(ph["shape"], Ps, float(ph["size_um"]["d"]) * s, ph.get("dists"), poly_meta)
+    return float(np.mean([SH.volume(nom["code"], P, poly_meta) for P in Ps]))
 
 
 def _count_to_volume(vols, target):
@@ -3251,8 +3287,7 @@ def _count_to_volume(vols, target):
 
 def _linear_slots(code):
     """Indices of P that are lengths (scale with the particle size)."""
-    return {0: [0], 1: [0, 1], 2: [0, 1], 3: [0, 1], 4: [0, 1, 2], 5: [0, 1, 2],
-            6: [0], 7: [0, 1, 2]}[code]
+    return {0: [0], 1: [0, 1, 2], 2: [0, 1], 3: [0, 1], 4: [0, 1, 2], 5: [0, 1, 2], 6: [0]}[code]
 
 
 def rasterize(N, h, info, phases, nz=None):
@@ -3504,17 +3539,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     info["poly_meta"] = poly_meta
 
     part_idx = [i for i, ph in enumerate(phases) if ph["shape"] != G.NETWORK and target[i] > 0]
-    mean_vol = {}
-    for i in part_idx:
-        s = G.sample_scales(4000, phases[i].get("dist"), np.random.default_rng(7))
-        nom = nominal[i]
-        lin = _linear_slots(nom["code"])
-        vols = []
-        for sc in s[:400]:
-            P = nom["P"].copy()
-            P[lin] *= sc
-            vols.append(SH.volume(nom["code"], P, poly_meta))
-        mean_vol[i] = float(np.mean(vols))
+    mean_vol = {i: _mean_volume(phases[i], nominal[i], poly_meta, 4000, 400) for i in part_idx}
     cap = 2 + sum(int(3.0 * phases[i]["vf"] * V / mean_vol[i]) + 64 for i in part_idx)
     phase_of = np.full(cap + nph + 16, -1, np.int32)
     pid = 1
@@ -3845,25 +3870,70 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         remaining = {i: True for i in part_idx}
         rsa_parts = {"codes": [], "P": [], "R": [], "centers": [], "phase": []}
         rsa_ov = 0
+        carry = {}                        # per phase: the particles drawn and not yet placed (P, R)
+
         def rsa_round(label, inset_test=0.0, gap_on=True):
-            """One RSA round for the phases still short: particles drawn for
-            their deficit, largest first, and placed."""
+            """One RSA round for the phases still short: the particles drawn and
+            not yet placed, and new ones drawn for the rest of the deficit,
+            largest first - all of them placed. Up to 5.6.6 a round drew 30 %
+            more than the deficit and stopped at the loading, so the smallest
+            particles of every round were dropped: log-normal sizes of CV 0.34
+            came out with CV 0.15-0.20 and a number mean 9-50 % high
+            (spheroids, cylinders, cuboids, irregular polyhedra at 20 vol%).
+            The particles drawn now make up the deficit's volume (the first of
+            a sample, as the clump relaxation draws them), so the sizes placed
+            are the distribution's. A particle that does not fit is not
+            replaced by a new draw (which would favour the small ones that fit)
+            but tried again in the next round - with overlap allowed in the
+            overlap steps - and a round of such particles tries every one of
+            them rather than stopping after 25 failures in a row: the first
+            round stops there and left the smaller particles behind it untried
+            (irregular grains at 60 vol% stalled at 55.6 % and went to the
+            clump relaxation)."""
             nonlocal pid, phase_of
             cl, Pl, Rl, gl, phl = [], [], [], [], []
+            tgt_round = target.copy()
+            retry = False
             for i in list(remaining):
                 ph = phases[i]
+                code_i = nominal[i]["code"]
                 deficit = max(target[i] - count[i], 0) * h ** 3
-                n = int(math.ceil(1.3 * deficit / mean_vol[i])) + 4
-                Ps, Rs, s = _draw(ph, nominal[i], n, rng, poly_meta)
+                cP, cR = carry.pop(i, (None, None))
+                have = 0.0
+                if cP is not None and len(cP):
+                    retry = True
+                    have = float(sum(SH.volume(code_i, P, poly_meta) for P in cP))
+                rest = deficit - have
+                if cP is None or rest > 0.5 * mean_vol[i]:
+                    # new particles for the deficit the carried ones leave
+                    n = int(math.ceil(rest / mean_vol[i])) + 1
+                    Ps, Rs, s = _draw(ph, nominal[i], 2 * n + 16, rng, poly_meta)
+                    v = np.array([SH.volume(code_i, P, poly_meta) for P in Ps])
+                    while v.sum() < rest:
+                        P2, R2, _ = _draw(ph, nominal[i], n + 16, rng, poly_meta)
+                        Ps, Rs = np.concatenate([Ps, P2]), np.concatenate([Rs, R2])
+                        v = np.concatenate([v, [SH.volume(code_i, P, poly_meta) for P in P2]])
+                    k = max(1, _count_to_volume(v, rest))
+                    Ps, Rs = Ps[:k], Rs[:k]
+                    if cP is not None and len(cP):
+                        Ps, Rs = np.concatenate([cP, Ps]), np.concatenate([cR, Rs])
+                else:
+                    Ps, Rs = cP, cR
+                n = len(Ps)
+                v_all = float(sum(SH.volume(code_i, P, poly_meta) for P in Ps))
+                # every particle drawn is placed (the loading follows from their volume); the target
+                # stops a phase only beyond what they hold
+                tgt_round[i] = max(target[i], count[i] + int(math.ceil(2.0 * v_all / h ** 3)) + 1)
+                jammed[i] = False
                 gap = float(ph.get("gap_frac", 0.0) or 0.0) * np.array(
-                    [2.0 * SH.circumradius(nominal[i]["code"], P) for P in Ps])
+                    [2.0 * SH.circumradius(code_i, P) for P in Ps])
                 if sep > 0.0 and not ph.get("overlap"):
                     # the separation of contacts = "apart": a position is taken
                     # only with the particle grown by the gap free
                     gap = np.maximum(gap, sep * h)
                 if not gap_on:
                     gap = np.zeros(n)
-                cl.append(np.full(n, nominal[i]["code"]))
+                cl.append(np.full(n, code_i))
                 Pl.append(Ps)
                 Rl.append(Rs)
                 gl.append(gap)
@@ -3884,16 +3954,30 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 phase_of = grown
             centers = np.zeros((len(codes), 3))
             placed_id = np.zeros(len(codes), np.int64)
+            # the first round stops a phase after 25 failures in a row (the box is full); a round of carried
+            # particles tries every one of them
             pid = _rsa(owner, phase_of, overlap_of, net_of, sep1_of, float(h), float(L), codes, Rs, Ps,
-                       planes, nfaces, gap, ph_arr, target, count, n_placed, jammed, centers, placed_id,
-                       pid, 400, 25, int(rng.integers(1 << 30)), buf, film, rho_arr, rho_max,
+                       planes, nfaces, gap, ph_arr, tgt_round, count, n_placed, jammed, centers, placed_id,
+                       pid, 400, (1 << 30) if retry else 25, int(rng.integers(1 << 30)), buf, film, rho_arr, rho_max,
                        4 * get_num_threads(), float(inset_test))
             ok = placed_id > 0
             for key, arr in (("codes", codes), ("P", Ps), ("R", Rs), ("centers", centers), ("phase", ph_arr)):
                 rsa_parts[key].append(arr[ok])
+            placed_now = np.bincount(ph_arr[ok], minlength=nph + 1)
             for i in list(remaining):
-                if jammed[i] or count[i] >= target[i]:
+                left = (~ok) & (ph_arr == i)
+                if left.any():
+                    carry[i] = (Ps[left], Rs[left])
+                # done within half a mean particle: another round would add a whole one
+                if count[i] >= target[i] - 0.5 * mean_vol[i] / h ** 3:
                     del remaining[i]
+                    carry.pop(i, None)
+                elif placed_now[i] == 0 and retry:
+                    # a round that places none of them: jammed
+                    jammed[i] = True
+                    del remaining[i]
+                else:
+                    jammed[i] = False
             log(f"  RSA {label}: " + ", ".join(
                 f"{phases[i].get('name', i+1)} {100*count[i]/nvox:.2f}/{100*target[i]/nvox:.2f} %"
                 for i in part_idx))
@@ -3954,6 +4038,13 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         if not short:
             for key in parts:
                 parts[key].extend(rsa_parts[key])
+            for i, (cP, _) in carry.items():
+                # drawn but never placed: the loading was reached without them (the largest, as a rule)
+                if len(cP):
+                    v_c = sum(SH.volume(nominal[i]["code"], P, poly_meta) for P in cP)
+                    log(f"  {phases[i].get('name', i + 1)}: {len(cP)} particle(s) drawn and not placed "
+                        f"({100 * v_c / max(target[i] * h ** 3, 1e-300):.2f} % of its volume, "
+                        f"{2 * float(np.max([P[0] for P in cP])):.3g} µm the largest)")
         else:
             # ---- 2. rigid clump relaxation ------------------------------------
             log("  RSA jammed below the target for " + ", ".join(phases[i].get("name", str(i + 1)) for i in short)
@@ -3993,19 +4084,25 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 lin = _linear_slots(nom["code"])
                 Ps[:, lin] *= corr
                 s = s * corr
-                tids = []
+                # each particle's clump: the nominal shape's, scaled (as up to 5.6.5). A phase whose dimensions
+                # vary on their own (a fibre's length, a spheroid's aspect ratios) or that is sized by volume
+                # (5.6.6) has particles of other proportions: a clump per proportion, in steps of 5 %
+                varied = varied_proportions(ph)
+                if varied:
+                    s = Ps[:, 0] / nom["P"][0]
+                tids, circ_i = [], []
                 for P in Ps:
+                    Pn, prop = proportioned(nom["code"], nom["P"], P, varied)
                     t_id = int(P[1]) if nom["code"] == 6 else -1
-                    key = (i, t_id)
+                    key = (i, t_id, prop)
                     if key not in tkey:
-                        Pn = nom["P"].copy()
-                        if nom["code"] == 6:
-                            Pn[1] = t_id
                         q, r = SH.dem_template(nom["code"], Pn, planes, nfaces)
                         tkey[key] = len(templates)
                         templates.append((q, r))
                     tids.append(tkey[key])
-                gap_i = float(ph.get("gap_frac", 0.0) or 0.0) * 2.0 * SH.circumradius(nom["code"], nom["P"]) * s
+                    circ_i.append(SH.circumradius(nom["code"], Pn))
+                circ_i = np.array(circ_i)
+                gap_i = float(ph.get("gap_frac", 0.0) or 0.0) * 2.0 * circ_i * s
                 ori = ph.get("orientation") or {}
                 rm = -1 if nom["code"] == 0 else _rotmode(ori.get("mode", "iso"), ori.get("spread_deg", 0))
                 k = len(Ps)                          # drawn to the target volume, not n
@@ -4017,7 +4114,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 phl.append(np.full(k, i))
                 gl.append(gap_i)
                 rot_l.append(np.full(k, rm))
-                circ_l.append(np.full(k, SH.circumradius(nom["code"], nom["P"])))
+                circ_l.append(circ_i)
             codes = np.concatenate(cl).astype(np.int64)
             Ps = np.concatenate(Pl)
             Rs = np.ascontiguousarray(np.concatenate(Rl))
@@ -4339,15 +4436,7 @@ def jamming_fraction(phases, n_target=500, seed=11, log=None, should_stop=None, 
     mean_vol = []
     for i, p in enumerate(parts):
         p["vf"] = float(p["vf"]) * target / tot
-        sc = G.sample_scales(2000, p.get("dist"), np.random.default_rng(7))
-        nom = nominal[i]
-        lin = _linear_slots(nom["code"])
-        vols = []
-        for x in sc[:300]:
-            P = nom["P"].copy()
-            P[lin] *= x
-            vols.append(SH.volume(nom["code"], P, poly_meta))
-        mean_vol.append(float(np.mean(vols)))
+        mean_vol.append(_mean_volume(p, nominal[i], poly_meta, 2000, 300))
     dens = sum(p["vf"] / mv for p, mv in zip(parts, mean_vol))
     # rotating clumps cost some 40 sub-spheres each and creep toward jamming
     # for many more steps (500 cubes: 60,000 steps took 18 min): fewer of them

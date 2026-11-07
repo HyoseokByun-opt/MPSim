@@ -243,7 +243,7 @@ def _theory_k(spec):
     km = float(spec["matrix"]["props"]["k"])
     fillers = []
     for ph in spec["phases"]:
-        if ph["void"] or ph["shape"] == "network":
+        if ph["void"] or ph["shape"] in ("network", "image"):
             return None
         d = float(ph["size_um"].get("d") or 1.0) * 1e-6
         k = float(ph["props"]["k"])
@@ -457,7 +457,7 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
 def _dem_sample(i, m, form, spec, log):
     """A viscosity sample: the spheres of the particle dynamics, drawn once
     and kept for every parameter set."""
-    solid = [k for k, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] != "network"]
+    solid = [k for k, ph in enumerate(spec["phases"]) if not ph["void"] and ph["shape"] not in ("network", "image")]
     name = m.get("label") or f"measurement {i + 1}"
     if not solid:
         raise ValueError(f"{name}: a viscosity measurement needs a filler")
@@ -933,7 +933,7 @@ def contact_bypass(base, unknowns):
     rc = spec.get("contact_rc") or {}
     out = []
     for i, ph in enumerate(spec["phases"]):
-        if f"phases.{i}.r_int" not in paths or ph.get("void") or ph.get("shape") == "network":
+        if f"phases.{i}.r_int" not in paths or ph.get("void") or ph.get("shape") in ("network", "image"):
             continue
         if f"phases.{i}.r_contact" in paths or (ph.get("r_contact") or 0) > 0:
             continue
@@ -1340,7 +1340,7 @@ def preview(job):
         for path, v in (m.get("set") or {}).items():
             DOE.set_path(f, path, v)
         sp = S.normalize(_set_theta(f, unknowns, mid))
-        if any(ph["void"] or ph["shape"] == "network" for ph in sp["phases"]):
+        if any(ph["void"] or ph["shape"] in ("network", "image") for ph in sp["phases"]):
             return {"available": False, "reason": "The effective-medium preview does not cover pores or networks"}
         if any(ph["shape"] != "sphere" for ph in sp["phases"]):
             notes.append("Non-spherical fillers are treated as spheres of their diameter in this preview")

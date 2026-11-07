@@ -7,20 +7,23 @@ local frame, which lets one rasteriser and one packing engine handle them all:
 
     code  shape            P[0]        P[1]         P[2]        P[3]
     0     sphere           r
-    1     spheroid         a (eq.)     b (along z)
+    1     spheroid         semi x (a)  semi z (c)   semi y (b)           (b = a when P[2] is 0)
     2     cylinder         r           half length
     3     spherocylinder   r           half straight length
     4     cuboid           half x      half y       half z               (cube: equal)
     5     superellipsoid   semi x      semi y       semi z      exponent n
     6     polyhedron       circumradius template id
-    7     helix            wire r      coil radius  rise/rad    swept angle
+
+A spheroid is an ellipsoid of three semi-axes (5.6.6; up to 5.6.5 a
+spheroid of revolution, b = a, which P[2] = 0 still means); z is its
+symmetry or thickness axis, c/a its aspect ratio and b/a the second one.
+The helix of v4-5.6.5 was removed in 5.6.6.
 
 The superellipsoid |x/a|^n + |y/b|^n + |z/c|^n <= 1 is the "meta-particle" of
 DEM codes: n = 2 is an ellipsoid, larger n rounds towards a box with soft
 edges. A polyhedron is the intersection of half-spaces n.x <= d (convex); its
 planes live in a template table so particles of one phase can share a set of
-irregular shapes. A helix is a wire swept along a coil around local z, with
-rounded ends.
+irregular shapes.
 
 `inset` shrinks a shape by a normal distance (a shell's inner boundary) and a
 negative inset grows it (a separation gap). All lengths are micrometres.
@@ -35,9 +38,9 @@ from numba import njit
 from . import geometry as G
 
 CODES = {"sphere": 0, "spheroid": 1, "cylinder": 2, "spherocylinder": 3,
-         "cube": 4, "cuboid": 4, "superellipsoid": 5, "polyhedron": 6, "helix": 7}
+         "cube": 4, "cuboid": 4, "superellipsoid": 5, "polyhedron": 6}
 USER_SHAPES = ["sphere", "spheroid", "cylinder", "spherocylinder", "cube", "cuboid",
-               "superellipsoid", "polyhedron", "helix"]
+               "superellipsoid", "polyhedron"]
 POLY_KINDS = ["tetrahedron", "octahedron", "dodecahedron", "icosahedron", "irregular"]
 MAX_FACES = 64
 
@@ -46,61 +49,17 @@ MAX_FACES = 64
 # point tests (numba)
 # =========================================================================
 @njit(cache=True, fastmath=True)
-def helix_dist2(x, y, z, r_c, c, th_max):
-    """Squared distance from a point to the centreline (Rc cos t, Rc sin t, c t - H/2), t in [0, th_max]."""
-    H = c * th_max
-    zz = z + 0.5 * H
-    phi = math.atan2(y, x)
-    if c > 1e-12:
-        k0 = int(math.floor((zz / c - phi) / (2.0 * math.pi) + 0.5))
-    else:
-        k0 = 0
-    best = 1e300
-    for dk in range(-1, 2):
-        t = phi + 2.0 * math.pi * (k0 + dk)
-        if t < 0.0:
-            t = 0.0
-        elif t > th_max:
-            t = th_max
-        for _it in range(6):
-            ct = math.cos(t)
-            st = math.sin(t)
-            px = x - r_c * ct
-            py = y - r_c * st
-            pz = zz - c * t
-            g1 = -(px * (-r_c * st) + py * (r_c * ct) + pz * c)
-            g2 = (r_c * r_c + c * c) - (px * (-r_c * ct) + py * (-r_c * st))
-            if g2 <= 1e-12:
-                break
-            t2 = t - g1 / g2
-            if t2 < 0.0:
-                t2 = 0.0
-            elif t2 > th_max:
-                t2 = th_max
-            if abs(t2 - t) < 1e-10:
-                t = t2
-                break
-            t = t2
-        px = x - r_c * math.cos(t)
-        py = y - r_c * math.sin(t)
-        pz = zz - c * t
-        d2 = px * px + py * py + pz * pz
-        if d2 < best:
-            best = d2
-    return best
-
-
-@njit(cache=True, fastmath=True)
 def inside_local(code, x, y, z, P, planes, nfaces, inset):
     if code == 0:
         r = P[0] - inset
         return r > 0.0 and x * x + y * y + z * z <= r * r
     if code == 1:
         a = P[0] - inset
-        b = P[1] - inset
-        if a <= 0.0 or b <= 0.0:
+        c = P[1] - inset
+        b = (P[2] if P[2] > 0.0 else P[0]) - inset
+        if a <= 0.0 or b <= 0.0 or c <= 0.0:
             return False
-        return (x * x + y * y) / (a * a) + z * z / (b * b) <= 1.0
+        return x * x / (a * a) + y * y / (b * b) + z * z / (c * c) <= 1.0
     if code == 2:
         r = P[0] - inset
         hl = P[1] - inset
@@ -135,18 +94,6 @@ def inside_local(code, x, y, z, P, planes, nfaces, inset):
             if planes[t, f, 0] * x + planes[t, f, 1] * y + planes[t, f, 2] * z > s * planes[t, f, 3] - inset:
                 return False
         return True
-    if code == 7:
-        r = P[0] - inset
-        if r <= 0.0:
-            return False
-        rc = P[1]
-        rho = math.sqrt(x * x + y * y)
-        if (rho - rc) * (rho - rc) > r * r:
-            return False
-        H = P[2] * P[3]
-        if z < -0.5 * H - r or z > 0.5 * H + r:
-            return False
-        return helix_dist2(x, y, z, rc, P[2], P[3]) <= r * r
     return False
 
 
@@ -156,7 +103,7 @@ def local_half_extents(code, P, planes, nfaces):
     if code == 0:
         return P[0], P[0], P[0]
     if code == 1:
-        return P[0], P[0], P[1]
+        return P[0], (P[2] if P[2] > 0.0 else P[0]), P[1]
     if code == 2:
         return P[0], P[0], P[1]
     if code == 3:
@@ -165,9 +112,6 @@ def local_half_extents(code, P, planes, nfaces):
         return P[0], P[1], P[2]
     if code == 6:
         return P[0], P[0], P[0]
-    if code == 7:
-        e = P[1] + P[0]
-        return e, e, 0.5 * P[2] * P[3] + P[0]
     return P[0], P[0], P[0]
 
 
@@ -195,8 +139,9 @@ def _platonic_vertices(kind):
     return v / np.linalg.norm(v, axis=1).max()
 
 
-def hull_planes(vertices):
-    """Unique outward planes (n, d) of the convex hull, scaled to circumradius 1."""
+def hull_planes(vertices, with_vertices=False):
+    """Unique outward planes (n, d) of the convex hull, scaled to circumradius 1 (and, with_vertices, the
+    hull's vertices in the same frame: the shape's local coordinates at circumradius 1)."""
     from scipy.spatial import ConvexHull
     v = np.asarray(vertices, float)
     v = v - v.mean(axis=0)
@@ -208,6 +153,8 @@ def hull_planes(vertices):
     _, first = np.unique(np.round(eq, 7), axis=0, return_index=True)
     eq = eq[np.sort(first)]
     planes = np.column_stack([eq[:, :3], -eq[:, 3]])
+    if with_vertices:
+        return planes, float(hull.volume), float(hull.area), v[hull.vertices]
     return planes, float(hull.volume), float(hull.area)
 
 
@@ -231,12 +178,13 @@ class PolyTable:
         ids = []
         for k in range(n_variants if kind == "irregular" else 1):
             v = (irregular_vertices(n_vertices, rng) if kind == "irregular" else _platonic_vertices(kind))
-            pl, vol, area = hull_planes(v)
+            pl, vol, area, verts = hull_planes(v, with_vertices=True)
             if len(pl) > MAX_FACES:
                 raise ValueError(f"a polyhedron with {len(pl)} faces exceeds the limit of {MAX_FACES}")
             self.planes.append(pl)
+            # the vertices (local frame, circumradius 1) let another program draw the same grain
             self.meta.append({"kind": kind, "volume": vol, "area": area,
-                              "inradius": float(pl[:, 3].min()), "faces": len(pl)})
+                              "inradius": float(pl[:, 3].min()), "faces": len(pl), "vertices": verts.tolist()})
             ids.append(len(self.planes) - 1)
         return ids
 
@@ -263,6 +211,9 @@ def params(shape, size, poly_ids=None):
     if shape in ("sphere", "spheroid", "cylinder", "spherocylinder"):
         a, b = G.semi_axes(shape, size)
         P[0], P[1] = a, b
+        if shape == "spheroid":
+            # the second aspect ratio b/a (1: a spheroid of revolution)
+            P[2] = a * float(size.get("aspect_y", 1.0) or 1.0)
     elif shape == "cube":
         P[0] = P[1] = P[2] = 0.5 * d
     elif shape == "cuboid":
@@ -273,12 +224,6 @@ def params(shape, size, poly_ids=None):
     elif shape == "polyhedron":
         P[0] = 0.5 * d
         P[1] = float((poly_ids or [0])[0])
-    elif shape == "helix":
-        coil_d, pitch, turns = float(size["coil_d"]), float(size["pitch"]), float(size["turns"])
-        P[0] = 0.5 * d
-        P[1] = 0.5 * coil_d
-        P[2] = pitch / (2.0 * math.pi)
-        P[3] = 2.0 * math.pi * turns
     else:
         raise ValueError(f"Unknown shape: {shape}")
     return CODES[shape], P
@@ -291,17 +236,13 @@ def validate(shape, size):
         raise ValueError("The size must be greater than zero")
     if shape in ("sphere", "spheroid", "cylinder", "spherocylinder"):
         G.semi_axes(shape, size)
+        if shape == "spheroid" and float(size.get("aspect_y", 1.0) or 1.0) <= 0:
+            raise ValueError("The second aspect ratio must be greater than zero")
     elif shape in ("cuboid", "superellipsoid"):
         if float(size.get("ly", 0)) <= 0 or float(size.get("lz", 0)) <= 0:
             raise ValueError("All three edge lengths must be greater than zero")
         if shape == "superellipsoid" and not (2.0 <= float(size.get("n", 4)) <= 40.0):
             raise ValueError("The blockiness exponent must lie between 2 (ellipsoid) and 40 (almost a box)")
-    elif shape == "helix":
-        coil_d, pitch, turns = float(size.get("coil_d", 0)), float(size.get("pitch", 0)), float(size.get("turns", 0))
-        if coil_d <= 0 or turns <= 0 or pitch < 0:
-            raise ValueError("A helix needs a coil diameter and a number of turns greater than zero")
-        if coil_d < d:
-            raise ValueError("The coil diameter must be at least the wire diameter")
 
 
 # ---------------------------------------------------------------- measures
@@ -309,9 +250,25 @@ def _gamma(x):
     return math.gamma(x)
 
 
+def _semi_b(P):
+    """The second equatorial semi-axis b of a spheroid (a when P[2] is 0)."""
+    return P[2] if P[2] > 0.0 else P[0]
+
+
+def _ellipsoid_area(a, b, c):
+    """Surface of an ellipsoid: exact for a spheroid of revolution, the Knud Thomsen approximation
+    (p = 1.6075, within 1.1 %) for three different semi-axes."""
+    if abs(a - b) <= 1e-12 * max(a, b):
+        return float(G.surface(1, a, c))
+    p = 1.6075
+    return 4.0 * math.pi * (((a * b) ** p + (a * c) ** p + (b * c) ** p) / 3.0) ** (1.0 / p)
+
+
 def volume(code, P, poly_meta=None):
     """Analytic volume of one particle (P already scaled)."""
-    if code in (0, 1, 2, 3):
+    if code == 1:
+        return 4.0 / 3.0 * math.pi * P[0] * _semi_b(P) * P[1]
+    if code in (0, 2, 3):
         return float(G.volume(code, P[0], P[1]))
     if code == 4:
         return 8.0 * P[0] * P[1] * P[2]
@@ -320,14 +277,13 @@ def volume(code, P, poly_meta=None):
         return 8.0 * P[0] * P[1] * P[2] * _gamma(1 + 1 / n) ** 3 / _gamma(1 + 3 / n)
     if code == 6:
         return poly_meta[int(P[1])]["volume"] * P[0] ** 3
-    if code == 7:
-        length = P[3] * math.hypot(P[1], P[2])
-        return math.pi * P[0] ** 2 * length + 4.0 / 3.0 * math.pi * P[0] ** 3
     raise ValueError(code)
 
 
 def surface(code, P, poly_meta=None):
-    if code in (0, 1, 2, 3):
+    if code == 1:
+        return _ellipsoid_area(P[0], _semi_b(P), P[1])
+    if code in (0, 2, 3):
         return float(G.surface(code, P[0], P[1]))
     if code == 4:
         return 8.0 * (P[0] * P[1] + P[1] * P[2] + P[0] * P[2])
@@ -335,9 +291,6 @@ def surface(code, P, poly_meta=None):
         return _superellipsoid_area(P[0], P[1], P[2], P[3])
     if code == 6:
         return poly_meta[int(P[1])]["area"] * P[0] ** 2
-    if code == 7:
-        length = P[3] * math.hypot(P[1], P[2])
-        return 2.0 * math.pi * P[0] * length + 4.0 * math.pi * P[0] ** 2
     raise ValueError(code)
 
 
@@ -362,14 +315,14 @@ def _superellipsoid_area(a, b, c, n, m=240):
 def min_dim(code, P, poly_meta=None):
     if code == 0 or code == 3:
         return 2.0 * P[0]
-    if code in (1, 2):
+    if code == 1:
+        return 2.0 * min(P[0], _semi_b(P), P[1])
+    if code == 2:
         return 2.0 * min(P[0], P[1])
     if code in (4, 5):
         return 2.0 * min(P[0], P[1], P[2])
     if code == 6:
         return 2.0 * P[0] * poly_meta[int(P[1])]["inradius"]
-    if code == 7:
-        return 2.0 * P[0]
     raise ValueError(code)
 
 
@@ -377,7 +330,7 @@ def circumradius(code, P):
     if code == 0:
         return P[0]
     if code == 1:
-        return max(P[0], P[1])
+        return max(P[0], _semi_b(P), P[1])
     if code == 2:
         return math.hypot(P[0], P[1])
     if code == 3:
@@ -391,8 +344,6 @@ def circumradius(code, P):
         return max(max(P[0], P[1], P[2]), math.sqrt((P[0] * t) ** 2 + (P[1] * t) ** 2 + (P[2] * t) ** 2))
     if code == 6:
         return P[0]
-    if code == 7:
-        return math.hypot(P[1] + P[0], 0.5 * P[2] * P[3] + P[0])
     raise ValueError(code)
 
 
@@ -422,9 +373,8 @@ def clump_template(code, P, planes, nfaces, max_spheres=40, coverage=0.975, res=
 
     The shape is sampled on a fine grid in its own frame; spheres are picked
     greedily at the deepest uncovered point with the distance to the surface
-    as radius, until `coverage` of the volume is covered. Wire-like shapes
-    (cylinder, spherocylinder, helix) are chains of spheres along the axis,
-    which is exact for the spherocylinder and the helix.
+    as radius, until `coverage` of the volume is covered. The spherocylinder
+    is a chain of spheres along its axis, which is exact.
     """
     from scipy import ndimage
     if code == 0:
@@ -434,13 +384,6 @@ def clump_template(code, P, planes, nfaces, max_spheres=40, coverage=0.975, res=
         m = max(2, int(math.ceil(2 * hl / (0.5 * r))) + 1)
         zs = np.linspace(-hl, hl, m)
         return np.column_stack([np.zeros(m), np.zeros(m), zs]), np.full(m, r)
-    if code == 7:
-        r, rc, c, th = P[0], P[1], P[2], P[3]
-        length = th * math.hypot(rc, c)
-        m = max(2, int(math.ceil(length / (0.5 * r))) + 1)
-        t = np.linspace(0.0, th, m)
-        xyz = np.column_stack([rc * np.cos(t), rc * np.sin(t), c * t - 0.5 * c * th])
-        return xyz, np.full(m, r)
     hx, hy, hz = local_half_extents(code, P, planes, nfaces)
     ext = max(hx, hy, hz)
     h = 2.0 * ext / res
@@ -469,8 +412,8 @@ def dem_template(code, P, planes, nfaces, max_spheres=256):
     """Spheres whose union is the particle, for the particle dynamics: its
     lubrication and contacts act between them (multi-sphere particles).
 
-    Compact shapes (longest over shortest extent below 2) and the wire-like
-    ones (spherocylinder, helix) use the packing template, clump_template.
+    Compact shapes (longest over shortest extent below 2) and the
+    spherocylinder use the packing template, clump_template.
     Flat and slender shapes - platelets, flakes, rods, fibres - are spheres
     of half their thickness on a lattice through their middle, one radius
     apart (the surface then undulates by 13 % of the radius); when that
@@ -483,7 +426,7 @@ def dem_template(code, P, planes, nfaces, max_spheres=256):
     hx, hy, hz = local_half_extents(code, P, planes, nfaces)
     half = np.array([hx, hy, hz], float)
     t = float(half.min())
-    if code in (3, 7) or float(half.max()) < 2.0 * t:
+    if code == 3 or float(half.max()) < 2.0 * t:
         return clump_template(code, P, planes, nfaces, max_spheres=40, coverage=0.98)
     if code == 4 or code == 2:
         if code == 2:                                     # cylinder: a disc or a rod
@@ -549,38 +492,170 @@ def _inside_many(code, x, y, z, P, planes, nfaces, out):
         out[i] = inside_local(code, x[i], y[i], z[i], P, planes, nfaces, 0.0)
 
 
+# ---------------------------------------------------------------- particle sizes
+# the dimensions of each shape that can take a size distribution of their own beside the size d; one
+# without (the default) follows d at its nominal ratio
+SECONDARY = {"spheroid": ("aspect", "aspect_y"), "cylinder": ("length",), "spherocylinder": ("length",),
+             "cuboid": ("ly", "lz"), "superellipsoid": ("ly", "lz")}
+# what every dimension is, for the statistics and the files: (key, label, unit)
+DIMENSIONS = {
+    "sphere": [("d", "Diameter", "um")],
+    "spheroid": [("d", "Diameter 2a (x)", "um"), ("aspect", "Aspect ratio c/a (z)", ""),
+                 ("aspect_y", "Aspect ratio b/a (y)", ""), ("lz", "Thickness 2c (z)", "um"), ("ly", "Width 2b (y)", "um")],
+    "cylinder": [("d", "Diameter", "um"), ("length", "Length", "um"), ("aspect", "Length / diameter", "")],
+    "spherocylinder": [("d", "Diameter", "um"), ("length", "Total length", "um"), ("aspect", "Length / diameter", "")],
+    "cube": [("d", "Edge", "um")],
+    "cuboid": [("d", "Edge a (x)", "um"), ("ly", "Edge b (y)", "um"), ("lz", "Edge c (z)", "um")],
+    "superellipsoid": [("d", "Axis a (x)", "um"), ("ly", "Axis b (y)", "um"), ("lz", "Axis c (z)", "um")],
+    "polyhedron": [("d", "Circumscribed diameter", "um")],
+}
+
+
+def has_own(dists, key):
+    """Whether a secondary dimension has a size distribution of its own."""
+    dd = (dists or {}).get(key) or {}
+    return dd.get("type") in ("normal", "lognormal", "table") and (dd.get("type") == "table" or float(dd.get("cv") or 0) > 0)
+
+
+def sample_params(shape, P0, n, dist, dists, rng):
+    """n particles' parameters from the nominal P0 (polyhedron ids are set by the caller): d's size factors from
+    `dist`; each secondary dimension (SECONDARY) with a distribution of its own in `dists` its own factors,
+    independent of d; one without follows d. Up to 5.6.5 every dimension followed d - a fibre's length had no
+    distribution of its own. Returns (P, s) with s the factors of d."""
+    code = CODES[shape]
+    s = G.sample_scales(n, dist, rng)
+    Ps = np.tile(np.asarray(P0, float), (n, 1))
+    own = {k: G.sample_scales(n, (dists or {})[k], rng) for k in SECONDARY.get(shape, ()) if has_own(dists, k)}
+    if code == 1:
+        # a and, through their ratios to it, c and b
+        Ps[:, 0] *= s
+        Ps[:, 1] *= s * own.get("aspect", 1.0)
+        Ps[:, 2] *= s * own.get("aspect_y", 1.0)
+    elif code == 2:
+        Ps[:, 0] *= s
+        Ps[:, 1] *= own["length"] if "length" in own else s
+    elif code == 3:
+        Ps[:, 0] *= s
+        if "length" in own:
+            # the total length its own; never below the diameter (the capsule is then a sphere)
+            L = (2.0 * (P0[1] + P0[0])) * own["length"]
+            Ps[:, 1] = np.maximum(0.5 * L - Ps[:, 0], 0.0)
+        else:
+            Ps[:, 1] *= s
+    elif code in (4, 5) and shape in ("cuboid", "superellipsoid"):
+        Ps[:, 0] *= s
+        Ps[:, 1] *= own["ly"] if "ly" in own else s
+        Ps[:, 2] *= own["lz"] if "lz" in own else s
+    elif code in (4, 5):
+        Ps[:, :3] *= s[:, None]
+    else:
+        Ps[:, 0] *= s
+    return Ps, s
+
+
+def eq_diameters(code, Ps, poly_meta=None):
+    """Volume-equivalent diameters of particles."""
+    V = np.array([volume(int(code), P, poly_meta) for P in Ps])
+    return (6.0 * V / math.pi) ** (1.0 / 3.0)
+
+
+def to_volume_basis(shape, Ps, target, dists, poly_meta=None):
+    """Scale the dimensions that follow d (in place) so that every particle's volume-equivalent diameter is
+    `target` (the size drawn, read as a volume-equivalent diameter); the dimensions with a distribution of
+    their own keep theirs."""
+    code = CODES[shape]
+    target = np.asarray(target, float)
+    if code == 3 and has_own(dists, "length"):
+        # a capsule of a given total length L: V = pi r^2 L - 2/3 pi r^3 (r <= L / 2), solved for r by bisection;
+        # a size beyond the sphere of diameter L makes that sphere
+        L = 2.0 * (Ps[:, 1] + Ps[:, 0])
+        Vt = math.pi / 6.0 * target ** 3
+        lo, hi = np.zeros(len(Ps)), 0.5 * L
+        for _ in range(60):
+            r = 0.5 * (lo + hi)
+            V = math.pi * r * r * L - 2.0 / 3.0 * math.pi * r ** 3
+            lo, hi = np.where(V < Vt, r, lo), np.where(V < Vt, hi, r)
+        r = 0.5 * (lo + hi)
+        r = np.where(math.pi / 6.0 * L ** 3 <= Vt, 0.5 * target, r)
+        Ps[:, 0] = r
+        Ps[:, 1] = np.maximum(0.5 * L - r, 0.0)
+        return Ps
+    eq = eq_diameters(code, Ps, poly_meta)
+    if code == 2 and has_own(dists, "length"):
+        slots, m = [0], 2.0                          # V ~ r^2 at a given length
+    elif shape in ("cuboid", "superellipsoid"):
+        slots = [0] + [k for k, key in ((1, "ly"), (2, "lz")) if not has_own(dists, key)]
+        m = float(len(slots))
+    else:
+        slots = {0: [0], 1: [0, 1, 2], 2: [0, 1], 3: [0, 1], 4: [0, 1, 2], 5: [0, 1, 2], 6: [0]}[code]
+        m = 3.0
+    g = (target / np.maximum(eq, 1e-300)) ** (3.0 / m)
+    for k in slots:
+        Ps[:, k] *= g
+    return Ps
+
+
+def particle_dims(shape, code, Ps, poly_meta=None):
+    """Every reported dimension of particles (DIMENSIONS) and their volumes and volume-equivalent diameters."""
+    Ps = np.asarray(Ps, float)
+    V = np.array([volume(int(code), P, poly_meta) for P in Ps])
+    out = {"volume": V, "eqd": (6.0 * V / math.pi) ** (1.0 / 3.0), "d": 2.0 * Ps[:, 0]}
+    if code == 1:
+        b = np.where(Ps[:, 2] > 0.0, Ps[:, 2], Ps[:, 0])
+        out.update(aspect=Ps[:, 1] / Ps[:, 0], aspect_y=b / Ps[:, 0], lz=2.0 * Ps[:, 1], ly=2.0 * b)
+    elif code == 2:
+        out.update(length=2.0 * Ps[:, 1], aspect=Ps[:, 1] / Ps[:, 0])
+    elif code == 3:
+        out.update(length=2.0 * (Ps[:, 1] + Ps[:, 0]), aspect=(Ps[:, 1] + Ps[:, 0]) / Ps[:, 0])
+    elif shape in ("cuboid", "superellipsoid"):
+        out.update(ly=2.0 * Ps[:, 1], lz=2.0 * Ps[:, 2])
+    return out
+
+
 # ---------------------------------------------------------------- planner stats
-def phase_stats(shape, size_um, dist, poly_meta=None):
-    """Size statistics of one phase for the RVE planner (all shapes)."""
+def _nominal(shape, size_um, poly_meta=None, ids=None):
+    """(code, P, poly_meta, ids) of a phase's nominal particle (polyhedra: up to 4 shapes of its kind, or the
+    shapes `ids` of a structure's table poly_meta)."""
     if poly_meta is None and shape == "polyhedron":
         tab = PolyTable()
         rng = np.random.default_rng(20260929)
         ids = tab.add(size_um.get("poly", "icosahedron"), n_vertices=int(size_um.get("n_vertices", 14)),
                       rng=rng, n_variants=min(4, int(size_um.get("variants", 8)) or 4))
         poly_meta = tab.meta
-        code, P = params(shape, size_um, ids)
-    else:
-        code, P = params(shape, size_um, [0])
-    lo, hi = G.scale_bounds(dist)
-    rng = np.random.default_rng(20260915)
-    s = G.sample_scales(4000, dist, rng)
-    lin = {0: [0], 1: [0, 1], 2: [0, 1], 3: [0, 1], 4: [0, 1, 2], 5: [0, 1, 2], 6: [0], 7: [0, 1, 2]}[code]
+    code, P = params(shape, size_um, ids or [0])
+    return code, P, poly_meta, ids
 
-    def at(scale):
-        Q = P.copy()
-        Q[lin] *= scale
-        return Q
-    vol1 = volume(code, P, poly_meta)
-    md1 = min_dim(code, P, poly_meta)
-    ext1 = 2.0 * circumradius(code, P)
-    eqd1 = (6.0 * vol1 / math.pi) ** (1.0 / 3.0)
+
+def draw_sample(shape, size_um, dist, dists=None, basis="shape", n=4000, seed=20260915, poly_meta=None, ids=None):
+    """What the generator draws for a phase (the same sampling): n particles' parameters, with their
+    polyhedron shapes in turn (a structure's own: poly_meta with its ids) and, for a volume-equivalent size,
+    the dimensions that follow d scaled to it. Returns (code, Ps, poly_meta)."""
+    code, P0, meta, ids = _nominal(shape, size_um, poly_meta, ids)
+    rng = np.random.default_rng(seed)
+    Ps, s = sample_params(shape, P0, n, dist, dists, rng)
+    if code == 6 and ids:
+        Ps[:, 1] = np.asarray(ids)[np.arange(n) % len(ids)]
+    if basis == "volume":
+        to_volume_basis(shape, Ps, float(size_um["d"]) * s, dists, meta)
+    return code, Ps, meta
+
+
+def phase_stats(shape, size_um, dist, poly_meta=None, dists=None, basis="shape"):
+    """Size statistics of one phase for the RVE planner (all shapes), from what the generator draws."""
+    code, Ps, meta = draw_sample(shape, size_um, dist, dists, basis, poly_meta=poly_meta)
+    V = np.array([volume(code, P, meta) for P in Ps])
+    md = np.array([min_dim(code, P, meta) for P in Ps])
+    ext = np.array([2.0 * circumradius(code, P) for P in Ps])
+    eqd = (6.0 * V / math.pi) ** (1.0 / 3.0)
+    ar = np.array([aspect(code, P, meta) for P in Ps])
+    lo, hi = G.scale_bounds(dist)
     return {
-        "code": code, "P": P,
-        "min_dim_p10": float(md1 * np.quantile(s, 0.10)),
-        "min_dim_min": float(md1 * lo),
-        "eqd_max": float(eqd1 * hi), "extent_max": float(ext1 * hi),
-        "extent_median": float(ext1), "eqd_median": float(eqd1),
-        "mean_volume": float(vol1 * np.mean(s ** 3)),
+        "code": code, "P": np.median(Ps, axis=0),
+        "min_dim_p10": float(np.quantile(md, 0.10)),
+        "min_dim_min": float(md.min()),
+        "eqd_max": float(eqd.max()), "extent_max": float(ext.max()),
+        "extent_median": float(np.median(ext)), "eqd_median": float(np.median(eqd)),
+        "mean_volume": float(V.mean()),
         "scale_min": lo, "scale_max": hi,
-        "aspect": float(aspect(code, P, poly_meta)),
+        "aspect": float(np.median(ar)),
     }

@@ -136,7 +136,7 @@ def _fillers(form):
     out = []
     for k, ph in enumerate(form.get("phases") or []):
         props = ph.get("props") or {}
-        if ph.get("shape") == "network" or (props.get("E") is not None and float(props["E"]) <= 0):
+        if ph.get("shape") in ("network", "image") or (props.get("E") is not None and float(props["E"]) <= 0):
             continue
         out.append(k)
     return out
@@ -285,7 +285,8 @@ def parameter_catalogue(form):
             {"path": f"phases.{i}.size.d", "label": f"{name}: diameter", "unit": {"um": "µm"}.get(ph.get("size", {}).get("unit", "um"), ph.get("size", {}).get("unit", "um")), "group": g},
         ]
         if ph.get("shape") == "spheroid":
-            out.append({"path": f"phases.{i}.size.aspect", "label": f"{name}: aspect ratio", "unit": "-", "group": g})
+            out.append({"path": f"phases.{i}.size.aspect", "label": f"{name}: aspect ratio c/a", "unit": "-", "group": g})
+            out.append({"path": f"phases.{i}.size.aspect_y", "label": f"{name}: aspect ratio b/a", "unit": "-", "group": g})
         un = ph.get("size", {}).get("unit", "um")
         if ph.get("shape") in ("cylinder", "spherocylinder"):
             out.append({"path": f"phases.{i}.size.length", "label": f"{name}: length", "unit": un, "group": g})
@@ -297,10 +298,10 @@ def parameter_catalogue(form):
         if ph.get("shape") in ("spheroid", "cylinder", "cuboid", "superellipsoid"):
             out.append({"path": f"phases.{i}.stack_layers", "label": f"{name}: stacked platelets (layers)", "unit": "-",
                         "group": g})
-        if ph.get("shape") == "helix":
-            out += [{"path": f"phases.{i}.size.coil_d", "label": f"{name}: coil diameter", "unit": un, "group": g},
-                    {"path": f"phases.{i}.size.pitch", "label": f"{name}: pitch", "unit": un, "group": g},
-                    {"path": f"phases.{i}.size.turns", "label": f"{name}: turns", "unit": "-", "group": g}]
+        for key, dd in (ph.get("dists") or {}).items():
+            if (dd or {}).get("type") in ("lognormal", "normal"):
+                out.append({"path": f"phases.{i}.dists.{key}.std", "label": f"{name}: standard deviation of the {key}",
+                            "unit": "-" if key.startswith("aspect") else un, "group": g})
         if (ph.get("dist") or {}).get("type") in ("lognormal", "normal"):
             out.append({"path": f"phases.{i}.dist.std", "label": f"{name}: standard deviation of the size",
                         "unit": ph.get("size", {}).get("unit", "um"), "group": g})
@@ -332,7 +333,7 @@ def parameter_catalogue(form):
                  "group": "Matrix regions"}]
     # contact resistance between two different fillers (the pair entry of
     # the contact matrix; empty takes the mean of the two fillers' own)
-    fill = [k for k in _fillers(form) if (form["phases"][k].get("shape") != "network")]
+    fill = [k for k in _fillers(form) if (form["phases"][k].get("shape") not in ("network", "image"))]
     for a_, b_ in itertools.combinations(fill, 2):
         na = form["phases"][a_].get("name") or f"Phase {a_+1}"
         nb = form["phases"][b_].get("name") or f"Phase {b_+1}"

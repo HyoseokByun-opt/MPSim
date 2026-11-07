@@ -1086,7 +1086,7 @@ def t_shapes():
              ("cube", {"d": 18}, None), ("cuboid", {"d": 30, "ly": 16, "lz": 8}, None),
              ("superellipsoid", {"d": 26, "ly": 20, "lz": 14, "n": 5}, None),
              ("polyhedron", {"d": 30}, ico), ("polyhedron", {"d": 30}, irr),
-             ("helix", {"d": 5, "coil_d": 20, "pitch": 10, "turns": 2.5}, None)]
+             ("spheroid", {"d": 30, "aspect": 0.4, "aspect_y": 0.7}, None)]
     worst = 0.0
     for shape, size, ids in cases:
         code, P = SH.params(shape, size, ids)
@@ -1873,40 +1873,59 @@ def t_settle():
             f"{ck['thermal_stat']['note'].split(';')[1].strip()}")
 
 
-@check("Progressive overlap in the random placement: log-normal irregular grains at 60 vol% whose placement jams "
-       "short reach the loading in seconds (not minutes of clump relaxation); the voxel overlap check finds no overlap in "
-       "a placement that reached it, and the overlap it allowed in one that did not", quick=False)
+@check("Progressive overlap in the random placement: log-normal spheroids (c/a 0.5) at 50 vol% whose placement jams "
+       "2-3 % short are finished in seconds by placing the same particles with an overlap of a voxel or two (not "
+       "minutes of clump relaxation), so the sizes placed stay the distribution's; the voxel overlap check finds the "
+       "overlap it allowed, and none in a placement at 30 vol% that needs none", quick=False)
 def t_rsa_overlap():
     from mpsim import generate as GEN
+    from mpsim import grains as GR
     from mpsim import pipeline as PL
+    from mpsim import shapes as SH
     from mpsim import spec as S
-    form = {"name": "g", "matrix": {"material_id": "epoxy"},
-            "phases": [{"material_id": "sio2", "name": "grains", "shape": "polyhedron",
-                        "size": {"d": 4, "unit": "um", "poly": "irregular", "variants": 0},
-                        "dist": {"type": "lognormal", "std": 1.6}, "fraction": {"value": 60, "basis": "vol"}}],
-            "rve": {"auto": False, "L_um": 30, "voxel_um": 0.5, "quality": "fast"}, "analyses": {"thermal": True},
-            "options": {"directions": "z"}}
-    spec = S.normalize(form)
-    gp = PL._generator_phases(spec)
-    out = {}
+
+    def phases(vf):
+        form = {"name": "g", "matrix": {"material_id": "epoxy"},
+                "phases": [{"material_id": "sio2", "name": "spheroids", "shape": "spheroid",
+                            "size": {"d": 4.5, "aspect": 0.5, "unit": "um"}, "dist": {"type": "lognormal", "std": 1.5},
+                            "fraction": {"value": vf, "basis": "vol"}}],
+                "rve": {"auto": False, "L_um": 30, "voxel_um": 0.5, "quality": "fast"}, "analyses": {"thermal": True},
+                "options": {"directions": "z"}}
+        spec = S.normalize(form)
+        return PL._generator_phases(spec), PL.overlap_steps(spec["options"])
+
+    gp, ov = phases(50)
+    out = []
+    xr = []
     for seed in (1, 2):
         lines = []
         t0 = time.time()
-        lab, info = GEN.generate(60, 0.5, gp, seed=seed, log=lines.append, contacts="keep", gap_vox=0.0,
-                                 overlap_steps=PL.overlap_steps(spec["options"]))
+        lab, info = GEN.generate(60, 0.5, gp, seed=seed, log=lines.append, contacts="keep", gap_vox=0.0, overlap_steps=ov)
         dt = time.time() - t0
         oc = GEN.overlap_check(lab.shape, 0.5, info, gp)
         vf = float((lab == 1).mean())
-        out[seed] = (dt, info.get("overlap_vox", 0), oc, vf, any("clump packing" in l for l in lines))
-    d1, k1, oc1, v1, c1 = out[1]
-    d2, k2, oc2, v2, c2 = out[2]
-    expect(k1 == 0 and oc1["shared"] == 0 and abs(v1 - 0.6) < 0.002, f"seed 1: overlap {k1}, shared {oc1['shared']}, vf {v1}")
-    expect(1 <= k2 <= 3 and not c2 and v2 > 0.595, f"seed 2: overlap {k2}, clump {c2}, vf {v2}")
-    expect(oc2["shared"] > 0 and oc2["of_particles"] < 0.02, f"seed 2 shared {oc2['shared']} ({oc2['of_particles']})")
-    expect(d2 < 60, f"seed 2 took {d2:.0f} s")
-    return (f"seed 1 placed without overlap ({d1:.1f} s, {100 * v1:.2f} vol%); seed 2 jammed short and was finished with "
-            f"up to {k2} voxel(s) of overlap in {d2:.1f} s ({100 * v2:.2f} vol%), {100 * oc2['of_particles']:.2f} % of its "
-            f"particle voxels in two particles")
+        k = info.get("overlap_vox", 0)
+        clump = any("clump packing" in str(l) for l in lines)
+        expect(any("jammed" in str(l) for l in lines), f"seed {seed}: the placement did not jam ({vf:.4f})")
+        expect(1 <= k <= 3 and not clump and vf > 0.495, f"seed {seed}: overlap {k}, clump {clump}, vf {vf:.4f}")
+        expect(0 < oc["shared"] and oc["of_particles"] < 0.02, f"seed {seed}: shared {oc['shared']} ({oc['of_particles']:.4f})")
+        expect(dt < 60, f"seed {seed} took {dt:.0f} s")
+        xr.append(SH.particle_dims("spheroid", 1, info["particles"]["P"])["d"])
+        out.append(f"seed {seed} {100 * vf:.2f} vol% with up to {k} voxel(s), {100 * oc['of_particles']:.2f} % shared, {dt:.1f} s")
+    # the sizes placed: the input's (every particle drawn is placed)
+    code, Ps, _ = SH.draw_sample("spheroid", gp[0]["size_um"], gp[0]["dist"], n=20000)
+    xi = SH.particle_dims("spheroid", code, Ps)["d"]
+    a = np.concatenate(xr)
+    ks = GR._ks(a, xi)
+    err = a.mean() / xi.mean() - 1
+    se3 = 3 * xi.std() / xi.mean() / math.sqrt(len(a))
+    expect(abs(err) <= se3 and ks["p"] >= 0.001, f"sizes placed: mean {100 * err:+.1f} % (3 se {100 * se3:.1f} %), p {ks['p']:.3g}")
+    gp3, ov3 = phases(30)
+    lab, info = GEN.generate(60, 0.5, gp3, seed=1, log=lambda *a: None, contacts="keep", gap_vox=0.0, overlap_steps=ov3)
+    oc = GEN.overlap_check(lab.shape, 0.5, info, gp3)
+    expect(info.get("overlap_vox", 0) == 0 and oc["shared"] == 0 and abs(float((lab == 1).mean()) - 0.3) < 0.002,
+           f"30 vol%: overlap {info.get('overlap_vox')}, shared {oc['shared']}")
+    return "; ".join(out) + f"; sizes placed {100 * err:+.1f} % (3 se {100 * se3:.1f} %), p {ks['p']:.2f}; 30 vol% without overlap"
 
 
 @check("Progressive overlap: spheres at 66 vol% (above random close packing) reach the loading with an overlap of "
@@ -3015,6 +3034,207 @@ def t_stop_at_gate():
     return (f"a killed waiter {'hangs' if hung['Event'] else 'does not hang'} a multiprocessing Event's set(), not the "
             f"Flag's; A solved and finished ({ja.ended - ja.started:.0f} s); B, stopped at the gate, was not granted; "
             f"the queue answers")
+
+
+def _raster_from_files(folder, shape, h, film):
+    """The structure drawn again from particles.csv and polyhedra.csv alone (the conventions of
+    particles_README.txt; numpy, no MPSim code): a voxel belongs to a particle when its centre lies inside it."""
+    import csv
+    from scipy.spatial import ConvexHull
+    rows = list(csv.DictReader(open(os.path.join(folder, "particles.csv"), encoding="utf-8")))
+    hulls = {}
+    pf = os.path.join(folder, "polyhedra.csv")
+    if os.path.exists(pf):
+        vs = {}
+        for r in csv.DictReader(open(pf, encoding="utf-8")):
+            vs.setdefault(int(r["variant"]), []).append([float(r["x"]), float(r["y"]), float(r["z"])])
+        hulls = {k: ConvexHull(np.array(v)).equations for k, v in vs.items()}
+    nx, ny, nz = shape
+    lab = np.zeros(shape, bool)
+    for r in rows:
+        f = lambda k: float(r[k]) if r[k] != "" else None                       # noqa: E731
+        c = np.array([f("x_um"), f("y_um"), f("z_um")])
+        R = np.array([[f(f"r{i}{j}") for j in (1, 2, 3)] for i in (1, 2, 3)])
+        a, b, cc = 0.5 * f("lx_um"), 0.5 * f("ly_um"), 0.5 * f("lz_um")
+        ext = (0.5 * f("d_um") if r["shape"] == "polyhedron" else math.sqrt(a * a + b * b + cc * cc)) + h
+        rng_ = lambda c0: np.arange(int(math.floor((c0 - ext) / h)) - 1, int(math.ceil((c0 + ext) / h)) + 2)  # noqa: E731
+        ii, jj, kk = rng_(c[0]), rng_(c[1]), rng_(c[2])
+        if film:
+            kk = kk[(kk >= 0) & (kk < nz)]
+        X, Y, Z = np.meshgrid((ii + 0.5) * h, (jj + 0.5) * h, (kk + 0.5) * h, indexing="ij")
+        u = np.stack([X - c[0], Y - c[1], Z - c[2]], -1) @ R.T          # local = R (p - c)
+        s = r["shape"]
+        if s == "sphere":
+            m = (u ** 2).sum(-1) <= a * a
+        elif s == "spheroid":
+            m = (u[..., 0] / a) ** 2 + (u[..., 1] / b) ** 2 + (u[..., 2] / cc) ** 2 <= 1
+        elif s == "cylinder":
+            m = (u[..., 0] ** 2 + u[..., 1] ** 2 <= a * a) & (np.abs(u[..., 2]) <= 0.5 * f("length_um"))
+        elif s == "spherocylinder":
+            hl = 0.5 * f("length_um") - a
+            m = u[..., 0] ** 2 + u[..., 1] ** 2 + (u[..., 2] - np.clip(u[..., 2], -hl, hl)) ** 2 <= a * a
+        elif s in ("cube", "cuboid"):
+            m = (np.abs(u[..., 0]) <= a) & (np.abs(u[..., 1]) <= b) & (np.abs(u[..., 2]) <= cc)
+        elif s == "superellipsoid":
+            n = f("n_exponent")
+            m = np.abs(u[..., 0] / a) ** n + np.abs(u[..., 1] / b) ** n + np.abs(u[..., 2] / cc) ** n <= 1
+        else:
+            eq = hulls[int(r["variant"])]
+            m = np.all((u / (0.5 * f("d_um"))) @ eq[:, :3].T + eq[:, 3] <= 1e-9, axis=-1)
+        I, J, K = np.meshgrid(ii % nx, jj % ny, kk if film else kk % nz, indexing="ij")
+        lab[I[m], J[m], K[m]] = True
+    return lab
+
+
+def _gen_phase(shape, size, vf, dist=None, dists=None, basis=None):
+    ph = dict(name=shape, shape=shape, size_um=size, dist=dist or {"type": "lognormal", "cv": 0.4}, vf=vf,
+              orientation={"mode": "iso", "spread_deg": 0}, overlap=False, gap_frac=0.0)
+    if dists:
+        ph["dists"] = dists
+    if basis:
+        ph["size_basis"] = basis
+    return ph
+
+
+@check("Particle files: particles.csv and polyhedra.csv alone, read with the conventions of particles_README.txt, "
+       "draw every voxel of the generated structure again (sphere, triaxial spheroid, fibre with its own length, "
+       "capsule by volume, cuboid, rounded box, irregular polyhedron; bulk and film)")
+def t_particle_files():
+    import shutil
+    import tempfile
+    from mpsim import generate as GEN
+    from mpsim import grains as GR
+    cases = [_gen_phase("sphere", {"d": 8.0}, 0.3),
+             _gen_phase("spheroid", {"d": 10.0, "aspect": 0.4, "aspect_y": 0.7}, 0.2, None, {"aspect": {"type": "normal", "cv": 0.1}}),
+             _gen_phase("cylinder", {"d": 4.0, "length": 16.0}, 0.15, None, {"length": {"type": "lognormal", "cv": 0.3}}),
+             _gen_phase("spherocylinder", {"d": 6.0, "length": 14.0}, 0.15, None, None, "volume"),
+             _gen_phase("cuboid", {"d": 10.0, "ly": 7.0, "lz": 4.0}, 0.2, None, {"lz": {"type": "normal", "cv": 0.2}}),
+             _gen_phase("superellipsoid", {"d": 10.0, "ly": 7.0, "lz": 5.0, "n": 4.0}, 0.2),
+             _gen_phase("polyhedron", {"d": 10.0, "poly": "irregular", "n_vertices": 14, "variants": 8}, 0.2)]
+    out = []
+    for k, ph in enumerate(cases):
+        nz = 24 if k in (0, 6) else None              # two films
+        lab, info = GEN.generate(48, 1.0, [ph], seed=3, log=lambda *a: None, contacts="keep", gap_vox=0.0,
+                                 overlap_steps={"tries": 2, "max_vox": 3}, nz=nz)
+        d = tempfile.mkdtemp(prefix="mpsim_pf_")
+        try:
+            GR.write_particle_files(d, [{"name": ph["shape"]}], [ph], info)
+            mine = _raster_from_files(d, lab.shape, 1.0, bool(info["film"]))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        diff = int(np.count_nonzero(mine != (lab > 0)))
+        expect(diff == 0, f"{ph['shape']}{' film' if nz else ''}: {diff} voxels differ from the generated structure")
+        out.append(f"{ph['shape']}{' (film)' if nz else ''} {int((lab > 0).sum())}")
+    return "voxel for voxel: " + ", ".join(out)
+
+
+@check("Sizes realised in every dimension: a triaxial spheroid with its own c/a distribution, a fibre with its own "
+       "length distribution and irregular grains entered by their volume-equivalent size - each dimension's number "
+       "mean within three standard errors of the input and the two-sample test not rejecting at 0.1 %")
+def t_sizes_realised():
+    from mpsim import generate as GEN
+    from mpsim import grains as GR
+    from mpsim import shapes as SH
+    cases = [_gen_phase("spheroid", {"d": 12.0, "aspect": 0.4, "aspect_y": 0.7}, 0.2, None, {"aspect": {"type": "normal", "cv": 0.15}}),
+             _gen_phase("cylinder", {"d": 5.0, "length": 20.0}, 0.2, None, {"length": {"type": "lognormal", "cv": 0.3}}),
+             _gen_phase("polyhedron", {"d": 8.0, "poly": "irregular", "n_vertices": 14, "variants": 8}, 0.2, None, None, "volume")]
+    out = []
+    for ph in cases:
+        xr, xi = {}, {}
+        for sd in range(2):
+            lab, info = GEN.generate(80, 1.0, [ph], seed=11 + 100 * sd, log=lambda *a: None, contacts="keep",
+                                     gap_vox=0.0, overlap_steps={"tries": 2, "max_vox": 3})
+            parts = info["particles"]
+            code = int(parts["codes"][0])
+            dr = SH.particle_dims(ph["shape"], code, parts["P"], info.get("poly_meta"))
+            ids = sorted({int(p[1]) for p in parts["P"]}) if code == 6 else None
+            c2, Ps, meta = SH.draw_sample(ph["shape"], ph["size_um"], ph["dist"], ph.get("dists"),
+                                          ph.get("size_basis") or "shape", n=20000,
+                                          poly_meta=info.get("poly_meta") if ids else None, ids=ids)
+            di = SH.particle_dims(ph["shape"], c2, Ps, meta)
+            for key in [k for k, _, _ in SH.DIMENSIONS[ph["shape"]] if k in dr] + ["eqd"]:
+                xr.setdefault(key, []).append(dr[key])
+                xi.setdefault(key, []).append(di[key])
+        worst = []
+        for key in xr:
+            a, b = np.concatenate(xr[key]), np.concatenate(xi[key])
+            if b.std() <= 1e-9 * b.mean():
+                continue
+            err = a.mean() / b.mean() - 1
+            se3 = 3 * b.std() / b.mean() / math.sqrt(len(a))
+            ks = GR._ks(a, b)
+            expect(abs(err) <= max(se3, 0.02) and ks["p"] >= 0.001,
+                   f"{ph['shape']} {key}: mean {b.mean():.4g} -> {a.mean():.4g} ({100 * err:+.1f} %, 3 se {100 * se3:.1f} %), "
+                   f"two-sample p {ks['p']:.3g}")
+            worst.append(abs(err) / max(se3, 1e-12))
+        out.append(f"{ph['shape']} {len(a)} particles, worst {max(worst):.2f} of 3 se")
+    return "; ".join(out)
+
+
+@check("Structure from a TIFF: MPSim's structure.tif and structure_labels.tif, an RGB stack, a palette image and an "
+       "ImageJ stack read back voxel for voxel; thresholds found automatically split a noisy grey image into its "
+       "classes; an image form plans the image's grid and assigns the classes' materials")
+def t_image_input():
+    import shutil
+    import tempfile
+    from mpsim import spec as S
+    import tifffile
+    from mpsim import generate as GEN
+    from mpsim import image_input as IM
+    from mpsim import pipeline as PL
+    from mpsim import rve as R
+    ph = [_gen_phase("sphere", {"d": 8.0}, 0.3), dict(_gen_phase("sphere", {"d": 5.0}, 0.06), name="pores")]
+    lab, info = GEN.generate(48, 1.0, ph, seed=4, log=lambda *a: None, contacts="keep", gap_vox=0.0)
+    table = [{"name": n, "kind": k, "props": {"E": e, "k": 1.0}} for n, k, e in
+             (("matrix", "matrix", 3e9), ("filler", "core", 300e9), ("pores", "core", 0.0))]
+    root = tempfile.mkdtemp(prefix="mpsim_img_")
+    try:
+        PL.export_structure(root, lab, table, 1.0, np.bincount(lab.ravel(), minlength=3) / lab.size)
+        zyx = lab.transpose(2, 1, 0)
+        cols = np.array([[255, 255, 255], [200, 30, 30], [20, 20, 200]], np.uint8)
+        tifffile.imwrite(os.path.join(root, "rgb.tif"), cols[zyx], photometric="rgb")
+        tifffile.imwrite(os.path.join(root, "pal.tif"), zyx.astype(np.uint8), photometric="palette",
+                         colormap=np.array([[0, 255, 0] + [0] * 253, [0, 0, 0] + [0] * 253, [0, 0, 255] + [0] * 253], np.uint16) * 257)
+        tifffile.imwrite(os.path.join(root, "ij.tif"), zyx.astype(np.uint8), imagej=True)
+        read = []
+        for f in ("structure.tif", "structure_labels.tif", "rgb.tif", "pal.tif", "ij.tif"):
+            meta = IM.store(os.path.join(root, "store"), os.path.join(root, f), f)
+            expect(meta["shape"] == list(lab.shape), f"{f}: shape {meta['shape']}")
+            cls = sorted(meta["classes"], key=lambda c: -c["fraction"])        # matrix, filler, pores by share
+            img = {"dir": meta["dir"], "h_um": 1.0, "classes": [dict(c, role="matrix") if k == 0 else dict(c, role="phase", phase=k - 1)
+                                                               for k, c in enumerate(cls)],
+                   "phase_list": [{"name": "filler", "vf": 0.3}, {"name": "pores", "vf": 0.06}]}
+            back, _ = IM.labels(img)
+            expect(np.array_equal(back, lab), f"{f} ({meta['mode']}): {int(np.count_nonzero(back != lab))} voxels differ")
+            read.append(f"{f} ({meta['mode']})")
+        # a noisy grey image: the automatic thresholds recover the classes
+        rng = np.random.default_rng(1)
+        noisy = np.clip(np.array([40, 120, 220])[zyx] + rng.normal(0, 12, zyx.shape), 0, 255).astype(np.uint8)
+        tifffile.imwrite(os.path.join(root, "noisy.tif"), noisy, imagej=True)
+        meta = IM.store(os.path.join(root, "store"), os.path.join(root, "noisy.tif"), "noisy.tif")
+        expect(meta["classes"] is None or len(meta["classes"]) > 3, "a noisy image has many grey values")
+        t = IM.auto_thresholds(meta["values"], meta["counts"], 3)
+        cls = IM.classes_of(meta, t)
+        want = np.bincount(lab.ravel(), minlength=3) / lab.size
+        got = [c["fraction"] for c in cls]
+        expect(all(abs(g - w) < 0.003 for g, w in zip(got, want)), f"thresholds {t}: shares {got} against {want.tolist()}")
+        # a form: the plan takes the image's grid, the classes their materials
+        meta = IM.store(os.path.join(root, "store"), os.path.join(root, "structure_labels.tif"), "labels.tif")
+        form = {"name": "img", "source": "image", "analyses": {"thermal": True},
+                "image": {"dir": meta["dir"], "voxel": 0.5, "unit": "um",
+                          "classes": [{"key": 0, "role": "matrix", "material_id": "epoxy"},
+                                      {"key": 1, "material_id": "al2o3", "name": "Alumina"},
+                                      {"key": 2, "material_id": "air", "name": "Pores"}]}}
+        spec = S.normalize(form)
+        plan = R.plan(PL._plan_phases(spec), dict(spec["rve"], contacts="keep", elastic_method="fans"), {"thermal"})
+        expect(plan["shape"] == list(lab.shape) and abs(plan["h_um"] - 0.5) < 1e-12, f"plan {plan.get('shape')} {plan['h_um']}")
+        expect([p["name"] for p in spec["phases"]] == ["Alumina", "Pores"] and spec["phases"][1]["void"]
+               and spec["matrix"]["material_id"] == "epoxy", "materials of the classes")
+        expect(abs(spec["phases"][0]["vf"] - want[1]) < 1e-9, f"filler share {spec['phases'][0]['vf']} against {want[1]}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return f"read back exactly: {', '.join(read)}; thresholds {', '.join(f'{x:.0f}' for x in t)} split the noisy image; plan {plan['shape']}"
+
 
 
 def main():

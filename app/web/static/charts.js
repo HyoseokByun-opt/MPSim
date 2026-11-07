@@ -229,6 +229,53 @@
     } else if (o.label) legend(g, [{ label: o.label, color: o.color || C.PALETTE[0] }], box.L, 14);
   };
 
+  /* the realised against the input in common bins: {edges, real, input, xlog, xlabel, ylabel, cumulative,
+     labels: [realised, input]}. Per bin: the realised as bars and the input as a line with points through the bin
+     centres, on one scale (both are % of the same total); cumulative: both as lines over the upper bin edges. */
+  C.compare = function (canvas, o) {
+    const { g, w, h } = setup(canvas);
+    const box = { L: 58, R: 16, T: 26, B: 38 };
+    const e = o.edges || [], n = e.length - 1;
+    if (n < 1 || !(o.real || []).length) { noData(g, w, h); return; }
+    const tx = (v) => (o.xlog ? Math.log10(v) : v);
+    const x0 = tx(e[0]), x1 = tx(e[n]) > x0 ? tx(e[n]) : x0 + 1;
+    const inp = o.input || [];
+    const ymax = o.cumulative ? 100 : Math.max(...o.real, ...inp, 1e-300) * 1.1;
+    axes(g, w, h, box, { xlabel: o.xlabel, ylabel: o.ylabel, xlog: o.xlog }, [x0, x1], [0, ymax]);
+    const X = (v) => box.L + ((tx(v) - x0) / (x1 - x0)) * (w - box.L - box.R);
+    const Y = (v) => h - box.B - (Math.max(0, v) / ymax) * (h - box.T - box.B);
+    const cr = o.color || "#0b62c4", ci = o.color2 || "#d1242f";
+    const lab = o.labels || ["Realised", "Input"];
+    g.save(); g.beginPath(); g.rect(box.L, box.T, w - box.L - box.R, h - box.T - box.B); g.clip();
+    const mid = (k) => (o.xlog ? Math.sqrt(e[k] * e[k + 1]) : 0.5 * (e[k] + e[k + 1]));
+    if (o.cumulative) {
+      [[o.real, cr, []], [inp, ci, [6, 4]]].forEach(([y, col, dash]) => {
+        if (!y.length) return;
+        g.strokeStyle = col; g.lineWidth = 2; g.setLineDash(dash); g.lineJoin = "round";
+        g.beginPath(); g.moveTo(X(e[0]), Y(0));
+        y.forEach((v, k) => g.lineTo(X(e[k + 1]), Y(v)));
+        g.stroke(); g.setLineDash([]);
+      });
+    } else {
+      o.real.forEach((v, k) => {
+        if (!(v > 0)) return;
+        const a = X(e[k]), b2 = X(e[k + 1]), gap = Math.min(1, 0.1 * (b2 - a));
+        g.fillStyle = cr; g.globalAlpha = 0.8;
+        g.fillRect(a + gap, Y(v), Math.max(1, b2 - a - 2 * gap), h - box.B - Y(v));
+        g.globalAlpha = 1;
+      });
+      if (inp.length) {
+        g.strokeStyle = ci; g.lineWidth = 2; g.lineJoin = "round"; g.beginPath();
+        inp.forEach((v, k) => (k ? g.lineTo(X(mid(k)), Y(v)) : g.moveTo(X(mid(k)), Y(v))));
+        g.stroke();
+        g.fillStyle = "#fff";
+        inp.forEach((v, k) => { g.beginPath(); g.arc(X(mid(k)), Y(v), 2.5, 0, 2 * Math.PI); g.fill(); g.stroke(); });
+      }
+    }
+    g.restore();
+    legend(g, [{ label: lab[0], color: cr }].concat(inp.length ? [{ label: lab[1], color: ci, dash: o.cumulative ? [6, 4] : [] }] : []), box.L, 14, w);
+  };
+
   /* horizontal bars: {labels, values, colors, unit, max} */
   C.bars = function (canvas, o) {
     const { g, w, h } = setup(canvas);

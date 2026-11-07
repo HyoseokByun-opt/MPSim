@@ -23,6 +23,9 @@ import numpy as np
 
 SHAPE_CODES = {"sphere": 0, "spheroid": 1, "cylinder": 2, "spherocylinder": 3}
 NETWORK = "network"
+# a phase of a structure read from an image (image_input): voxels, no particles
+IMAGE = "image"
+NON_PARTICLE = (NETWORK, IMAGE)
 UNIT_TO_UM = {"nm": 1e-3, "um": 1.0, "mm": 1e3}
 
 
@@ -130,7 +133,9 @@ def aspect_ratio(shape, size):
     if shape == "sphere":
         return 1.0
     if shape == "spheroid":
-        return float(size.get("aspect", 1.0))
+        # the larger of the two aspect ratios against the diameter, or the flatter one inverted
+        ar = [float(size.get("aspect", 1.0)), float(size.get("aspect_y", 1.0) or 1.0)]
+        return max(max(ar), 1.0 / min(ar))
     return float(size["length"]) / float(size["d"])
 
 
@@ -358,31 +363,10 @@ def orientation_moments(mode):
             "xy": (0.5, 0.5, 0.0)}[mode]
 
 
-def phase_size_stats(shape, size_um, dist):
-    """Deterministic size statistics used by the RVE planner.
-
-    Quantiles are evaluated on the truncated distribution, so they are what
-    the generator will actually draw.
-    """
-    if shape not in SHAPE_CODES:
-        from . import shapes as SH
-        return SH.phase_stats(shape, size_um, dist)
-    code = SHAPE_CODES[shape]
-    a, b = semi_axes(shape, size_um)
-    lo, hi = scale_bounds(dist)
-    rng = np.random.default_rng(20260915)
-    s = sample_scales(20000, dist, rng)
-    V = volume(code, a * s, b * s)
-    md = min_dim(code, a * s, b * s)
-    return {
-        "code": code,
-        "a": a, "b": b,
-        "min_dim_p10": float(np.quantile(md, 0.10)),
-        "min_dim_min": float(min_dim(code, a * lo, b * lo)),
-        "eqd_max": float(eq_diameter(code, a * hi, b * hi)),
-        "extent_max": float(max_extent(code, a * hi, b * hi)),
-        "extent_median": float(max_extent(code, a, b)),
-        "eqd_median": float(eq_diameter(code, a, b)),
-        "mean_volume": float(V.mean()),
-        "scale_min": lo, "scale_max": hi,
-    }
+def phase_size_stats(shape, size_um, dist, dists=None, basis="shape"):
+    """Deterministic size statistics used by the RVE planner: from what the
+    generator draws (shapes.draw_sample - the same sampling, every dimension
+    with its own distribution where it has one), so quantiles are those of
+    the truncated distributions."""
+    from . import shapes as SH
+    return SH.phase_stats(shape, size_um, dist, dists=dists, basis=basis or "shape")

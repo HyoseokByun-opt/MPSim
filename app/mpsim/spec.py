@@ -92,7 +92,7 @@ def _num(x, what, lo=None, hi=None, allow_none=False):
     return v
 
 
-_LINEAR = ("d", "length", "ly", "lz", "coil_d", "pitch")
+_LINEAR = ("d", "length", "ly", "lz")
 
 
 def _rescale(size_um, d_new):
@@ -375,10 +375,79 @@ def _fill_from_library(entry, lib):
     entry.setdefault("name", m["name"])
 
 
+def _image_form(form):
+    """A structure from an image (5.6.6): the form's matrix and phases from the image's classes - the class
+    marked as the matrix, every other class a phase of shape 'image' with its share of the voxels - and the
+    RVE from the image's grid. Returns the image's description for the pipeline (spec['image'])."""
+    import os
+    from . import image_input as IM
+    im = form.get("image") or {}
+    d = im.get("dir")
+    if (not d or not os.path.isfile(os.path.join(d, IM.META_FILE))) and im.get("example"):
+        # an example shipped with MPSim (a preset's image), read once into a cache of its own
+        d = IM.example_dir(im["example"])
+    if not d or not os.path.isfile(os.path.join(d, IM.META_FILE)):
+        raise ValueError("Structure from an image: no image is loaded (Structure tab, Load TIFF)")
+    meta = IM.load_meta(d)
+    unit = im.get("unit", "um")
+    if unit not in G.UNIT_TO_UM:
+        raise ValueError(f"Structure from an image: unknown length unit '{unit}'")
+    h = G.to_um(_num(im.get("voxel"), "voxel size of the image", lo=1e-9), unit)
+    thr = None
+    if im.get("thresholds") and meta["mode"] == "gray":
+        thr = sorted(float(x) for x in im["thresholds"])[:IM.MAX_THRESHOLDS]
+    classes = IM.classes_of(meta, thr)
+    if classes is None:
+        raise ValueError(f"Structure from an image: the image has {meta['n_values']:,} grey values - split them "
+                         f"into classes by thresholds (Structure tab)")
+    extrude = 0
+    if meta.get("is_2d"):
+        extrude = int(_num(im.get("extrude"), "voxels of the 2D image along z", 1, 4096))
+    nx, ny, nz = meta["shape"]
+    nz = extrude or nz
+    given = {str(c.get("key")): c for c in im.get("classes") or []}
+    phases, cls, mx = [], [], None
+    for c in classes:
+        g = given.get(str(c["key"])) or {}
+        role = "matrix" if g.get("role") == "matrix" else "phase"
+        entry = {"key": c["key"], "label": c["label"], "role": role}
+        if role == "matrix":
+            mx = mx or g
+        elif not c["count"]:
+            # a range or value no voxel holds (a threshold beyond the image's values): no phase
+            entry["role"] = "empty"
+        else:
+            entry["phase"] = len(phases)
+            phases.append({"name": g.get("name") or c["label"], "material_id": g.get("material_id") or "al2o3",
+                           "props": g.get("props"), "shape": G.IMAGE, "size": {"d": h, "unit": "um"},
+                           "dist": {"type": "mono"}, "fraction": {"value": min(100.0 * c["fraction"], 99.0), "basis": "vol"},
+                           "r_int": g.get("r_int") or 0.0, "r_contact": 0.0})
+        cls.append(entry)
+    if mx is None:
+        raise ValueError("Structure from an image: mark one class as the matrix (Structure tab)")
+    form["matrix"] = {"name": mx.get("name") or "Matrix", "material_id": mx.get("material_id") or "epoxy",
+                      "props": mx.get("props")}
+    form["phases"] = phases
+    form.pop("matrix_regions", None)
+    form.pop("contact_rc", None)
+    rv = form.setdefault("rve", {})
+    rv.update(auto=False, L_um=nx * h, voxel_um=h, N=None, film=False, arrangement="random", n_seeds=1,
+              realisations={"mode": "fixed"}, dispersion={"mode": "uniform"}, auto_enlarge=False, stat_enlarge=False)
+    return {"dir": os.path.abspath(d), "id": meta.get("id"), "name": meta.get("name"), "h_um": h,
+            "shape": [int(nx), int(ny), int(nz)], "mode": meta["mode"], "thresholds": thr, "extrude": extrude,
+            "classes": cls}
+
+
 def normalize(form):
     form = copy.deepcopy(form or {})
     errors = []
     lib = M.library_by_id()
+    image = None
+    if form.get("source") == "image":
+        try:
+            image = _image_form(form)
+        except ValueError as e:
+            errors.append(str(e))
     try:
         _fill_from_library(form.get("matrix"), lib)
         for mr in form.get("matrix_regions") or []:
@@ -409,7 +478,10 @@ def normalize(form):
         try:
             props = M.clean_props(ph.get("props") or {}, where=where)
             shape = ph.get("shape", "sphere")
-            if shape not in SH.USER_SHAPES and shape != G.NETWORK:
+            if shape == "helix":
+                raise ValueError(f"{where}: the helix shape was removed in MPSim 5.6.6; a cylinder or a capsule with "
+                                 f"their own length distribution describes a fibre")
+            if shape not in SH.USER_SHAPES and shape not in G.NON_PARTICLE:
                 raise ValueError(f"{where}: unknown shape '{shape}'")
             unit = (ph.get("size") or {}).get("unit", "um")
             if unit not in G.UNIT_TO_UM:
@@ -418,6 +490,8 @@ def normalize(form):
             size_um = {"d": G.to_um(_num(sz.get("d"), f"size of {where}", lo=1e-9), unit)}
             if shape == "spheroid":
                 size_um["aspect"] = _num(sz.get("aspect", 1.0), f"aspect ratio of {where}", 0.01, 100.0)
+                # the second aspect ratio b/a (5.6.6; 1: a spheroid of revolution, as before)
+                size_um["aspect_y"] = _num(sz.get("aspect_y", 1.0) or 1.0, f"second aspect ratio of {where}", 0.01, 100.0)
             if shape in ("cylinder", "spherocylinder"):
                 size_um["length"] = G.to_um(_num(sz.get("length"), f"length of {where}", lo=1e-9), unit)
             if shape in ("cuboid", "superellipsoid"):
@@ -433,14 +507,28 @@ def normalize(form):
                 size_um["n_vertices"] = int(_num(sz.get("n_vertices", 14), f"vertices of {where}", 5, 60))
                 # 0: every grain its own shape (generate.phase_templates)
                 size_um["variants"] = int(_num(sz.get("variants", 8), f"shape variants of {where}", 0, 20000))
-            if shape == "helix":
-                size_um["coil_d"] = G.to_um(_num(sz.get("coil_d"), f"coil diameter of {where}", lo=1e-9), unit)
-                size_um["pitch"] = G.to_um(_num(sz.get("pitch", 0.0), f"pitch of {where}", 0.0), unit)
-                size_um["turns"] = _num(sz.get("turns", 3.0), f"number of turns of {where}", 0.1, 200.0)
-            if shape != G.NETWORK:
+            if shape not in G.NON_PARTICLE:
                 SH.validate(shape, size_um)                  # raises on inconsistent sizes
             dist, size_um = _size_distribution(ph.get("dist") or {"type": "mono"}, size_um, unit, where,
-                                               shape != G.NETWORK)
+                                               shape not in G.NON_PARTICLE)
+            # the other dimensions with a size distribution of their own (5.6.6): each independent of d, its
+            # entered value the number mean (a fibre's length, a spheroid's aspect ratios, a box's edges)
+            dists = {}
+            for key in SH.SECONDARY.get(shape, ()):
+                dd = (ph.get("dists") or {}).get(key) or {}
+                if dd.get("type") not in ("normal", "lognormal", "table"):
+                    continue
+                ratio = key in ("aspect", "aspect_y")
+                lab = {"aspect": "aspect ratio c/a", "aspect_y": "aspect ratio b/a", "length": "length",
+                       "ly": "second edge", "lz": "third edge"}[key]
+                dn, nom = _size_distribution(dd, {"d": size_um[key]}, "um" if ratio else unit,
+                                             f"{where}, its {lab}", True)
+                if dn.get("type") in ("normal", "lognormal", "table"):
+                    dists[key] = dn
+                    size_um[key] = float(nom["d"])
+            if dists and shape not in G.NON_PARTICLE:
+                SH.validate(shape, size_um)
+            basis = "volume" if ph.get("size_basis") == "volume" and shape not in G.NON_PARTICLE else "shape"
             fr = ph.get("fraction") or {}
             fraction = {"value": _num(fr.get("value"), f"content of {where}", 0.0, 99.0),
                         "basis": "wt" if fr.get("basis") == "wt" else "vol"}
@@ -479,8 +567,9 @@ def normalize(form):
                 "material_id": ph.get("material_id"),
                 "props": props, "void": props["E"] <= 0,
                 "shape": shape, "size_um": size_um, "size_unit": unit, "dist": dist,
+                "dists": dists, "size_basis": basis,
                 "fraction": fraction, "orientation": orientation,
-                "overlap": bool(ph.get("overlap")) and shape != G.NETWORK,
+                "overlap": bool(ph.get("overlap")) and shape not in G.NON_PARTICLE,
                 "gap_frac": _num(ph.get("gap_frac", 0.0) or 0.0, f"minimum gap of {where}", 0.0, 1.0),
                 "shell": shell, "r_int": r_int, "r_contact": r_contact, "stack_layers": layers,
                 # a slab of the RVE the filler is confined to (None: the whole RVE);
@@ -813,6 +902,11 @@ def normalize(form):
                       + " require a pore (void) phase")
     if "grains" in chosen and not any(p["shape"] != G.NETWORK for p in phases):
         errors.append("Grain analysis requires at least one particle phase")
+    if image is not None:
+        # an image is voxels: no particles to move, shear or press
+        for k in ("viscosity",):
+            if k in chosen:
+                errors.append(f"{ANALYSES[k][0]} needs particles; a structure from an image has voxels only")
     if "moisture" in chosen:
         mp_ = out["matrix"]["props"]
         if not out["matrix"]["void"] and not (mp_.get("D_w") and mp_.get("c_sat")):
@@ -891,6 +985,11 @@ def normalize(form):
         if out["options"]["viscosity"]["gd_max"] <= out["options"]["viscosity"]["gd_min"]:
             errors.append("The highest shear rate must exceed the lowest one")
 
+    if image is not None:
+        image["phase_list"] = [{"name": ph["name"], "vf": float(ph.get("vf") or 0.0)} for ph in phases]
+        out["image"] = image
+        # the plan takes the image's grid (rve.plan)
+        out["rve"]["image"] = {"shape": image["shape"], "h_um": image["h_um"], "name": image["name"]}
     if errors:
         raise ValueError("\n".join(errors))
     out["labels"] = label_table(out)

@@ -168,7 +168,8 @@ def auto_share(spec, plan):
     h = float(plan.get("h_um") or 0.0) or 1.0
     mprops = (spec.get("matrix") or {}).get("props") or {}
     feats = feature_stats([{"name": ph["name"], "shape": ph["shape"], "size_um": ph["size_um"], "dist": ph["dist"],
-                            "vf": ph["vf"], "shell": ph["shell"], "overlap": ph["overlap"], "gap_frac": ph["gap_frac"]}
+                            "vf": ph["vf"], "shell": ph["shell"], "overlap": ph["overlap"], "gap_frac": ph["gap_frac"],
+                            "dists": ph.get("dists") or None, "size_basis": ph.get("size_basis") or "shape"}
                            for ph in spec["phases"]])
     # the loading the packing has to reach: the particles that may not overlap
     phi = sum(float(ph["vf"]) for ph in spec["phases"] if not ph.get("overlap"))
