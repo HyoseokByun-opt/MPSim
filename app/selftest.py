@@ -1568,7 +1568,7 @@ def t_cond_aniso():
 
 
 @check("DOE: a filler's share with the total kept; the Domain's grid on every case, or each case's own edge on its voxel size; "
-       "the content, share and particle size each case realises")
+       "the content, share and particle size each case realises; a study comes back with its folder opened in Runs")
 def t_doe_mix_grid():
     from mpsim import doe as DOE
     from web.doe import DOEStore
@@ -1647,6 +1647,41 @@ def t_doe_mix_grid():
         L4 = [f["rve"]["L_um"] for f in q4.forms]
         expect(abs(h4[0] - 1 / 6) < 1e-9 and abs(h4[1] - 4 / 6) < 1e-9 and all(abs(L / h - 24) < 1e-6 for L, h in zip(L4, h4)),
                f"own grids: edges {L4}, voxels {h4}")
+        # a folder opened in Runs brings its study back (5.6.7): the copy beside the runs, else the doe folder of
+        # the workspace above, else rebuilt from the runs - their names give the factors, their inputs the values
+        from web.doe import MIRROR, rebuild
+        q5 = _Queue()
+        s5 = st.create(None, {"form": man, "name": "share study", "parameters": [
+            {"path": "phases.0.fraction.value", "label": "A content", "values": [30, 40]},
+            {"path": "mix.1", "label": "B share", "min": 5, "max": 50, "steps": 3},
+            {"path": "phases.0.size.d", "label": "A size", "values": [0.25, 0.4]}], "grid": {"edge": "fixed"}},
+            q5, d, lambda f: f, plan=plan)
+        expect(os.path.isfile(os.path.join(d, MIRROR.format(s5["id"]))), "no copy of the study beside its runs")
+
+        class _Run:
+            def __init__(self, i, c, f):
+                self.id, self.spec, self.created, self.owner = c["job_id"], f, i, None
+                self.meta = {"doe": s5["id"], "doe_label": c["label"], "analyses": []}
+                self.out_dir = os.path.join(d, f"run{i}")
+        runs = [_Run(i, c, f) for i, (c, f) in enumerate(zip(s5["cases"], q5.forms))]
+        with tempfile.TemporaryDirectory() as w2, tempfile.TemporaryDirectory() as w3:
+            got = DOEStore(w2).take_in(d, runs)
+            src = [x["source"] for x in got if x["id"] == s5["id"]]
+            os.remove(os.path.join(d, MIRROR.format(s5["id"])))
+            got3 = DOEStore(w3).take_in(d, runs)
+            src += [x["source"] for x in got3 if x["id"] == s5["id"]]
+        expect(src == ["file", "workspace"], f"taken in from {src}")
+        rb = rebuild(s5["id"], runs[::-1])
+        # A content is set before the B share spreads the total again: traced through the total
+        expect([(p["path"], p["label"]) for p in rb["parameters"]]
+               == [("phases.0.fraction.value", "A content"), ("mix.1", "B share"), ("phases.0.size.d", "A size")]
+               and abs(rb["base_form"]["phases"][1]["fraction"]["value"] - 13.75) < 1e-6
+               and rb["design"] == "full" and rb["base_form"]["name"] == man["name"],
+               f"rebuilt factors {[(p['path'], p['label']) for p in rb['parameters']]}, design {rb['design']}, "
+               f"name {rb['base_form']['name']}")
+        dv = max(abs(a_["values"][k] - b_["values"][k]) for a_, b_ in zip(s5["cases"], rb["cases"]) for k in a_["values"])
+        expect([c["job_id"] for c in rb["cases"]] == [c["job_id"] for c in s5["cases"]] and dv < 1e-6,
+               f"rebuilt cases differ by {dv}")
     # what a finished case really holds: 51.1 of 55 vol%, a BN share of 48 of 50 %
     from web.doe import realised
     res = {"spec": {"labels": [{"kind": "matrix", "phase": None}, {"kind": "core", "phase": 0}, {"kind": "core", "phase": 1}],
@@ -1669,7 +1704,8 @@ def t_doe_mix_grid():
             f"edges {Ls[0]:.3g}-{Ls[-1]:.3g} µm adapted on its voxel size; own grids for a size study "
             f"(voxel {h4[0]:.3g}-{h4[1]:.3g} µm); "
             f"realised 51.1 vol%, share {rz['real_mix.1'][2]:.1f} %, size {rs['real_phases.0.size.d'][2]:g} of "
-            f"{rs['real_phases.0.size.d'][3]:g} nm")
+            f"{rs['real_phases.0.size.d'][3]:g} nm; an opened folder's study from its copy, its workspace, or rebuilt "
+            f"({len(rb['cases'])} cases, values within {dv:.1g})")
 
 
 @check("EMI complex homogenisation: complex laminates exact, real values = real solver, dilute spheres = Maxwell-Garnett")

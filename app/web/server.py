@@ -426,6 +426,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             ws_restore()
         except Exception:                                            # noqa: BLE001
             pass
+        app.doe.place_copies(app.queue)
         s = load_settings()
         s["workspace"] = p
         s["recent_workspaces"] = ([p] + [q for q in s.get("recent_workspaces") or []
@@ -456,6 +457,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             print(f"  other work folders: {more} runs restored")
     except Exception as e:                                           # noqa: BLE001
         print(f"  (the other work folders could not be read: {e})")
+    app.doe.place_copies(app.queue)
 
     # ------------------------------------------------------------ helpers
     def owner():
@@ -1065,8 +1067,16 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
                                                 if os.path.normcase(q) != os.path.normcase(p)]
         st["recent"] = st["recent"][:12]
         wf_save(st)
+        # the DOE studies of these runs, so that the DOE tab shows them as they were (5.6.7)
+        root = os.path.normcase(p.rstrip("\\/")) + os.sep
+        mine = [j for j in list(app.queue.jobs.values())
+                if os.path.normcase(os.path.abspath(j.out_dir)).startswith(root)]
+        try:
+            studies = app.doe.take_in(p, mine, owner_or_none())
+        except OSError:
+            studies = []
         return jsonify({"ok": True, "kind": "folder", "added": n, "runs": wf_count(p),
-                        "folder": os.path.basename(p.rstrip("\\/"))})
+                        "folder": os.path.basename(p.rstrip("\\/")), "studies": studies})
 
     # ----------------------------------------------------- structure from an image (5.6.6)
     def image_root():
@@ -1716,6 +1726,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             else:
                 where, folder, cname = case_dir(), app.config["RUNS_DIR"], app.config.get("CASE") or ""
             job = app.queue.submit(owner_or_none(), form, where, meta, folder=folder, case=cname)
+            app.doe._add_dir(s, where)                 # the study's copy goes beside this run too
             done.append({"label": case["label"], "old": case["job_id"], "new": job.id})
             case["job_id"] = job.id
         if done:

@@ -1793,35 +1793,46 @@
       anCard("radiation", `<div class="g2">${num("options.radiation.temperature_K", "Temperature", "K")}${num("options.radiation.refractive_index", "Refractive index", "")}${num("options.radiation.sources", "Ray sources", "", "1")}${num("options.radiation.rays", "Rays per source", "", "1")}</div>`) +
       `<div class="note">Problem size: ${state.plan ? `${gridTxt(state.plan.plan)} voxels, ${state.plan.plan.seeds} realisation(s)` : "—"}. Elasticity requires seven load cases and dominates the run time; server grid limits apply per solver. Flux, current, field and velocity solutions are stored as vectors, so the 3D and 2D views can show arrows and field lines beside the contour.</div>`;
   }
-  function runsHTML() {
-    if (!state.jobs.length) return '<div class="empty">' + I("runs") + '<div>No runs yet.</div></div>';
+  // one run of the list
+  function runRow(j) {
     // what each run did: a structure only, or which analyses (one chip each),
     // its grid and its phases; a DOE case shows its variable values instead
     const chips = (j) => j.kind === "calibration" ? `<span class="rtag" style="--c:#8250df">Calibration</span>`
       : (j.kind === "structure" || !(j.analyses || []).length)
       ? `<span class="rtag struct">Structure</span>`
       : (j.analyses || []).map((a) => `<span class="rtag" style="--c:${(AN[a] || {}).color || "var(--accent)"}">${esc(SHORT_AN[a] || (AN[a] || {}).title || a)}</span>`).join("");
-    const one = (j) => `<div class="run ${j.id === state.resultJob ? "on" : ""}" data-open="${j.id}">
+    return `<div class="run ${j.id === state.resultJob ? "on" : ""}" data-open="${j.id}">
       <i class="dot ${j.state}"></i><div class="nm">${esc(j.name || j.id)}
         <div class="rtags">${chips(j)}${j.grid ? `<span class="rgrid">${esc(j.grid)}</span>` : ""}</div>
         ${j.doe_label ? `<small class="rvars">${esc(j.doe_label)}</small>` : (j.structure ? `<small class="rstruct" title="${esc(j.structure)}">${esc(j.structure)}</small>` : "")}
         <small>${STATE[j.state]}${j.state === "running" ? (j.phase === "gate" ? ` · ${esc(j.wait || "structure built, waiting for memory to solve")}` : " · " + Math.round(100 * j.progress) + " %" + (j.phase === "structure" ? " · structure" : j.phase === "solve" ? " · solving" : "") + (j.threads ? ` · ${j.threads} cores` : "")) : ""}${j.state === "queued" ? " · " + esc(j.wait || "position " + j.queue_position) : ""} · ${secs(j.elapsed_s)}</small></div>
       <div class="acts">${["running", "queued"].includes(j.state) ? `<button class="btn sm danger" data-stop="${j.id}" title="Stop">${I("stop")}</button>`
         : `${["stopped", "failed"].includes(j.state) ? `<button class="btn sm" data-restart="${j.id}" title="Start this run again: its own inputs in its own folder; a structure it had finished is used again">${I("play")}</button>` : ""}<button class="btn sm" data-del="${j.id}" title="Delete">${I("delete")}</button>`}</div></div>`;
-    // A study queues up to 64 cases. Listed one by one they bury every earlier
-    // result, so a study collapses into a single row that opens on a click.
-    const seen = new Set(), out = [];
+  }
+  function runsHTML() {
+    if (!state.jobs.length) return '<div class="empty">' + I("runs") + '<div>No runs yet.</div></div>';
     // runs of the other work folders of the workspace (earlier days, other
-    // sessions or browsers), folded per folder below the open one
+    // sessions or browsers, folders opened in Runs), folded per folder below
+    // the open one; a study in such a folder folds into one row there too
     const here = state.jobs.filter((j) => j.in_current !== false), there = state.jobs.filter((j) => j.in_current === false);
     const folders = [...new Set(there.map((j) => j.folder || "—"))].sort().reverse();
     const tail = folders.map((fd) => {
       const js = there.filter((j) => (j.folder || "—") === fd), open = !!(state.openFolders || {})[fd];
       return `<div class="run study fgroup ${open ? "open" : ""}" data-fgroup="${esc(fd)}"><i class="dot done"></i><div class="nm">${I("open")} ${esc(fd)}
           <small>Work folder · ${js.length} run${js.length === 1 ? "" : "s"}</small></div><div class="acts"><button class="btn sm" data-fgroup="${esc(fd)}" title="${open ? "Collapse" : "Show its runs"}">${open ? "−" : "+"}</button></div></div>`
-        + (open ? `<div class="substack">${js.map(one).join("")}</div>` : "");
+        + (open ? `<div class="substack">${grouped(js).join("")}</div>` : "");
     });
-    here.forEach((j) => {
+    const out = grouped(here);
+    if (tail.length) out.push(`<div class="hint" style="margin:8px 2px 4px">Other work folders of this workspace</div>`, ...tail);
+    return out.join("") || '<div class="empty">' + I("runs") + '<div>No runs in this work folder yet.</div></div>';
+  }
+  // the rows of a list of runs. A study queues up to 64 cases; listed one by
+  // one they bury every earlier result, so a study collapses into a single
+  // row that opens on a click.
+  function grouped(list) {
+    const one = runRow;
+    const seen = new Set(), out = [];
+    list.forEach((j) => {
       if (!j.doe) { out.push(one(j)); return; }
       if (seen.has(j.doe)) return;
       seen.add(j.doe);
@@ -1840,8 +1851,7 @@
           <button class="btn sm" data-doetoggle="${j.doe}" title="${open ? "Collapse" : "Show the cases"}">${open ? "−" : "+"}</button></div></div>`
         + (open ? `<div class="substack">${cases.map(one).join("")}</div>` : ""));
     });
-    if (tail.length) out.push(`<div class="hint" style="margin:8px 2px 4px">Other work folders of this workspace</div>`, ...tail);
-    return out.join("") || '<div class="empty">' + I("runs") + '<div>No runs in this work folder yet.</div></div>';
+    return out;
   }
   function leftResults() {
     const r = state.result;
@@ -4309,7 +4319,8 @@
         ${tile("Failed / stopped", `${counts.failed || 0} / ${counts.stopped || 0}`, "")}${tile("Total solver time", secs(elapsed), "")}`;
     const btnsHtml = `${live ? `<button class="btn sm danger" data-doestop="${state.doeId}" title="Stop the running and queued cases of this study now">${I("stop")}Stop study</button>` : ""}${nbad ? `<button class="btn sm" data-doeretry title="Queue these cases again with their own values; the study then points at the new runs">${I("run")}Re-run ${nbad} failed case${nbad === 1 ? "" : "s"}</button>` : ""}`;
     // below the table, so that a note coming and going does not move it
-    const notesHtml = `${waitTxt ? `<div class="note">Queued cases: ${esc(waitTxt)}. The memory for runs side by side is set in Home → Machine.</div>` : ""}${realNote}`;
+    const rebuiltNote = d.rebuilt ? `<div class="note">This study was rebuilt from its runs (a folder opened in Runs held no study file): its factors are read from the names of the cases and traced to the inputs of each run${d.parameters.some((p) => p.path.startsWith("_label.")) ? "; a factor that could not be traced is shown as named, and no cases can be added" : ""}.</div>` : "";
+    const notesHtml = `${waitTxt ? `<div class="note">Queued cases: ${esc(waitTxt)}. The memory for runs side by side is set in Home → Machine.</div>` : ""}${realNote}${rebuiltNote}`;
     const sig = `${d.id}|${head.map((h) => h[0]).join("|")}`;
     const chartSig = JSON.stringify(d.rows.map((r) => (r.state === "done" ? [r.values, r.metrics] : 0)));
     const st = el._doe;
@@ -5003,10 +5014,15 @@
       if (!p) return;
       try {
         const r = await api("POST", "/api/runs/open", { path: p });
-        toast(r.kind === "run" ? "The run is in the list." : `${r.runs} run${r.runs === 1 ? "" : "s"} of ${r.folder} are in the list (under Other work folders).`);
+        // the DOE studies of the folder open in the DOE tab as they were (5.6.7)
+        const studies = r.studies || [], rebuilt = studies.filter((s) => s.source === "rebuilt").length;
+        toast(r.kind === "run" ? "The run is in the list."
+          : `${r.runs} run${r.runs === 1 ? "" : "s"} of ${r.folder} are in the list (under Other work folders).`
+            + (studies.length ? ` ${studies.length} DOE stud${studies.length === 1 ? "y is" : "ies are"} in the DOE tab${rebuilt ? ` (${rebuilt} rebuilt from ${rebuilt === 1 ? "its" : "their"} runs)` : ""}.` : ""), 8000);
         $("#runsOpenRow").hidden = true; $("#runsOpenPath").value = "";
         await pollRuns();
         if (r.kind === "run" && r.ids && r.ids[0]) openJob(r.ids[0]);
+        else if (studies.length) { await loadDoeList(); await openDoe(studies[0].id); setCenter("doe"); }
       } catch (err) { toast(err.message, 8000); }
     };
     $("#runsOpenGo").addEventListener("click", openRuns);

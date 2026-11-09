@@ -3,12 +3,16 @@
 A study is a small JSON file in `workspace/doe/`; the runs themselves are
 ordinary jobs in the queue, so a study survives a server restart exactly as
 single runs do and its cases can be opened, compared and deleted individually.
+A copy of the file is kept beside the runs (doe_study_<id>.json in their case
+folder), so that a folder opened in Runs - on another PC, in another
+workspace - comes back as the study it was (5.6.7).
 """
 from __future__ import annotations
 
 import copy
 import io
 import json
+import math
 import os
 import re
 import time
@@ -23,6 +27,8 @@ from mpsim import doe as DOE
 SIZE_PATH = re.compile(r"^phases\.(\d+)\.(?:size\.(d|length|aspect|aspect_y|ly|lz)|dist\.(std)"
                        r"|dists\.(length|aspect|aspect_y|ly|lz)\.std)$")
 LEN_UNIT = {"um": 1.0, "µm": 1.0, "nm": 1e-3, "mm": 1e3}
+MIRROR = "doe_study_{}.json"               # the copy of a study beside its runs
+MIRROR_RE = re.compile(r"doe_study_(.+)\.json")
 
 
 def realised(study, r):
@@ -131,6 +137,14 @@ class DOEStore:
     def save(self, study):
         with open(self._path(study["id"]), "w", encoding="utf-8") as fh:
             json.dump(study, fh, ensure_ascii=False, indent=1)
+        # the copy beside the runs: a folder copied or opened elsewhere carries its study
+        for d in study.get("dirs") or []:
+            try:
+                if os.path.isdir(d):
+                    with open(os.path.join(d, MIRROR.format(study["id"])), "w", encoding="utf-8") as fh:
+                        json.dump(study, fh, ensure_ascii=False, indent=1)
+            except OSError:
+                pass                                   # a read-only folder keeps the runs listed singly
 
     def get(self, sid):
         try:
@@ -150,11 +164,24 @@ class DOEStore:
         return out
 
     def delete(self, sid):
+        s = self.get(sid) or {}
+        for d in s.get("dirs") or []:
+            try:
+                os.remove(os.path.join(d, MIRROR.format(sid)))
+            except OSError:
+                pass
         try:
             os.remove(self._path(sid))
             return True
         except OSError:
             return False
+
+    @staticmethod
+    def _add_dir(study, d):
+        d = os.path.abspath(d)
+        dirs = study.setdefault("dirs", [])
+        if not any(os.path.normcase(x) == os.path.normcase(d) for x in dirs):
+            dirs.append(d)
 
     # -------------------------------------------------------------- create
     def create(self, owner, payload, queue, runs_dir, normalize, folder=None, case_name="",
@@ -210,7 +237,8 @@ class DOEStore:
                  "parameters": parameters, "samples": payload.get("samples"), "seed": payload.get("seed"),
                  "grid": grid,
                  "analyses": [k for k, v in (base.get("analyses") or {}).items() if v],
-                 "base_form": base, "cases": []}
+                 "base_form": base, "cases": [], "dirs": []}
+        self._add_dir(study, runs_dir)
         self._submit(study, forms, cases, queue, runs_dir, owner, folder, case_name, estimate, limits)
         self.save(study)
         return study
@@ -300,13 +328,123 @@ class DOEStore:
             cases.append({"values": vals, "label": (f"{tag} · " if tag else "") + lab, "added": tag or True})
         if not cases:
             raise ValueError("No point was given")
+        if any(p["path"].startswith("_label.") for p in parameters):
+            raise ValueError("This study was rebuilt from its runs and one of its factors could not be traced to an "
+                             "input entry; cases cannot be added to it")
         varied = self._varied(parameters)
         i0 = len(study["cases"])
         forms = [self._case_form(study["base_form"], c, i0 + k, parameters, study["grid"], varied, plan, normalize)
                  for k, c in enumerate(cases)]
+        self._add_dir(study, runs_dir)
         self._submit(study, forms, cases, queue, runs_dir, study.get("owner"), folder, case_name, estimate, limits)
         self.save(study)
         return cases
+
+    def place_copies(self, queue):
+        """The copy beside the runs for studies made before 5.6.7, which had
+        none: in the case folders of their runs as listed now. A study none of
+        whose runs is listed is left for a later start."""
+        for s in self.all():
+            if "dirs" in s:
+                continue
+            jobs = [queue.get(c.get("job_id")) for c in s.get("cases") or []]
+            jobs = [j for j in jobs if j is not None]
+            if not jobs:
+                continue
+            s["dirs"] = []
+            for j in jobs:
+                self._add_dir(s, os.path.dirname(j.out_dir))
+            try:
+                self.save(s)
+            except OSError:
+                pass
+
+    # ----------------------------------------------- studies of opened folders
+    def take_in(self, folder, jobs, owner=None):
+        """Studies of the runs of a folder opened in Runs (a work or case
+        folder, made in another workspace or on another PC) into this
+        workspace, so that the DOE tab shows them as they were. `jobs`: the
+        runs listed from the folder. A study already here is left as it is.
+        Each one comes, in this order, from the copy beside its runs
+        (doe_study_<id>.json, written since 5.6.7), from the doe folder of the
+        workspace the runs were made in (a work folder sits in its workspace
+        unless it was put elsewhere), or rebuilt from the runs themselves
+        (rebuild). -> [{id, name, cases, source}], the studies here already
+        with source "here"."""
+        folder = os.path.abspath(folder)
+        out, groups = [], {}
+        for j in jobs:
+            sid = (j.meta or {}).get("doe")
+            if sid:
+                groups.setdefault(sid, []).append(j)
+
+        def take(s, source, where=None):
+            s["owner"] = owner if owner is not None else s.get("owner")
+            # the folders the runs are in now (the paths of the PC they were made on mean nothing here)
+            s["dirs"] = []
+            for j in groups.get(s["id"]) or []:
+                self._add_dir(s, os.path.dirname(j.out_dir))
+            if where and not s["dirs"]:
+                self._add_dir(s, where)
+            self.save(s)
+            out.append({"id": s["id"], "name": s.get("name"), "cases": len(s.get("cases") or []), "source": source})
+
+        # 1. the copies beside the runs: in the folder and in its case folders
+        seen = set()
+        for d in [folder] + [os.path.join(folder, x) for x in sorted(os.listdir(folder))
+                             if os.path.isdir(os.path.join(folder, x))]:
+            try:
+                names = os.listdir(d)
+            except OSError:
+                continue
+            for name in names:
+                m = MIRROR_RE.fullmatch(name)
+                if not m or m.group(1) in seen:
+                    continue
+                seen.add(m.group(1))
+                if self.get(m.group(1)) is not None:
+                    continue
+                try:
+                    with open(os.path.join(d, name), encoding="utf-8") as fh:
+                        s = json.load(fh)
+                except (OSError, ValueError):
+                    continue
+                if s.get("id") == m.group(1) and s.get("cases"):
+                    take(s, "file", d)
+        # 2. the doe folder of the workspace above the folder; 3. rebuilt from the runs
+        for sid, js in groups.items():
+            if sid in seen or self.get(sid) is not None:
+                continue
+            s, anc = None, folder
+            for _ in range(4):
+                p = os.path.join(anc, "doe", f"{sid}.json")
+                if os.path.isfile(p):
+                    try:
+                        with open(p, encoding="utf-8") as fh:
+                            s = json.load(fh)
+                    except (OSError, ValueError):
+                        s = None
+                    break
+                up = os.path.dirname(anc)
+                if up == anc:
+                    break
+                anc = up
+            if s is not None and s.get("id") == sid:
+                take(s, "workspace")
+                continue
+            try:
+                s = rebuild(sid, js)
+            except Exception:                                   # noqa: BLE001
+                s = None                                       # its runs stay listed one by one
+            if s is not None:
+                take(s, "rebuilt")
+        # studies of these runs that were here already: opened as well
+        got = {x["id"] for x in out}
+        for sid in groups:
+            s = self.get(sid) if sid not in got else None
+            if s is not None:
+                out.append({"id": sid, "name": s.get("name"), "cases": len(s.get("cases") or []), "source": "here"})
+        return out
 
     # -------------------------------------------------------------- status
     def rows(self, study, queue):
@@ -357,7 +495,8 @@ class DOEStore:
                 "parameters": [{"path": p["path"], "label": p.get("label") or p["path"], "unit": p.get("unit", ""),
                                 "symbol": f"x{i + 1}", "links": p.get("links") or []}
                                for i, p in enumerate(study["parameters"])],
-                "analyses": study.get("analyses") or [], "metrics": metrics, "rows": rows}
+                "analyses": study.get("analyses") or [], "metrics": metrics, "rows": rows,
+                "rebuilt": bool(study.get("rebuilt"))}
 
     def csv(self, study, queue):
         rows, metrics = self.rows(study, queue)
@@ -374,3 +513,174 @@ class DOEStore:
             cells += [("" if r["metrics"].get(m["key"]) is None else repr(r["metrics"][m["key"]])) for m in metrics]
             buf.write(",".join(f'"{c}"' for c in cells) + "\n")
         return buf.getvalue()
+
+
+def _num_leaves(obj, prefix=""):
+    """Paths of the numbers in a form (lists by index), for factors a study set outside the catalogue."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if not str(k).startswith("_"):
+                yield from _num_leaves(v, f"{prefix}{k}.")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _num_leaves(v, f"{prefix}{i}.")
+    elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        yield prefix[:-1]
+
+
+def _half_digit(txt, x):
+    """Half the last digit DOE._fmt keeps of a number: 6 significant digits after rounding to 6 decimals, 3 for
+    the very small and the very large (trailing zeros are dropped, so "30" stands for 30.0000)."""
+    a = abs(x)
+    if a == 0:
+        return 0.5e-6
+    if "e" in txt.lower() or a < 1e-3 or a >= 1e5:
+        return 0.5 * 10.0 ** (math.floor(math.log10(a)) - 2)
+    return max(0.5 * 10.0 ** (math.floor(math.log10(a)) - 5), 0.5e-6)
+
+
+def _value(form, path):
+    if path.startswith("mix."):
+        return DOE.filler_share(form, int(path.split(".")[1]))
+    try:
+        v = DOE.get_path(form, path)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def rebuild(sid, jobs):
+    """A study rebuilt from its runs alone, for runs whose study file is gone
+    (made before 5.6.7, and copied without the doe folder of their
+    workspace). Every case's name gives the factors as "<label> <value>"
+    joined by " · "; each factor is traced to the input entry that holds
+    that value in every case (the catalogue of the DOE tab first, with the
+    same label first, then any number of the input). A factor that cannot be
+    traced keeps its label and the values of the names, and the study then
+    shows its cases but takes no new ones. The design (full factorial or
+    sampled) is judged from the values; the grid is the first case's."""
+    runs = []
+    for j in jobs:
+        form = j.spec if isinstance(j.spec, dict) else {}
+        lab = str((j.meta or {}).get("doe_label") or "")
+        if not form or not lab:
+            continue
+        tag, items = None, []
+        for seg in lab.split(" · "):
+            head, _, val = seg.rpartition(" ")
+            try:
+                items.append((head, float(val), val))
+            except ValueError:
+                if not items:
+                    tag = seg                                  # a case added by an optimisation: its tag first
+        runs.append({"job": j, "form": form, "label": lab, "tag": tag, "items": items})
+    if not runs:
+        return None
+    runs.sort(key=lambda r: (r["form"].get("_doe_index", 10 ** 9), getattr(r["job"], "created", 0) or 0))
+    n = max(set(len(r["items"]) for r in runs), key=lambda k: sum(len(r["items"]) == k for r in runs))
+    runs = [r for r in runs if len(r["items"]) == n]
+    if not runs or n == 0:
+        return None
+    first = runs[0]["form"]
+    cat = DOE.parameter_catalogue(first)
+    units = {c["path"]: c.get("unit", "") for c in cat}
+    cands = [c["path"] for c in cat] + [p for p in _num_leaves(first) if p not in units]
+
+    def fits(path, j):
+        for r in runs:
+            v = _value(r["form"], path)
+            if v is None:
+                return False
+            _, x, txt = r["items"][j]
+            if DOE._fmt(v) != txt and abs(v - x) > 1e-6 * max(1.0, abs(x)):
+                return False
+        return True
+
+    fill = DOE._fillers(first)
+
+    def total(form):
+        return sum(float(DOE.get_path(form, f"phases.{k}.fraction.value") or 0.0) for k in fill)
+
+    def fits_total(path, j):
+        """A filler's content set before a share of the filler spread the total again (DOE.apply_case): the
+        total in the run less the value of the name is the same in every case - what the other fillers held in
+        the study's input. -> that value, or None."""
+        m = re.fullmatch(r"phases\.(\d+)\.fraction\.value", path)
+        if not m or int(m.group(1)) not in fill or len(fill) < 2:
+            return None
+        # a name holds 6 significant digits (DOE._fmt): the value lies within half its last digit; the
+        # intersection over the cases holds the input value, taken with the fewest decimals
+        lo, hi = -math.inf, math.inf
+        for r in runs:
+            _, x, txt = r["items"][j]
+            u = _half_digit(txt, x) + 1e-9 * max(1.0, abs(x))
+            dif = total(r["form"]) - x
+            lo, hi = max(lo, dif - u), min(hi, dif + u)
+        if lo > hi:
+            return None
+        for dec in range(10):
+            c = round(0.5 * (lo + hi), dec)
+            if lo <= c <= hi:
+                return c
+        return 0.5 * (lo + hi)
+
+    params, used, before = [], set(), {}
+    for j in range(n):
+        label = runs[0]["items"][j][0]
+        vals = [r["items"][j][1] for r in runs]
+        same = [c["path"] for c in cat if c.get("label") == label]
+        order = same + [p for p in cands if p not in same]
+        path = next((p for p in order if p not in used and fits(p, j)), None)
+        if path is None:
+            for p in order:
+                rest = fits_total(p, j) if p not in used else None
+                if rest is not None:
+                    path, before[p] = p, rest
+                    break
+        if path is None:
+            path = f"_label.{j}"
+        used.add(path)
+        params.append({"path": path, "label": label, "unit": units.get(path, ""),
+                       "min": min(vals), "max": max(vals), "links": []})
+    cases = []
+    for r in runs:
+        values = {}
+        for j, p in enumerate(params):
+            if p["path"] in before:
+                v = total(r["form"]) - before[p["path"]]
+            else:
+                v = None if p["path"].startswith("_label.") else _value(r["form"], p["path"])
+            values[p["path"]] = float(v) if v is not None else r["items"][j][1]
+        c = {"job_id": r["job"].id, "values": values, "label": r["label"]}
+        if r["tag"]:
+            c["added"] = r["tag"]
+        cases.append(c)
+    levels_n = 1
+    for p in params:
+        levels_n *= len({DOE._fmt(c["values"][p["path"]]) for c in cases})
+    design = "full" if levels_n == len(cases) else "lhs"
+    base = copy.deepcopy(first)
+    name = str(base.get("name") or "")
+    lab0 = runs[0]["label"]
+    if name.endswith(" · " + lab0):
+        name = name[:-len(lab0) - 3]
+    base["name"] = name or "DOE study"
+    for k in ("_doe_index", "_limits", "_reuse"):
+        base.pop(k, None)
+    for p, rest in before.items():
+        # the other filler's content in the study's input, so that a case added later is built as these were
+        others = [k for k in fill if k != int(p.split(".")[1])]
+        if len(others) == 1:
+            DOE.set_path(base, f"phases.{others[0]}.fraction.value", round(rest, 9))
+    rv = first.get("rve") or {}
+    Ls = {round(float((r["form"].get("rve") or {}).get("L_um") or 0), 9) for r in runs}
+    hs = {round(float((r["form"].get("rve") or {}).get("voxel_um") or 0), 9) for r in runs}
+    grid = {"edge": "fixed" if len(Ls) == 1 and len(hs) == 1 else "own",
+            "L_um": float(rv.get("L_um") or 0) or None, "voxel_um": float(rv.get("voxel_um") or 0) or None,
+            "film": bool(rv.get("film")), "T_um": rv.get("T_um"), "quality": rv.get("quality")}
+    meta = runs[0]["job"].meta or {}
+    created = min((getattr(r["job"], "created", 0) or time.time()) for r in runs)
+    return {"id": sid, "name": base["name"], "created": created, "owner": getattr(runs[0]["job"], "owner", None),
+            "design": design, "parameters": params, "samples": len(cases), "seed": None, "grid": grid,
+            "analyses": list(meta.get("analyses") or []), "base_form": base, "cases": cases, "dirs": [],
+            "rebuilt": True}
