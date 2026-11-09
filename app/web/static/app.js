@@ -657,10 +657,31 @@
     renderRibbon();
     renderLeft();
   }
+  // where the reader was on the DOE page and in the Result Viewer when they left it: a page hidden and shown again
+  // came back at its top (and the Cases table at its first row), so it is put back - for the same study or result
+  const PAGE_SCROLL = { doe: ["#doeBody", "#doeBody .tablewrap"], res: ["#rvBody"] };
+  const pageKey = (c) => (c === "doe" ? state.doeId : c === "res" ? ($("#rvBody") || {})._rid : null);
+  function leavePage(c) {
+    const sel = PAGE_SCROLL[c];
+    if (!sel) return;
+    state.pageScroll = state.pageScroll || {};
+    state.pageScroll[c] = { key: pageKey(c), pos: sel.map((s) => { const e = $(s); return e ? [e.scrollTop, e.scrollLeft] : null; }) };
+  }
+  function backToPage(c) {
+    const sv = (state.pageScroll || {})[c];
+    if (!sv || sv.key !== pageKey(c)) return;
+    PAGE_SCROLL[c].forEach((s, i) => {
+      const e = $(s), p = sv.pos[i];
+      if (e && p) { const b = e.style.scrollBehavior; e.style.scrollBehavior = "auto"; e.scrollTop = p[0]; e.scrollLeft = p[1]; e.style.scrollBehavior = b; }
+    });
+  }
   function setCenter(c) {
+    if (state.center && state.center !== c) leavePage(state.center);
+    const back = state.center !== c;
     state.center = c;
     $$("#ctabs button").forEach((b) => b.classList.toggle("on", b.dataset.c === c));
     $$(".cpage").forEach((p) => p.classList.toggle("on", p.id === "c-" + c));
+    if (back) requestAnimationFrame(() => backToPage(c));
     if (c === "vis") openViewer();
     if (c === "res") renderResults();
     if (c === "doe") { renderDoe(); if (state.doeId && !state.doeData) openDoe(state.doeId); }
@@ -2204,6 +2225,12 @@
       if (liveDirty || prev !== ev.state) renderLive(ev.state);
       if (running) pollLive();
       if (partialDirty && running) loadPartialResult(state.active);
+      // a run that ended before the first poll after it was opened (a short DOE case clicked while running): its
+      // result now - the Result Viewer otherwise kept saying it was running
+      if (prev === null && ["done", "failed", "stopped"].includes(ev.state) && state.noResult && state.noResult.id === jid) {
+        if (ev.state === "done") { state.noResult = null; await loadResult(jid); }
+        else { state.noResult.state = ev.state; if (state.center === "res") renderResults(); }
+      }
       if (["done", "failed", "stopped"].includes(ev.state) && prev !== ev.state && prev !== null) {
         const viewingOther = !!(state.resultJob && state.resultJob !== state.active && state.result && !state.result.partial);
         if (ev.state === "done" && viewingOther) {
@@ -2214,6 +2241,8 @@
           await loadResult(state.active);
           if (state.cal && state.cal.resultJob === state.active) toast("The calibration is complete.");
           else if (state.activePreview) { toast("The structure has been generated."); setCenter("vis"); }
+          // a reader on a study's page (a case of it was opened and finished meanwhile) stays there
+          else if (["doe", "opt", "cal", "ai"].includes(state.center)) toast("The analysis is complete; its results are in the Result Viewer.");
           else { toast("The analysis is complete. The Result Viewer shows all results."); setCenter("res"); }
         } else toast(ev.state === "failed" ? "The run failed; the console contains the details." : "The run was stopped.", 6000);
         pollRuns();
@@ -2379,6 +2408,11 @@
     for (const [k, [l, un]] of Object.entries(lab)) if (p[k]) rows.push(`<tr><td>${l}</td><td class="n">${p[k].map(fmt).join(" / ")}</td><td>${un}</td></tr>`);
     $("#partialBox").innerHTML = rows.length ? `<table class="grid"><tr><th>Property (xx / yy / zz)</th><th class="n">Value</th><th>Unit</th></tr>${rows.join("")}</table>` : '<div class="hint">Intermediate values appear here while a run is in progress.</div>';
   }
+  // the run list, replaced only when it changed (it was rebuilt every 4 s under the pointer)
+  function drawRuns() {
+    const rl = $("#runsList"), rh = runsHTML();
+    if (rl._html !== rh) { rl.innerHTML = rh; rl._html = rh; }
+  }
   async function pollRuns() {
     try { state.jobs = await api("GET", "/api/jobs"); } catch (e) { return; }
     // /api/jobs is filtered to this user, but the concurrency limit is the
@@ -2387,7 +2421,7 @@
     // enabled, and the click would silently queue behind them. The settings
     // endpoint carries the authoritative counts, and it is a few bytes.
     try { state.settings = await api("GET", "/api/settings"); } catch (e) { /* keep the last */ }
-    $("#runsList").innerHTML = runsHTML();
+    drawRuns();
     if (state.tab === "results") renderLeft();
     const running = state.jobs.filter((j) => j.state === "running").length, queued = state.jobs.filter((j) => j.state === "queued").length;
     // The Run button is disabled once the machine is full, but that only shows
@@ -2456,7 +2490,7 @@
         // a calibration has its own page; the Result Viewer keeps its run
         const c = CAL();
         c.result = got; c.resultJob = id;
-        $("#runsList").innerHTML = runsHTML();
+        drawRuns();
         setCenter("cal");
         if (state.tab === "calibration") { renderLeft(); renderRibbon(); }
         return;
@@ -2464,11 +2498,51 @@
       state.result = got;
       state.resultJob = id;
       $("#cTitle").textContent = state.result.name;
-      $("#runsList").innerHTML = runsHTML();
+      drawRuns();
       if (state.center === "res") renderResults();
       if (state.center === "rep") renderReport();
       if (state.tab === "results") { renderLeft(); renderRibbon(); }
     } catch (err) { toast("The result could not be loaded: " + err.message); }
+  }
+
+  /* A page refreshed while runs go on keeps the reader where they are. Replacing a page whole put its scroll
+     boxes back at the top, and figures that had no height yet shortened it for a moment, which also threw a
+     reader near the end up the page. keepScroll runs a rebuild and puts the scroll back, and holds it while
+     figures above load, until the reader scrolls (at most 4 s); only a jump up is undone, so the browser's own
+     anchoring still follows content that grows above. patchParts replaces only the parts of a page (elements
+     with data-part) whose HTML changed and adds or removes parts, so nothing else is redrawn. */
+  function keepScroll(box, rebuild) {
+    const top = box.scrollTop, left = box.scrollLeft, beh = box.style.scrollBehavior;
+    box.style.scrollBehavior = "auto";
+    rebuild();
+    const put = () => { if (box.scrollTop < top - 1) box.scrollTop = top; if (box.scrollLeft !== left) box.scrollLeft = left; };
+    put();
+    if (box._unhold) box._unhold();
+    const ev = ["wheel", "pointerdown", "touchstart", "keydown"];
+    const onload = () => put();
+    const off = () => {
+      ev.forEach((t) => box.removeEventListener(t, off));
+      box.removeEventListener("load", onload, true);
+      clearTimeout(timer); box._unhold = null; box.style.scrollBehavior = beh;
+    };
+    const timer = setTimeout(off, 4000);
+    ev.forEach((t) => box.addEventListener(t, off, { passive: true }));
+    box.addEventListener("load", onload, true);              // images: load does not bubble, capture does
+    box._unhold = off;
+    requestAnimationFrame(() => { if (box._unhold === off) put(); });
+  }
+  function patchParts(box, parts) {
+    const old = new Map($$(":scope > [data-part]", box).map((e) => [e.dataset.part, e]));
+    const make = (html) => { const t = document.createElement("template"); t.innerHTML = html; const n = t.content.firstElementChild; n._html = html; return n; };
+    let prev = null;
+    parts.forEach(([k, html]) => {
+      let e = old.get(k);
+      if (e && e._html !== html) { const n = make(html); e.replaceWith(n); e = n; }
+      else if (!e) { e = make(html); if (prev) prev.after(e); else box.prepend(e); }
+      old.delete(k);
+      prev = e;
+    });
+    old.forEach((e) => e.remove());
   }
 
   /* ================================================================ result viewer */
@@ -2478,7 +2552,7 @@
   function renderResults() {
     const r = state.result, nav = $("#rvNav"), body = $("#rvBody");
     if (!r) {
-      nav.innerHTML = "";
+      nav.innerHTML = ""; nav._html = ""; body._rid = null;
       const nr = state.noResult;
       body.innerHTML = nr && nr.id === state.active
         ? `<div class="note" style="margin-bottom:8px"><b>${esc(nr.label || "This case")}</b> has no result${["queued", "running"].includes(nr.state) ? " yet" : ""}: it is ${esc((STATE[nr.state] || nr.state).toLowerCase())}. ${nr.state === "queued" ? "It starts when a place and its memory are free; below are the inputs it will run with." : nr.state === "running" ? "The console below follows it; the analyses it finishes replace this page as they are done." : "The console below shows its log; below are the inputs it ran with."}</div>
@@ -2519,16 +2593,34 @@
     add("checks", `Verification (${r.check_counts.fail ? r.check_counts.fail + " failed" : r.check_counts.pass + " passed"})`, "checks", "var(--c-diff)", "Verification", `<div class="box">${`<div class="tablewrap"><table class="grid">${checksRows(r.checks)}</table></div>`}</div>`);
     add("input", "Input and RVE", "cube", "var(--c-gen)", "Verification", secInput(r));
     let lastGroup = "";
-    nav.innerHTML = secs_.map((s) => {
+    const navHtml = secs_.map((s) => {
       const cap = s.group !== lastGroup ? `<div class="cap">${s.group}</div>` : "";
       lastGroup = s.group;
       return `${cap}<button data-sec="${s.id}" style="--ic:${s.color}">${I(s.icon)}<span>${esc(s.title)}</span></button>`;
     }).join("");
-    body.innerHTML = `<div class="rvhead">${I("logo")}<div class="grow"><h2>${esc(r.name)}</h2><div class="hint">${esc(r.created)} · ${secs(r.elapsed_s)} · ${r.dem_direct ? "particle dynamics, no voxel RVE" : `${backendTxt(r)}${runMethods(r).puma ? ` · PuMA ${esc((r.versions || {}).puma || "—")}` : ""}`}</div></div>
-        <div class="row wrap">${r.view === false ? "" : `<button class="btn sm" data-center="vis">${I("view3d")}3D view</button>`}<a class="btn sm primary" href="${jobUrl("report")}" target="_blank">${I("report")}Report</a><a class="btn sm" href="${jobUrl("download/bundle")}">${I("zip")}ZIP</a></div></div>` +
-      secs_.map((s) => `<section class="rsec" id="sec-${s.id}"><h3 style="--ic:${s.color}">${I(s.icon)}${esc(s.title)}</h3>${s.html}</section>`).join("");
+    const parts = [["head", `<div class="rvhead" data-part="head">${I("logo")}<div class="grow"><h2>${esc(r.name)}</h2><div class="hint">${esc(r.created)} · ${secs(r.elapsed_s)} · ${r.dem_direct ? "particle dynamics, no voxel RVE" : `${backendTxt(r)}${runMethods(r).puma ? ` · PuMA ${esc((r.versions || {}).puma || "—")}` : ""}`}</div></div>
+        <div class="row wrap">${r.view === false ? "" : `<button class="btn sm" data-center="vis">${I("view3d")}3D view</button>`}<a class="btn sm primary" href="${jobUrl("report")}" target="_blank">${I("report")}Report</a><a class="btn sm" href="${jobUrl("download/bundle")}">${I("zip")}ZIP</a></div></div>`],
+      ...secs_.map((s) => [s.id, `<section class="rsec" id="sec-${s.id}" data-part="${s.id}"><h3 style="--ic:${s.color}">${I(s.icon)}${esc(s.title)}</h3>${s.html}</section>`])];
+    // the same run again (its provisional result growing, or its final one): only the sections that changed are
+    // replaced and the reader stays where they are; another run opens at its top
+    const rid = state.resultJob || r.name;
+    if (body._rid === rid) {
+      if (nav._html !== navHtml) {
+        const on = ($("button.on", nav) || {}).dataset;
+        nav.innerHTML = navHtml; nav._html = navHtml;
+        const b = (on && $(`button[data-sec="${on.sec}"]`, nav)) || $("button", nav);
+        if (b) b.classList.add("on");
+      }
+      keepScroll(body, () => patchParts(body, parts));
+    } else {
+      nav.innerHTML = navHtml; nav._html = navHtml;
+      body.innerHTML = "";
+      patchParts(body, parts);
+      body.style.scrollBehavior = "auto"; body.scrollTop = 0; body.style.scrollBehavior = "";
+      $$("button", nav)[0] && $$("button", nav)[0].classList.add("on");
+    }
+    body._rid = rid;
     requestAnimationFrame(() => { draws.forEach((d) => { try { d(); } catch (e) { console.warn(e); } }); });
-    $$("button", nav)[0] && $$("button", nav)[0].classList.add("on");
   }
   // the values of every realisation, their mean and the 95 % interval
   function realTables(list) {
@@ -4151,11 +4243,17 @@
     CH.bubble(cv, { points: pts, xlabel: fx.label, ylabel: fy.label, clabel: fc ? fc.label : "" });
   }
 
+  /* The DOE page is built once per study and set of columns. While the study runs (a refresh every 5 s) only
+     what changed is replaced - the tiles, the buttons, the notes, the rows of the Cases table, the charts once a
+     case finishes - so the table keeps its scroll and its columns their widths. Rebuilding the whole page put
+     the table back at its top-left corner every 5 s and shifted the columns as values came in. */
   function renderDoe() {
     const el = $("#doeBody"), sel = $("#doeSel");
-    sel.innerHTML = state.doeList.map((s) => `<option value="${s.id}" ${s.id === state.doeId ? "selected" : ""}>${esc(s.name)} (${s.n_cases})</option>`).join("") || '<option value="">No study</option>';
+    const opts = state.doeList.map((s) => `<option value="${s.id}" ${s.id === state.doeId ? "selected" : ""}>${esc(s.name)} (${s.n_cases})</option>`).join("") || '<option value="">No study</option>';
+    if (sel._html !== opts) { sel.innerHTML = opts; sel._html = opts; }
     const d = state.doeData;
     if (!d) {
+      el._doe = null;
       el.innerHTML = `<div class="empty">${I("preset")}<div><b>No DOE study is selected.</b><br>The DOE tab in the ribbon creates a study from the current case.</div></div>`;
       $("#doeInfo").textContent = "";
       return;
@@ -4166,7 +4264,8 @@
     const g = d.grid || {};
     const grid = g.edge ? `${g.film ? `thin film ${fmt(g.T_um)} µm · ` : ""}${g.edge === "own" ? "edge and voxel planned per case" : `${g.edge === "adaptive" ? "edge adapted per case" : `edge ${fmt(g.L_um)} µm`} · voxel ${fmt(g.voxel_um)} µm (Domain)`}`
       : g.mode === "fixed" ? `fixed grid ${g.N}³ (${fmt(g.L_um)} µm, voxel ${fmt(g.voxel_um)} µm)` : `grid adaptive per case${g.quality ? ` (${g.quality})` : ""}`;
-    $("#doeInfo").textContent = `${d.name} · ${d.n_cases} cases · ${design} · ${grid}`;
+    const info = `${d.name} · ${d.n_cases} cases · ${design} · ${grid}`;
+    if ($("#doeInfo").textContent !== info) $("#doeInfo").textContent = info;
     const tile = (l, v, dd) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${dd || ""}</div></div>`;
     const elapsed = d.rows.reduce((s, r) => s + (r.elapsed_s || 0), 0);
     const nbad = (counts.failed || 0) + (counts.stopped || 0) + (counts.missing || 0);
@@ -4179,8 +4278,11 @@
       const t = (r.targets || {})[m.key], v = r.metrics[m.key];
       return t && v !== undefined && v !== null ? Math.abs(v - t) / Math.abs(t) : 0;
     };
-    const head = [["#", ""], ["Case", ""], ["State", ""], ...d.parameters.map((p) => [`${p.label}${p.unit ? ` [${p.unit}]` : ""}`, "n"]),
+    // fixed column widths (headers wrap): the columns no longer shift as progress bars give way to values, and
+    // the number and the case stay at the left while the table scrolls sideways
+    const head = [["#", "sl0"], ["Case", "sl1"], ["State", ""], ...d.parameters.map((p) => [`${p.label}${p.unit ? ` [${p.unit}]` : ""}`, "n"]),
                   ...allM.map((m) => [`${m.label}${m.unit && m.unit !== "-" ? ` [${m.unit}]` : ""}`, m.realised ? "n real" : "n"])];
+    const widths = [36, 150, 86, ...d.parameters.map(() => 96), ...allM.map(() => 100)];
     const rows = d.rows.map((r, i) => {
       const cells = [String(i + 1), esc(r.label),
         r.state === "running" ? `<div class="bar"><div style="width:${Math.round(100 * r.progress)}%"></div></div>` : (STATE[r.state] || r.state)];
@@ -4190,11 +4292,11 @@
         cells.push(r.metrics[m.key] === undefined ? "—" : `<span class="${dv > 0.02 ? "dev" : ""}" title="${t ? `target ${fmt(t)}, ${dv >= 0.0005 ? (100 * dv).toFixed(1) + " % off" : "reached"}` : ""}">${fmt(r.metrics[m.key])}</span>`);
       });
       propM.forEach((m) => cells.push(fmt(r.metrics[m.key])));
-      return `<tr class="doerow ${r.state}" data-doerun="${r.job_id}">${cells.map((c, k) => `<td class="${k > 1 ? "n" : ""}${k === 1 ? " nowrap" : ""}${k >= 3 + d.parameters.length && k < 3 + d.parameters.length + realM.length ? " real" : ""}">${c}</td>`).join("")}</tr>`;
-    }).join("");
+      return `<tr class="doerow ${r.state}" data-doerun="${r.job_id}">${cells.map((c, k) => `<td class="${k > 1 ? "n" : ""}${k === 0 ? "sl0" : ""}${k === 1 ? "case sl1" : ""}${k >= 3 + d.parameters.length && k < 3 + d.parameters.length + realM.length ? " real" : ""}"${k === 1 ? ` title="${esc(r.label)}"` : ""}>${c}</td>`).join("")}</tr>`;
+    });
     let worst = 0, nOff = 0;
     d.rows.forEach((r) => { const w = Math.max(0, ...realM.map((m) => devOf(r, m))); worst = Math.max(worst, w); nOff += w > 0.02; });
-    const realNote = nOff ? `<div class="note">In ${nOff} case${nOff === 1 ? "" : "s"} the generated structure holds up to ${(100 * worst).toFixed(1)} % less (or more) than the target content: the packing could not fit it at these settings. The <b>realised</b> columns give what each case really holds; read the results against them (they can also be chosen as a scatter axis).</div>` : "";
+    const realNote = nOff ? `<div class="note">In ${nOff} case${nOff === 1 ? "" : "s"} the generated structure differs from what the case asked for by more than 2 % (up to ${(100 * worst).toFixed(1)} %, marked ▲): a content the packing could not fit at these settings, or particles placed smaller or larger than the size given. The <b>realised</b> columns give what each case really holds; read the results against them (they can also be chosen as a scatter axis).</div>` : "";
     const scatterBox = `<div class="box" style="grid-column:1/-1"><div class="bt">Scatter<div class="grow"></div>
         <span class="hint">the selectors above the page choose what each axis, the colour and the size show</span></div>
       ${canvas("doeScatter", 360)}</div>`;
@@ -4203,12 +4305,42 @@
     const live = (counts.running || 0) + (counts.queued || 0);
     const waitJob = (state.jobs || []).find((j) => j.doe === state.doeId && j.state === "queued" && j.wait);
     const waitTxt = waitJob ? waitJob.wait.replace(/^\d+ ahead · /, "") : "";
-    el.innerHTML = `<div class="big">${tile("Cases", d.n_cases, design)}${tile("Completed", counts.done || 0, "")}${tile("Running / queued", `${counts.running || 0} / ${counts.queued || 0}`, "")}
-        ${tile("Failed / stopped", `${counts.failed || 0} / ${counts.stopped || 0}`, "")}${tile("Total solver time", secs(elapsed), "")}</div>
-      ${waitTxt ? `<div class="note">Queued cases: ${esc(waitTxt)}. The memory for runs side by side is set in Home → Machine.</div>` : ""}${realNote}
-      <div class="box"><div class="bt">Cases<div class="grow"></div>${live ? `<button class="btn sm danger" data-doestop="${state.doeId}" title="Stop the running and queued cases of this study now">${I("stop")}Stop study</button>` : ""}${nbad ? `<button class="btn sm" data-doeretry title="Queue these cases again with their own values; the study then points at the new runs">${I("run")}Re-run ${nbad} failed case${nbad === 1 ? "" : "s"}</button>` : ""}<span class="hint">a row opens that case: its results, console, convergence and checks</span></div>
-        <div class="tablewrap" style="max-height:52vh">${`<table class="grid doetab"><tr>${head.map(([h, c]) => `<th class="${c}">${esc(h)}</th>`).join("")}</tr>${rows}</table>`}</div></div>
+    const tilesHtml = `${tile("Cases", d.n_cases, design)}${tile("Completed", counts.done || 0, "")}${tile("Running / queued", `${counts.running || 0} / ${counts.queued || 0}`, "")}
+        ${tile("Failed / stopped", `${counts.failed || 0} / ${counts.stopped || 0}`, "")}${tile("Total solver time", secs(elapsed), "")}`;
+    const btnsHtml = `${live ? `<button class="btn sm danger" data-doestop="${state.doeId}" title="Stop the running and queued cases of this study now">${I("stop")}Stop study</button>` : ""}${nbad ? `<button class="btn sm" data-doeretry title="Queue these cases again with their own values; the study then points at the new runs">${I("run")}Re-run ${nbad} failed case${nbad === 1 ? "" : "s"}</button>` : ""}`;
+    // below the table, so that a note coming and going does not move it
+    const notesHtml = `${waitTxt ? `<div class="note">Queued cases: ${esc(waitTxt)}. The memory for runs side by side is set in Home → Machine.</div>` : ""}${realNote}`;
+    const sig = `${d.id}|${head.map((h) => h[0]).join("|")}`;
+    const chartSig = JSON.stringify(d.rows.map((r) => (r.state === "done" ? [r.values, r.metrics] : 0)));
+    const st = el._doe;
+    const put = (id, html) => { const e = $(id, el); if (e && e._html !== html) { e.innerHTML = html; e._html = html; } };
+    if (st && st.sig === sig && st.n === rows.length) {
+      put("#doeTiles", tilesHtml); put("#doeBtns", btnsHtml); put("#doeNotes", notesHtml);
+      const trs = $$("#doeTab tr.doerow", el);
+      rows.forEach((h, i) => { if (st.rows[i] !== h && trs[i]) trs[i].outerHTML = h; });
+      st.rows = rows;
+      if (st.chartSig !== chartSig) { st.chartSig = chartSig; drawDoeCharts(d, chartM); }
+      return;
+    }
+    const tw0 = $(".tablewrap", el), keep = st && st.id === d.id && tw0 ? [tw0.scrollTop, tw0.scrollLeft] : null;
+    const build = () => {
+      el.innerHTML = `<div class="big" id="doeTiles">${tilesHtml}</div>
+      <div class="box"><div class="bt">Cases<div class="grow"></div><span id="doeBtns">${btnsHtml}</span><span class="hint">a row opens that case: its results, console, convergence and checks</span></div>
+        <div class="tablewrap" style="max-height:52vh"><table class="grid doetab" id="doeTab" style="width:${widths.reduce((a, b) => a + b, 0)}px">
+          <colgroup>${widths.map((w) => `<col style="width:${w}px">`).join("")}</colgroup>
+          <tr>${head.map(([h, c]) => `<th class="${c}" title="${esc(h)}">${esc(h)}</th>`).join("")}</tr>${rows.join("")}</table></div></div>
+      <div id="doeNotes">${notesHtml}</div>
       ${d.metrics.length ? `<div class="rgrid" style="margin-top:12px">${charts}</div>` : ""}`;
+      $("#doeTiles", el)._html = tilesHtml; $("#doeBtns", el)._html = btnsHtml; $("#doeNotes", el)._html = notesHtml;
+      const tw = $(".tablewrap", el);
+      if (keep && tw) { tw.scrollTop = keep[0]; tw.scrollLeft = keep[1]; }
+    };
+    // another study opens at its top; the same one keeps the reader where they were
+    if (st && st.id === d.id) keepScroll(el, build); else { build(); el.scrollTop = 0; }
+    el._doe = { id: d.id, sig, n: rows.length, rows, chartSig };
+    drawDoeCharts(d, chartM);
+  }
+  function drawDoeCharts(d, chartM) {
     drawScatter(d);
     const p0 = d.parameters[0], p1 = d.parameters[1];
     if (!p0) return;
@@ -5173,7 +5305,7 @@
         e.stopPropagation();
         state.openFolders = state.openFolders || {};
         state.openFolders[b.dataset.fgroup] = !state.openFolders[b.dataset.fgroup];
-        $("#runsList").innerHTML = runsHTML();
+        drawRuns();
         if (state.tab === "results") renderLeft();
         return;
       }
@@ -5182,14 +5314,14 @@
       if (b.dataset.doetoggle !== undefined && b.dataset.doetoggle) {
         e.stopPropagation();
         state.openDoe[b.dataset.doetoggle] = !state.openDoe[b.dataset.doetoggle];
-        $("#runsList").innerHTML = runsHTML();
+        drawRuns();
         if (state.tab === "results") renderLeft();
         return;
       }
       if (b.dataset.doeopen2) { e.stopPropagation(); await openDoe(b.dataset.doeopen2); setCenter("doe"); return; }
       if (b.dataset.doegroup) {
         state.openDoe[b.dataset.doegroup] = !state.openDoe[b.dataset.doegroup];
-        $("#runsList").innerHTML = runsHTML();
+        drawRuns();
         if (state.tab === "results") renderLeft();
         return;
       }
@@ -5383,7 +5515,7 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
     await loadDoeList();
     // the run list was drawn before the studies were known, so a study row
     // showed a generic name until the next poll four seconds later
-    $("#runsList").innerHTML = runsHTML();
+    drawRuns();
     setInterval(pollRuns, 4000);
     setInterval(pollActive, 1000);
     setInterval(() => { if (state.active && (state.dtab === "term" || state.activeState === "running")) pollProc(); }, 2000);

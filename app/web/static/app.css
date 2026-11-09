@@ -484,6 +484,21 @@ table.grid.doetab th.real{background:#eef6ee;color:#1a5e20}
 table.grid.doetab td.real{background:#f6fbf6}
 table.grid.doetab td.real .dev{color:#9a6700;font-weight:700}
 table.grid.doetab td.real .dev::after{content:" ▲";font-size:9px;vertical-align:1px}
+/* fixed column widths with wrapped headers, so the columns do not shift as values come in; the case number
+   and name stay at the left while the table scrolls sideways */
+table.grid.doetab{table-layout:fixed;min-width:100%}
+table.grid.doetab th{white-space:normal;vertical-align:bottom;overflow-wrap:anywhere;line-height:1.25;font-family:inherit}
+/* the DOE toolbar in one or two rows: selectors as wide as a long response label no more */
+#c-doe .vtoolbar select{max-width:190px}
+#c-doe #doeInfo{flex:1 1 160px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.grid.doetab td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.grid.doetab .sl0,table.grid.doetab .sl1{position:sticky;background:#fff;z-index:1}
+table.grid.doetab th.sl0,table.grid.doetab th.sl1{background:var(--sub);z-index:3}
+/* one pixel over the edge: at a fractional display scale the columns scrolled beneath showed through a sliver */
+table.grid.doetab .sl0{left:-1px}
+table.grid.doetab .sl1{left:35px;box-shadow:inset -1px 0 0 var(--line)}
+table.grid.doetab tr:hover td.sl0,table.grid.doetab tr:hover td.sl1{background:#fafbfc}
+table.grid.doetab td .bar{min-width:0}
 
 /* a smooth view that shows a corner region of a large RVE says so on the view */
 .vregion { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: 78%; z-index: 6;

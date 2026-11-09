@@ -472,6 +472,8 @@ def _generate_region(N, h, phases, disp, **kw):
     log(f"  particles only for {disp.get('axis', 'z')} from {k0 * h:.4g} to {k1 * h:.4g} µm ({nzs} of {N} voxel "
         f"layers, loaded {grow:.3g} x higher there); matrix elsewhere")
     lab, info = generate(N, h, [dict(ph, vf=float(ph["vf"]) * grow) for ph in phases], nz=nzs, skin=0, **kw)
+    if lab is None:
+        return None, info                          # short: packed again by the caller (_generate_kept)
     pad = ((0, 0), (0, 0), (k0, N - k1))
     lab = np.pad(lab, pad)
     cm = info.get("contact_mask")
@@ -3376,13 +3378,64 @@ def rasterize_owner(N, h, info, phases, nz=None, offset_um=0.0, shape=None):
     return owner, phase_of
 
 
+REPACK_ROUNDS = 3          # packings again with less content before the particles are drawn smaller
+REPACK_MARGIN = 0.995      # the content of the next packing: what the last reached (scale^3) times this
+
+
+def _generate_kept(N, h, phases, **kw):
+    """A packing with the sizes entered kept. A loading that does not pack (the growth stops at a size scale s
+    below 1 without overlap, or with all the overlap allowed, or the largest share of voxels in two particles
+    turned every overlap down) is packed again from scratch with the content of every particle phase s^3 x
+    0.995 of its last one - the particles keep their sizes, fewer of them are drawn and the phases keep their
+    shares - up to REPACK_ROUNDS times; only a loading still short after that is drawn smaller, as every short
+    packing was up to 5.6.6. The first try is the whole packing, overlap tries included; when a largest share
+    ended it without overlap, the later tries are without overlap too (s was reached without it).
+
+    Drawing every particle s times smaller moved every size off the one entered (3 um alumina with 0.5 % fines
+    at 62 vol% in a 10 um film: 3.6 % small) and fitted more than particles of the sizes entered hold (2.9 um
+    with 3 % fines: 60.8 vol%, 0.7 % small; at their size 57.2 vol%), so a design study whose size is a factor
+    read the factor wrong. Leaving the deepest-overlapping spheres out of the packing reached instead held about
+    as much (57.0 vol%) in twice the time and shifted the shares. info["left_out"] reports the size scale the
+    first packing stopped at and the factor on the contents."""
+    log = kw.get("log") or (lambda *a: None)
+    vf0 = [float(ph["vf"]) for ph in phases]
+    packed = [ph["shape"] != G.NETWORK and not ph.get("overlap") for ph in phases]
+    f, first, r = 1.0, None, 0
+    for r in range(REPACK_ROUNDS + 1):
+        last = r == REPACK_ROUNDS
+        ph_r = [dict(ph, vf=v * f) if pk else ph for ph, v, pk in zip(phases, vf0, packed)]
+        lab, info = generate(N, h, ph_r, keep_sizes=False if last else "core", **kw)
+        if lab is not None:
+            break
+        o = kw.get("overlap_steps")
+        if o and o.get("max_pct") is not None:
+            kw = dict(kw, overlap_steps=None)
+        sc = float(info["short_scale"])
+        first = sc if first is None else first
+        f *= sc ** 3 * REPACK_MARGIN
+        log(f"  the loading does not pack without overlap (size scale {sc:.4f}): packed again with the sizes entered "
+            f"and {100 * f:.2f} % of every particle phase's content" + (" (the last try; a packing still short of it "
+                                                                         "is drawn smaller)" if r + 1 == REPACK_ROUNDS else ""))
+    if f < 1.0:
+        info["left_out"] = {"scale_reached": first, "content_factor": f, "repacks": r}
+        for pi, v, pk in zip(info["phases"], vf0, packed):
+            pi["vf_target"] = v
+            if pk:
+                pi["jammed"] = True
+        log(f"  every particle has the size entered; the loading is {100 * f:.2f} % of the target content "
+            f"(the packing stopped at a size scale of {first:.4f} at the full content)")
+    return lab, info
+
+
 def _generate_share_limited(N, h, phases, overlap_steps, **kw):
     """Progressive overlap with a largest share: overlap_steps["max_pct"] % of
     the particle voxels may lie in two particles. The structure is built with
     the overlap allowed and every particle drawn again (overlap_check); when
     more than that share lies in two particles, it is built again with one
     voxel less of overlap allowed, down to none - where the loading is packed
-    as with progressive overlap off (particles kept apart, or drawn smaller).
+    as with progressive overlap off (particles kept apart; a loading that does
+    not pack is packed again with less content, _generate_kept). A try that
+    falls short of the loading goes on with less overlap in the same way.
     The seed gives the same draws to every build."""
     log = kw.get("log") or (lambda *a: None)
     lim = float(overlap_steps["max_pct"])
@@ -3398,6 +3451,16 @@ def _generate_share_limited(N, h, phases, overlap_steps, **kw):
     while True:
         lab, info = generate(N, h, phases, overlap_steps=steps, **kw)
         n_builds += 1
+        if lab is None:
+            # (keep_sizes "core") this try fell short of the loading: with less overlap, and without any, the
+            # caller packs again with less content (_generate_kept)
+            if steps is None:
+                return None, info
+            k = int(steps.get("max_vox") or 1)
+            log(f"  !! with an overlap of up to {k} voxel{'s' if k > 1 else ''} the loading is not reached: built "
+                + (f"again with up to {k - 1} voxel{'s' if k > 2 else ''}" if k > 1 else "again without overlap"))
+            steps = dict(steps, max_vox=k - 1) if k > 1 else None
+            continue
         k = int(info.get("overlap_vox") or 0)
         if steps is None or k == 0:
             break
@@ -3426,7 +3489,7 @@ def _generate_share_limited(N, h, phases, overlap_steps, **kw):
 
 def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart",
              want_contact_faces=False, nz=None, skin=0, shear=None, dispersion=None, gap_vox=SEP_APART,
-             overlap_steps=None):
+             overlap_steps=None, keep_sizes=True):
     """Build one realisation.
 
     `phases` items: shape, size_um, dist, vf, orientation {mode, spread_deg},
@@ -3466,11 +3529,19 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     voxels in particles raised the through-thickness k by 25 %, and the
     contact vanished (with the excess) on a 1.5x finer grid. The film is
     built inside the skin and padded with matrix, for every packing route.
+
+    keep_sizes: True - a loading that does not pack without overlap is packed again with less content and the
+    sizes entered (_generate_kept); "core" - one packing that returns (None, {"short_scale": s}) when it falls
+    short; False - the particles are drawn smaller instead (as up to 5.6.6).
     """
+    if keep_sizes is True:
+        return _generate_kept(N, h, phases, seed=seed, log=log, should_stop=should_stop, contacts=contacts,
+                              want_contact_faces=want_contact_faces, nz=nz, skin=skin, shear=shear,
+                              dispersion=dispersion, gap_vox=gap_vox, overlap_steps=overlap_steps)
     if overlap_steps and overlap_steps.get("max_pct") is not None:
         return _generate_share_limited(N, h, phases, overlap_steps, seed=seed, log=log, should_stop=should_stop,
                                        contacts=contacts, want_contact_faces=want_contact_faces, nz=nz, skin=skin,
-                                       shear=shear, dispersion=dispersion, gap_vox=gap_vox)
+                                       shear=shear, dispersion=dispersion, gap_vox=gap_vox, keep_sizes=keep_sizes)
     if (dispersion or {}).get("mode", "uniform") == "uniform":
         dispersion = None
     if nz is None and any(ph.get("section") for ph in phases):
@@ -3479,7 +3550,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
     if dispersion is not None and dispersion["mode"] == "region" and nz is None:
         return _generate_region(N, h, phases, dispersion, seed=seed, log=log, should_stop=should_stop,
                                 contacts=contacts, want_contact_faces=want_contact_faces, gap_vox=gap_vox,
-                                overlap_steps=overlap_steps)
+                                overlap_steps=overlap_steps, keep_sizes=keep_sizes)
     if nz is not None and skin and int(nz) - 2 * int(skin) >= 2:
         ks = int(skin)
         inner = int(nz) - 2 * ks
@@ -3487,7 +3558,9 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         lab, info = generate(N, h, [dict(ph, vf=float(ph["vf"]) * grow) for ph in phases], seed=seed,
                              log=log, should_stop=should_stop, contacts=contacts,
                              want_contact_faces=want_contact_faces, nz=inner, skin=0, dispersion=dispersion,
-                             gap_vox=gap_vox, overlap_steps=overlap_steps)
+                             gap_vox=gap_vox, overlap_steps=overlap_steps, keep_sizes=keep_sizes)
+        if lab is None:
+            return None, info                      # short: packed again by the caller (_generate_kept)
         pad = ((0, 0), (0, 0), (ks, ks))
         lab = np.pad(lab, pad)
         if info.get("contact_mask") is not None:
@@ -3759,6 +3832,10 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 log(f"  particles may overlap by up to {k_} voxel{'s' if k_ > 1 else ''} ({k_ * h:.3g} µm): "
                     + ("the target loading is reached" if scale >= 1.0
                        else f"the closest the packing came (size scale {scale:.4f})"))
+        if scale < 1.0 and keep_sizes == "core":
+            # packed again with less content and the sizes entered (_generate_kept)
+            info["short_scale"] = scale
+            return None, info
         if scale < 1.0:
             log(f"  !! the target packing fraction was not reached; packing stopped at a size scale of {scale:.3f}")
             diam *= scale
@@ -4230,6 +4307,10 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                     jammed[i_] = True
                 info["kept_short"] = rsa_keep["frac"]
                 scale = 1.0
+            if scale < 1.0 and keep_sizes == "core":
+                # packed again with less content and the sizes entered (_generate_kept)
+                info["short_scale"] = scale
+                return None, info
             if scale < 1.0:
                 log(f"  !! the target could not be packed without overlap; particles are {scale:.3f} x the "
                     f"requested size (volume fraction x {scale**3:.3f})")

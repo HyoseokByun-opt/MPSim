@@ -17,12 +17,25 @@ import uuid
 from mpsim import doe as DOE
 
 
+# a size parameter of a phase (phases.<i>.size.<key>, or the standard deviation of d or of a dimension with a
+# distribution of its own) and the dimension of the size report (grains.size_report) it is realised as; units of
+# the form against micrometres
+SIZE_PATH = re.compile(r"^phases\.(\d+)\.(?:size\.(d|length|aspect|aspect_y|ly|lz)|dist\.(std)"
+                       r"|dists\.(length|aspect|aspect_y|ly|lz)\.std)$")
+LEN_UNIT = {"um": 1.0, "µm": 1.0, "nm": 1e-3, "mm": 1e3}
+
+
 def realised(study, r):
     """What a finished case really holds, beside what was asked for: the
     filler content and, for every parameter (or linked entry) that sets a
     content or a share of the filler, the value of the generated structure.
     A dense packing can fall short of the target (BN stacks at half the
     filler: 51 of 55 vol%); a study is read against these, not the inputs.
+    A parameter that sets a particle size gets the size realised: the number
+    mean of that dimension over the particles placed (the standard deviation
+    for one that sets the spread), against the same statistic of the
+    particles the input draws (the distribution after its cut at ±2σ or the
+    bounds), in the unit of the parameter.
     -> {key: (label, unit, value, the target the run aimed at)}"""
     comp = r.get("composition") or {}
     labs = comp.get("labels") or []
@@ -40,6 +53,7 @@ def realised(study, r):
         wt[i] = wt.get(i, 0.0) + float(lab.get("wt") or 0.0)
     base = study.get("base_form") or {}
     bph = base.get("phases") or []
+    sizes = ((r.get("realisations") or [{}])[0] or {}).get("particle_sizes") or {}
 
     def basis(i):
         return ((bph[i].get("fraction") or {}).get("basis") if i < len(bph) else None) or "vol"
@@ -82,6 +96,26 @@ def realised(study, r):
             if tot > 0:
                 out["real_" + path] = (f"{name(i)}: share of the filler, realised", "% of filler",
                                        100.0 * src.get(i, 0.0) / tot, t)
+        m = SIZE_PATH.match(path)
+        if m and int(m.group(1)) < len(phases):
+            i = int(m.group(1))
+            e = sizes.get(str(i))
+            if not e:
+                continue
+            key = m.group(2) or m.group(4) or "d"
+            if key == "d" and e.get("basis") == "eqd":
+                key = "eqd"                      # the size entered is the volume-equivalent diameter
+            dim = next((x for x in e.get("dimensions") or [] if x.get("key") == key), None)
+            if not dim or not (dim.get("real") or {}).get("count"):
+                continue
+            stat = "std" if (m.group(3) or m.group(4)) else "number_mean"
+            unit = ((bph[i].get("size") or {}) if i < len(bph) else {}).get("unit") or "um"
+            length = dim.get("unit") == "um"
+            f = 1.0 / LEN_UNIT.get(unit, 1.0) if length else 1.0
+            real, inp = float(dim["real"].get(stat) or 0.0), (dim.get("input") or {}).get(stat)
+            what = "standard deviation" if stat == "std" else (dim.get("label") or key).lower()
+            out["real_" + path] = (f"{name(i)}: {what}, realised", ({"um": "µm"}.get(unit, unit) if length else "-"),
+                                   real * f, float(inp) * f if inp is not None else None)
     return out
 
 

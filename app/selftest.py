@@ -1567,7 +1567,8 @@ def t_cond_aniso():
             f"{kz:.2f} W/m·K through its thickness; a laminate film with rods = the parallel mean")
 
 
-@check("DOE: a filler's share with the total kept; the Domain's grid on every case, or each case's own edge on its voxel size")
+@check("DOE: a filler's share with the total kept; the Domain's grid on every case, or each case's own edge on its voxel size; "
+       "the content, share and particle size each case realises")
 def t_doe_mix_grid():
     from mpsim import doe as DOE
     from web.doe import DOEStore
@@ -1654,10 +1655,21 @@ def t_doe_mix_grid():
     rz = realised({"base_form": base, "parameters": [{"path": "mix.1"}]}, res)
     expect(abs(rz["real_filler"][2] - 51.1) < 1e-9 and abs(rz["real_filler"][3] - 55.0) < 1e-9, f"filler {rz['real_filler']}")
     expect(abs(rz["real_mix.1"][2] - 100 * 0.245 / 0.511) < 1e-9 and abs(rz["real_mix.1"][3] - 50.0) < 1e-9, f"share {rz['real_mix.1']}")
+    # a size that is a parameter: the number mean of the particles placed against the input's, in the unit of the
+    # parameter (nm here), and the spread of the size
+    dim = {"key": "d", "label": "Diameter", "unit": "um", "real": {"count": 40, "number_mean": 2.9, "std": 0.31},
+           "input": {"number_mean": 3.0, "std": 0.3}}
+    res_s = dict(res, realisations=[{"particle_sizes": {"0": {"name": "Al2O3", "basis": "d", "dimensions": [dim]}}}])
+    base_s = {"phases": [{"size": {"d": 3000, "unit": "nm"}}, {"size": {"d": 1, "unit": "um"}}]}
+    rs = realised({"base_form": base_s, "parameters": [{"path": "phases.0.size.d"}, {"path": "phases.0.dist.std"}]}, res_s)
+    expect(abs(rs["real_phases.0.size.d"][2] - 2900) < 1e-6 and abs(rs["real_phases.0.size.d"][3] - 3000) < 1e-6
+           and rs["real_phases.0.size.d"][1] == "nm" and abs(rs["real_phases.0.dist.std"][2] - 310) < 1e-6,
+           f"sizes realised {rs}")
     return (f"shares {shares[0]:g}-{shares[-1]:g} % of 55 vol% with the total kept; the Domain's grid on every case, "
             f"edges {Ls[0]:.3g}-{Ls[-1]:.3g} µm adapted on its voxel size; own grids for a size study "
             f"(voxel {h4[0]:.3g}-{h4[1]:.3g} µm); "
-            f"realised 51.1 vol%, share {rz['real_mix.1'][2]:.1f} %")
+            f"realised 51.1 vol%, share {rz['real_mix.1'][2]:.1f} %, size {rs['real_phases.0.size.d'][2]:g} of "
+            f"{rs['real_phases.0.size.d'][3]:g} nm")
 
 
 @check("EMI complex homogenisation: complex laminates exact, real values = real solver, dilute spheres = Maxwell-Garnett")
@@ -1929,7 +1941,9 @@ def t_rsa_overlap():
 
 
 @check("Progressive overlap: spheres at 66 vol% (above random close packing) reach the loading with an overlap of "
-       "at most the voxels allowed; off, they are drawn smaller and fall short; with a largest share of the particle "
+       "at most the voxels allowed; off, they keep their size and are packed again with less content (the loading "
+       "falls short); "
+       "with a largest share of the particle "
        "voxels in two particles, a structure above it is built again with less overlap; Auto allows what changes "
        "the result by at most 1 % (contrast, particle size in voxels, loading)", quick=False)
 def t_overlap_steps():
@@ -1940,7 +1954,11 @@ def t_overlap_steps():
     lab1, i1 = GEN.generate(60, 0.5, ph, seed=3, log=lambda *a: None, contacts="keep", gap_vox=0.0,
                             overlap_steps={"tries": 2, "max_vox": 3})
     v0, v1 = float(np.mean(lab0 == 1)), float(np.mean(lab1 == 1))
-    expect(i0["pack_scale"] < 1.0 and i0["overlap_vox"] == 0 and v0 < 0.645, f"off: scale {i0['pack_scale']}, vf {v0}")
+    lo0 = i0.get("left_out") or {}
+    d0 = 2.0 * np.asarray(i0["particles"]["P"])[:, 0]
+    expect(lo0.get("scale_reached", 1.0) < 1.0 and lo0.get("content_factor", 1.0) < 1.0 and i0["overlap_vox"] == 0
+           and v0 < 0.645 and float(np.max(np.abs(d0 / 4.0 - 1.0))) < 0.02,
+           f"off: {lo0}, vf {v0}, diameters {d0.min():.4f}-{d0.max():.4f} of 4")
     expect(1 <= i1["overlap_vox"] <= 3 and abs(v1 / 0.66 - 1.0) < 0.01, f"on: overlap {i1['overlap_vox']}, vf {v1}")
     # the overlap is bounded: no two sphere centres closer than the sum of
     # the drawn radii less the overlap allowed
@@ -1978,7 +1996,9 @@ def t_overlap_steps():
     expect(share("sio2", 60, "thermal", {"share": "value", "max_pct": 0.3}) == 0.3
            and share("sio2", 60, "thermal", {"share": "value", "max_pct": 0}) == 0.0
            and share("sio2", 60, "thermal", {"share": "none"}) is None, "a value is not used as entered, or No limit limits")
-    return (f"off: {100 * v0:.2f} vol% (size scale {i0['pack_scale']:.3f}); on: {100 * v1:.2f} vol% with up to "
+    return (f"off: {100 * v0:.2f} vol% (stopped at size scale {lo0['scale_reached']:.3f}, packed again with "
+            f"{100 * lo0['content_factor']:.1f} % of the content), diameters {d0.min():.3f}-{d0.max():.3f} µm of 4; "
+            f"on: {100 * v1:.2f} vol% with up to "
             f"{i1['overlap_vox']} voxel(s) of overlap (deepest {depth / 0.5:.2f} voxel), {sh1:.2f} % of the particle "
             f"voxels shared; at most 2.5 %: built again with {i2['overlap_vox']} voxel(s), {sh2:.2f} %, "
             f"{100 * float(np.mean(lab2 == 1)):.2f} vol%; Auto (k, 8 voxels): silica 60 vol% {a_si:.2f} %, 50 vol% "

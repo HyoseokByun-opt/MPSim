@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.6.6-0b62c4" alt="version 5.6.6">
+  <img src="https://img.shields.io/badge/version-5.6.7-0b62c4" alt="version 5.6.7">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -69,6 +69,10 @@ The main capabilities are listed below.
   packed without overlap (equal spheres beyond random close packing, dense cubes) is reached with the least overlap it
   takes, 1 voxel and then 2, rather than with every particle drawn smaller (spheres at 66 vol%: 65.96 % instead of 62.6 %);
   a random placement that jams a little short is finished the same way in seconds instead of being packed again.
+  Where no overlap is allowed, or not enough, the particles keep the sizes entered and the structure is packed again
+  with less content (5.6.7; up to 5.6.6 every particle was drawn smaller - 3 µm alumina with few fines at 62 vol% in a
+  10 µm film came out 3.6 % small), and a DOE whose factor is a particle size shows the size each case holds beside
+  the content.
   Every structure sets the sizes it holds against the input, dimension by dimension (means, D10/D50/D90 by number and
   by volume, a two-sample test, a check), while the run goes on; up to 5.6.5 the random placement of non-spherical
   particles dropped the smallest of every round (a log-normal CV of 0.34 came out as 0.15-0.20, the number mean 9-50 %
@@ -497,7 +501,7 @@ reference values. A selection:
 | Calibration of a bound resin layer from a viscosity (particle dynamics) | known value 10 nm | 10.6 nm (95 % 8.8–12.5) |
 | Blends: two sphere sizes at 55 vol%, cubes with flakes at 45 vol% | no voxel inside two particles | 0 shared voxels, none trimmed |
 | Complete pipelines: filled RVE, thin film, porous RVE, viscosity with live results | all files, all analyses | passed |
-| DOE: share of a filler at a fixed total content; fixed grid | 5–50 % of 55 vol%, 160³ on every case | passed |
+| DOE: share of a filler at a fixed total content; fixed grid; content, share and particle size realised | 5–50 % of 55 vol%, 160³ on every case; a size in the factor's unit | passed |
 | Linked inputs: one R_int for two grades of a filler (calibration) | known value 3e-8 m²K/W | 3.0e-8 linked (4.5e-8 when only one grade is calibrated) |
 | Stop of a run during parallel solutions | all processes of the run end | within seconds |
 | Arrangement after shear flow: silica 4 + 1.6 µm, 45 vol%, strain 2 | contents kept, periodic, pairs oriented by the flow | close pairs 3.7 → 5.5 per sphere, n_x·n_z +0.014 → -0.024 |
@@ -516,7 +520,7 @@ reference values. A selection:
 | Queue: structures side by side, solves through the memory gate | a light solve passes a heavy one only while the heavy one still fits | passed |
 | A run stopped while it waits at the memory gate | the queue keeps answering (a killed waiter hangs a multiprocessing Event) | passed; the gate is a non-blocking flag |
 | Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
-| Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (62.6 % without) |
+| Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (without: 61.3 % at the size entered) |
 | Progressive overlap in the random placement: log-normal spheroids (c/a 0.5) at 50 vol% whose placement jams 2-3 % short | loading reached without a clump relaxation, with the particles drawn (sizes within three standard errors); overlap counted by drawing every particle again | 49.8-50.0 % in under 1 s with ≤ 2 voxels, 0.2 % shared; 0 shared at 30 vol% |
 | Spheres of different sizes packed largest first: 3 + 0.6 µm at 27 + 18 vol% | loading reached; k of the packing grown at once with ten times the equilibration (within 5 %); no overlap after 200 more two-grid moves | 27.0 + 18.0 vol%, k 1.392 against 1.362; closest pairs at 1.0001 of contact |
 | Particle files: particles.csv and polyhedra.csv redrawn by plain numpy with the README's conventions, eight shapes, bulk and film | the generated structure | identical voxel for voxel |
@@ -729,7 +733,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.6.6, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.6.7, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

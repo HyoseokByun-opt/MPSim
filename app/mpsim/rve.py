@@ -686,6 +686,16 @@ def post_checks(plan_, gen_info, quality="standard"):
                                + "), shape and orientation kept: their corners were caught in each other and pushing "
                                  "and turning did not free them. The volume fraction table shows what the phases "
                                  "reached."})
+    lo = gen_info.get("left_out")
+    if lo:
+        checks.append({"id": "left_out", "group": "Generated structure", "label": "Content packed with the sizes entered",
+                       "value": float(lo["content_factor"]), "target": 1.0, "unit": "", "status": "warn",
+                       "note": f"The target loading does not pack without overlap (the packing stopped at "
+                               f"{float(lo['scale_reached']):.3f} of the particle size): the particles keep the sizes "
+                               f"entered and fewer of them are drawn - packed again {int(lo.get('repacks') or 1)} "
+                               f"time(s) with less content, {100 * float(lo['content_factor']):.1f} % of the target "
+                               f"content of every particle phase. The volume fraction table gives each phase's content; "
+                               f"overlap allowed (Structure - Gap between particles) or a thicker film reaches more"})
     ps = gen_info.get("pack_scale")
     if ps is not None and ps < 1.0:
         checks.append({"id": "pack", "group": "Generated structure", "label": "Particle size reached by the dense packing",
