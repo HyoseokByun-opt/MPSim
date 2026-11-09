@@ -51,6 +51,7 @@ from .solvers import conduction as CD
 from .solvers import elastic as EL
 from .solvers import fans as FA
 from .solvers import viscosity as VI
+from .solvers import via as VIA
 from . import figworker as FWK
 from .solvers import emi as EMI
 from .solvers import fullwave as FW
@@ -733,8 +734,39 @@ def film_skin(spec, plan):
 
 
 def wants_contact_faces(spec):
+    return (any((p.get("r_contact") or 0) > 0 or (p.get("rc_elec") or 0) > 0 for p in spec["phases"])
+            or any(v > 0 for v in (spec.get("contact_rc") or {}).values()))
+
+
+def wants_thermal_contacts(spec):
     return (any((p.get("r_contact") or 0) > 0 for p in spec["phases"])
             or any(v > 0 for v in (spec.get("contact_rc") or {}).values()))
+
+
+def electrical_contacts(spec, h_um):
+    """Contact resistance of the electrical solve on the faces where two particles touch, divided by the voxel
+    size (ohm m, as 1/sigma), or None (5.7.0). rc_elec [ohm m^2] is a resistance per area of contact: the
+    constriction of the current into the small true contact and the film between the particles (oxide,
+    binder) that a voxel face cannot resolve. Two particles of different phases take the mean of the two
+    values. On a voxel grid the faces two touching particles share depend on the grid, so a value fitted to a
+    measured paste (Calibration) holds for the grid it was fitted on."""
+    if not any((p.get("rc_elec") or 0) > 0 for p in spec["phases"]):
+        return None
+    table = spec["labels"]
+    nlab = len(table)
+    h_m = h_um * 1e-6
+    rc = np.zeros((nlab, nlab))
+    regions = {}
+    for li, t in enumerate(table):
+        if t["kind"] in ("core", "shell") and t["phase"] is not None:
+            regions.setdefault(t["phase"], []).append(li)
+    for i in regions:
+        for j in regions:
+            v = 0.5 * (float(spec["phases"][i].get("rc_elec") or 0.0) + float(spec["phases"][j].get("rc_elec") or 0.0))
+            for a in regions[i]:
+                for b in regions[j]:
+                    rc[a, b] = v / h_m
+    return rc
 
 
 def contact_resistance(spec, i, j):
@@ -1877,6 +1909,30 @@ def _mu_r_at(curve, gd, fallback):
     return np.exp(np.interp(np.log(np.maximum(np.asarray(gd, float), 1e-12)), lg, lm))
 
 
+def _via_entry(spec, vo, el, checks, log):
+    """The through via filled with this composite (solvers/via.py, 5.7.0): its fill conducts as the RVE does
+    along z (the via's axis), or as the value entered; the wall is the library's (copper) or a value."""
+    lib = M.library_by_id()
+    s_wall = float(vo["wall_sigma"] or ((lib.get(vo["wall_material"]) or {}).get("props") or {}).get("sigma") or 5.96e7)
+    if vo["fill"] == "value":
+        s_fill = float(vo["fill_sigma"] or 0.0)
+    else:
+        d_ = el.get("diag") or [el.get("iso")] * 3
+        s_fill = float(d_[2] if d_[2] is not None and np.isfinite(d_[2]) else el.get("iso") or 0.0)
+    out = VIA.analyse(vo, max(s_fill, 0.0), s_wall, log=log)
+    res = out["multipole_residual_V"]
+    checks.append({"id": "via_cs", "group": "Through via",
+                   "label": "Cross-section: the via surfaces at their potentials (multipole solution)",
+                   "value": res, "target": 1e-4, "unit": "V", "status": "pass" if res <= 1e-4 else "warn",
+                   "note": "largest deviation of the surface potentials from 1 V (signal) and 0 V (returns)"})
+    if out["fill_share_dc"] < 0.01 and vo["fill"] == "rve":
+        checks.append({"id": "via_fill", "group": "Through via", "label": "The fill carries part of the DC current",
+                       "value": out["fill_share_dc"], "target": 0.01, "unit": "", "status": "warn",
+                       "note": "less than 1 % of the current flows through the fill: the wall decides the via's "
+                               "resistance (a thicker wall or a fill below its percolation threshold)"})
+    return out
+
+
 def _viscosity_entry(spec, opts, table, realisations, results_first, mus, checks):
     """The viscosity section of the result: the RVE value, the closed forms,
     Krieger-Dougherty with the jammed phi_m, the best estimate, the flow curve
@@ -2339,7 +2395,7 @@ def thermal_interfaces(spec, h_um, area_ratio):
                 if tm["kind"] == "matrix":
                     rpair[mi, outer[i]] = rpair[outer[i], mi] = r
             any_r = True
-    if wants_contact_faces(spec):
+    if wants_thermal_contacts(spec):
         any_c = True
         for i in outer:
             for j in outer:
@@ -2576,6 +2632,10 @@ def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_rati
                 continue
         else:
             vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
+            if key == "electrical" and electrical_contacts(spec, hf) is not None:
+                log(f"    resolution check: {COND[key]['title']} skipped (contact resistances need the contact "
+                    f"faces of the finer grid)")
+                continue
         v_used, _ = CD.contrast_policy(labels_f, vals, di, spec["options"]["contrast_cap"], {}, film=bool(spec["rve"].get("film")))
         t0 = time.time()
         if ("res:" + key, d) in pre:
@@ -2753,6 +2813,8 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
             rpair, rcpair = thermal_interfaces(spec, h, area_ratio)
         else:
             vals = np.array(S.label_values(table, COND[key]["prop"]), float)
+            if key == "electrical":
+                rcpair = electrical_contacts(spec, h)
         an = aniso if key == "thermal" else None
         be = "fv" if (rpair is not None or rcpair is not None or an is not None) else cond_backend(spec, backend)
         film_run = bool(spec["rve"].get("film"))
@@ -2856,6 +2918,8 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
                     continue
             else:
                 vals = np.array(S.label_values(spec["labels"], COND[key]["prop"]), float)
+                if key == "electrical" and electrical_contacts(spec, fine["h"]) is not None:
+                    continue
             v_used, _ = CD.contrast_policy(fine["labels"], vals, "xyz".index(d0), opts["contrast_cap"], {}, film=bool(spec["rve"].get("film")))
             be = "fv" if (primary == "fv" or rpair is not None) else primary
             add(PAR.cond_task, "fe" if be == "fe" else "fv",
@@ -3707,7 +3771,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             derived = {}
             if all(np.isfinite(diag)) and diag[2] > 0:
                 derived["anisotropy_inplane_over_z"] = 0.5 * (diag[0] + diag[1]) / diag[2]
-            if key == "thermal" and wants_contact_faces(spec):
+            if key == "thermal" and wants_thermal_contacts(spec):
                 # R_c of every pair of phases that touch, and how many voxel
                 # faces carry it (the same filler and two different ones)
                 pf = (realisations[0].get("contact_pairs") or {}) if realisations else {}
@@ -4065,6 +4129,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             if jr.get("error"):
                 checks.append({"id": "jh_perc", "group": "Joule heating", "label": "A conducting path joins the faces",
                                "value": 0, "target": 1, "unit": "", "status": "fail", "note": jr["error"]})
+        if "via" in need and "electrical" in props:
+            props["via"] = _via_entry(spec, opts["via"], props["electrical"], checks, log)
         if "viscosity" in need and "viscosity" in results_first:
             props["viscosity"] = _viscosity_entry(spec, opts, table, realisations, results_first,
                                                   samples.get("viscosity") or [], checks)
@@ -4370,6 +4436,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 rpair, rcpair = thermal_interfaces(spec, h, area_ratio)
             else:
                 vals = np.array(S.label_values(table, COND[key]["prop"]), float)
+                if key == "electrical":
+                    rcpair = electrical_contacts(spec, h)
             out = _cond_solve(key, labels, vals, spec, h, backend, prog, log, event, should_stop,
                               viewer if first else None, first, rpair=rpair,
                               cmask=contact_mask if rcpair is not None else None, rcpair=rcpair, pre=pre_cond,
@@ -5281,6 +5349,21 @@ def headline_numbers(props, comp):
         if m.get("swelling") and m["swelling"].get("cme_eff"):
             out.append({"key": "cme", "label": "Moisture expansion CME", "value": float(np.mean(m["swelling"]["cme_eff"])),
                         "unit": "1/mass fr."})
+    if "via" in props:
+        v_ = props["via"]
+        out.append({"key": "via_R", "label": "Through via: DC resistance per via", "value": v_["R_dc_mohm"], "unit": "mΩ",
+                    "sub": f"{100 * v_['fill_share_dc']:.1f} % through the fill · wall {v_['plating_um']:g} µm"})
+        out.append({"key": "via_share", "label": "Through via: the fill's share of the DC current",
+                    "value": 100.0 * v_["fill_share_dc"], "unit": "%",
+                    "sub": f"fill {v_['sigma_fill_S_m'] / 1e6:.3g} MS/m · drops out above {v_['f_wall_Hz'] / 1e6:.3g} MHz"})
+        out.append({"key": "via_Rf", "label": f"Through via: resistance at {v_['f_ref'] / 1e9:.3g} GHz",
+                    "value": v_["at_ref"]["R_via_mohm"], "unit": "mΩ",
+                    "sub": f"{100 * v_['at_ref']['fill_share']:.2g} % through the fill"})
+        out.append({"key": "via_Z0", "label": "Through via: characteristic impedance", "value": v_["Z0_lossless_ohm"],
+                    "unit": "Ω", "sub": f"{v_['n_returns']} return via(s) at {v_['pitch_um']:g} µm, εr {v_['eps_r']:g}"})
+        out.append({"key": "via_S21", "label": f"Through via: S21 at {v_['f_ref'] / 1e9:.3g} GHz",
+                    "value": v_["at_ref"]["S21_dB"], "unit": "dB",
+                    "sub": f"S11 {v_['at_ref']['S11_dB']:.1f} dB · ports {v_['z_ref']:g} Ω"})
     if "viscosity" in props:
         out.append({"key": "mu_r", "label": "Relative viscosity μ/μresin", "value": props["viscosity"]["mu_r"], "unit": "-"})
         out.append({"key": "mu_c", "label": f"Compound viscosity at {props['viscosity']['gd_ref']:g} 1/s",

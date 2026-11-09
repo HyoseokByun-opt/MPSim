@@ -47,6 +47,8 @@ ANALYSES = {
     # coupled analyses of a thin film (v5.6)
     "thermomech":   ("Thermal stress and warpage (heat flow coupled to stress)", "Multiphysics"),
     "joule":        ("Joule heating (current coupled to temperature)", "Multiphysics"),
+    # a plated-through via filled with this composite (v5.7)
+    "via":          ("Through via filled with this composite: resistance, impedance, S-parameters", "Electrical"),
 }
 FILM_ANALYSES = {"thermomech", "joule"}
 PORE_ANALYSES = {"permeability", "tortuosity", "acoustics", "radiation", "porosimetry", "pore_network",
@@ -73,6 +75,9 @@ def required_analyses(chosen):
     if "mechtest" in need:
         # the test's macroscopic state comes from the effective stiffness
         need |= {"cte"}
+    if "via" in need:
+        # the fill's conductivity is the composite's
+        need |= {"electrical"}
     return need
 
 
@@ -238,6 +243,53 @@ def _joule(jo, errors):
         out["values"] = vals
         out["T_amb"] = _num(jo.get("T_amb", 25.0), "ambient temperature", -273.0, 1000.0)
         out["R_th"] = _num(jo.get("R_th", 1e-3), "thermal resistance to ambient (per area)", 0.0, 1e3)
+    except ValueError as e:
+        errors.append(str(e))
+    return out
+
+
+VIA_RETURNS = ("coax4", "coax8", "gsg", "sg")
+
+
+def _via(vo, errors):
+    """The through via (solvers/via.py): a hole of diameter hole_d_um through a board length_mm thick, its wall
+    plated plating_um thick at the hole's ends and throw times that in the middle (the throwing power of the
+    plating), the rest filled with this composite (fill "rve": its conductivity along z) or a value (fill
+    "value", fill_sigma S/m); return vias at the pitch in a layout; the laminate's eps_r and tan d; ports of
+    z_ref; frequencies f_min..f_max; sweep_um the wall thicknesses compared."""
+    out = {"hole_d_um": 100.0, "length_mm": 1.8, "plating_um": 20.0, "throw": 1.0, "sweep_um": [5.0, 10.0, 15.0, 20.0, 25.0],
+           "wall_material": "cu", "wall_sigma": None, "fill": "rve", "fill_sigma": None, "pitch_um": 300.0,
+           "returns": "coax4", "eps_r": 3.37, "tan_d": 0.002, "z_ref": 50.0, "f_min": 1e3, "f_max": 4e10, "n_f": 121,
+           "f_ref": 1e10, "slices": 12}
+    try:
+        out["hole_d_um"] = _num(vo.get("hole_d_um", 100.0), "via hole diameter", 1.0, 1e5)
+        out["length_mm"] = _num(vo.get("length_mm", 1.8), "via length (board thickness)", 1e-3, 100.0)
+        out["plating_um"] = _num(vo.get("plating_um", 20.0), "via wall plating thickness", 0.01, 0.5 * out["hole_d_um"])
+        out["throw"] = _num(vo.get("throw", 1.0), "throwing power of the plating (middle over end thickness)", 0.05, 1.0)
+        sw = vo.get("sweep_um", out["sweep_um"])
+        if isinstance(sw, str):
+            sw = [v for v in sw.replace(";", ",").replace(" ", ",").split(",") if v.strip()]
+        sw = sorted({_num(v, "wall thickness of the sweep", 0.01, 0.5 * out["hole_d_um"]) for v in (sw or [])})
+        if len(sw) > 20:
+            raise ValueError("The via's wall thickness sweep takes at most 20 values")
+        out["sweep_um"] = sw
+        out["wall_material"] = str(vo.get("wall_material") or "cu")
+        if vo.get("wall_sigma") not in (None, ""):
+            out["wall_sigma"] = _num(vo.get("wall_sigma"), "conductivity of the via wall", 1.0, 1e9)
+        out["fill"] = "value" if vo.get("fill") == "value" else "rve"
+        if out["fill"] == "value":
+            out["fill_sigma"] = _num(vo.get("fill_sigma"), "conductivity of the via fill", 0.0, 1e9)
+        out["pitch_um"] = _num(vo.get("pitch_um", 300.0), "via pitch", 1.0, 1e6)
+        if out["pitch_um"] <= out["hole_d_um"]:
+            raise ValueError("The via pitch must be larger than the hole diameter")
+        out["returns"] = vo.get("returns") if vo.get("returns") in VIA_RETURNS else "coax4"
+        out["eps_r"] = _num(vo.get("eps_r", 3.37), "laminate permittivity of the via", 1.0, 100.0)
+        out["tan_d"] = _num(vo.get("tan_d", 0.002), "laminate loss tangent of the via", 0.0, 1.0)
+        out["z_ref"] = _num(vo.get("z_ref", 50.0), "reference impedance of the via's ports", 1.0, 1e4)
+        out["f_min"] = _num(vo.get("f_min", 1e3), "lowest frequency of the via", 1e-3, 1e12)
+        out["f_max"] = _num(vo.get("f_max", 4e10), "highest frequency of the via", out["f_min"] * 1.0001, 1e13)
+        out["n_f"] = int(_num(vo.get("n_f", 121), "frequencies of the via", 3, 2001))
+        out["f_ref"] = _num(vo.get("f_ref", 1e10), "reference frequency of the via", out["f_min"], out["f_max"])
     except ValueError as e:
         errors.append(str(e))
     return out
@@ -553,6 +605,9 @@ def normalize(form):
             # filler-filler contact; typical 1e-9..1e-6
             r_int = _num(ph.get("r_int", 0.0) or 0.0, f"interfacial thermal resistance of {where}", 0.0, 1e-2)
             r_contact = _num(ph.get("r_contact", 0.0) or 0.0, f"contact resistance of {where}", 0.0, 1e-2)
+            # electrical contact resistance of the faces where two particles touch [ohm m^2] (5.7.0): the
+            # constriction and the film (oxide, binder) between the particles of a paste or an adhesive
+            rc_elec = _num(ph.get("rc_elec", 0.0) or 0.0, f"electrical contact resistance of {where}", 0.0, 1.0)
             # stacked platelets (v5.2.1): each particle is a stack of this many
             # platelets bonded face to face along its own z axis (thickness)
             layers = int(round(_num(ph.get("stack_layers", 1) or 1, f"stacked layers of {where}", 1, 100)))
@@ -571,7 +626,7 @@ def normalize(form):
                 "fraction": fraction, "orientation": orientation,
                 "overlap": bool(ph.get("overlap")) and shape not in G.NON_PARTICLE,
                 "gap_frac": _num(ph.get("gap_frac", 0.0) or 0.0, f"minimum gap of {where}", 0.0, 1.0),
-                "shell": shell, "r_int": r_int, "r_contact": r_contact, "stack_layers": layers,
+                "shell": shell, "r_int": r_int, "r_contact": r_contact, "rc_elec": rc_elec, "stack_layers": layers,
                 # a slab of the RVE the filler is confined to (None: the whole RVE);
                 # its content is then the vol % of that slab
                 "section": section,
@@ -754,6 +809,7 @@ def normalize(form):
         "mechtest": _mechtest(opts.get("mechtest") or {}, out["rve"], errors),
         "thermomech": _thermomech(opts.get("thermomech") or {}, errors),
         "joule": _joule(opts.get("joule") or {}, errors),
+        "via": _via(opts.get("via") or {}, errors),
         # moisture: plate thickness and exposure for the uptake curve
         "moisture": {"thickness_mm": _num((opts.get("moisture") or {}).get("thickness_mm", 1.0), "moisture plate thickness", 1e-4, 1e3),
                      "hours": _num((opts.get("moisture") or {}).get("hours", 168.0), "moisture exposure time", 0.0, 1e6),

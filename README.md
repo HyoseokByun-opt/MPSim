@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.6.7-0b62c4" alt="version 5.6.7">
+  <img src="https://img.shields.io/badge/version-5.7.0-0b62c4" alt="version 5.7.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-93%20checks-2da44e" alt="93 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-95%20checks-2da44e" alt="95 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -101,6 +101,13 @@ The main capabilities are listed below.
   the potential with every voxel's conductivity at its temperature, the heat of the current split exactly between voxels,
   and the temperature, solved in turn to a steady state at each step of a current or voltage sweep, up to thermal
   runaway.
+- **Through vias filled with the composite.** A plated-through hole of a board, its wall electroplated (thinner in the
+  middle by the throwing power of the plating) and its core filled with the composite of the RVE - a conductive paste:
+  the DC resistance of one via and the share of the current the fill carries, the resistance and inductance against
+  frequency from the Bessel solution of the plated wall around the fill, the characteristic impedance set by the
+  return vias around it and the S-parameters of the via as a transmission line up to 40 GHz. The particles of a paste
+  can carry an electrical contact resistance on their contacts, fitted to a measured resistivity in the Calibration
+  tab (5.7.0).
 - **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
   in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
   packing follows the requested density by Monte-Carlo moves weighted against the crowding of hard spheres, and the
@@ -190,6 +197,7 @@ of the user guide describes the workspace in detail; chapter 33 is a tutorial fo
 | | Mechanical test (tension or compression) | Effective stiffness + one FANS solve at the test load | Force-displacement line, apparent modulus, Poisson's ratio or lateral stress, von Mises and axial stress and strain fields, load at the matrix strength |
 | Multiphysics | Thermal stress and warpage (thin film) | Film FV heat flow → FANS voxel FE with a thermal eigenstrain per voxel → laminate theory | Temperature field, curvature and warpage, in-plane stress through the film, largest principal and peeling stress per region, substrate stress |
 | | Joule heating (thin film) | Film FV potential and heat solved in turn with σ(T) | Voltage, peak and face temperatures per step, runaway estimate, current-density and Joule-heat fields |
+| | Through via filled with the composite | Bessel solution of the plated wall around the fill; multipole cross-section; transmission line in slices | DC resistance per via and the fill's share, R(f) and L(f), Z0, S21 and S11 up to 40 GHz, a wall-thickness sweep |
 | | Cure during the compression | Kamal–Sourour + Castro–Macosko in the 3D compression | Conversion, viscosity, stress and temperature against time, gel stop |
 | Rheology | Viscosity and flowability | FANS creeping flow; particle dynamics (lubrication DEM); Krieger–Dougherty with Farr–Groot φm | Relative viscosity, flow curve, φm, underfill filling time, settling, local shear-rate field |
 | Reliability | Moisture uptake and swelling | Periodic FV on the water activity; FANS eigenstrain | D_eff tensor, saturated uptake, uptake curve, swelling strain and CME |
@@ -445,6 +453,44 @@ coefficient of silver and 25 µΩ·mm² at 20 °C, so a set current runs away ab
 Checks: the parabola of a uniform conductor exactly; with a TCR, a separate one-dimensional solve to 1.5·10⁻⁴ K; the
 energy balance to 10⁻⁵.
 
+### A hybrid-filled through via: Cu plating and a Cu paste
+
+A 100 µm hole through a 1.8 mm board (aspect ratio 18:1), its wall electroplated with Cu - 20 µm at the hole's ends and
+16 µm in the middle, the hole:surface thickness ratio of 0.80 reached in 18:1 holes by G. L. Fisher, W. Sonnenberg,
+J. Bladon, R. Bernards, *Trans. IMF* **68** (2), 50–54 (1990),
+[doi:10.1080/00202967.1990.11870866](https://doi.org/10.1080/00202967.1990.11870866) - and its core filled with a Cu
+paste; 4 return vias around it at the 300 µm pitch, laminate εr 3.37 and tan δ 0.002 (J. Temga, T. Shiba, N. Suematsu,
+*Sensors* **24** (2), 714 (2024), [doi:10.3390/s24020714](https://doi.org/10.3390/s24020714)). The paste is that of
+K. Kawarai, M. Inoue, *J. Smart Process.* **7** (5), 199–206 (2018),
+[doi:10.7791/jspmee.7.199](https://doi.org/10.7791/jspmee.7.199): Cu of D50 6.38 µm at 85 wt% (40 vol%), 5×10⁻⁵ Ω·cm
+after a cure at 130 °C or more and 8×10⁻⁴ Ω·cm at 80–100 °C. In the RVE the spheres may overlap (the necks a cure
+forms) and their contacts carry the electrical contact resistance that reproduces each measurement: 1.09×10⁻¹⁴ and
+1.18×10⁻¹² Ω·m² (Calibration tab, 128³ voxels of 0.4 µm). That box is 8 particles across, and near its percolation
+threshold a paste conducts better in a small box: five realisations each with the same R_c,e gave 2.38 MS/m in a box
+of 8 diameters, 2.12 in 12, 2.00 in 16 and 2.05 in 20 (320³ voxels, 5 min a run on 18 cores) - a value of the paste
+itself wants 16-20 diameters, with R_c,e calibrated on that grid. In the via the effect is small where the wall is
+thick: the paste of the 8-diameter box taken 15 % less conductive raises the via's DC resistance at 40 vol% by 0.35 %
+with a 20 µm wall and by 2.1 % with a 5 µm wall.
+
+<p align="center">
+  <img src="docs/images/via_result.png" alt="The through via in the Result Viewer: resistance and the fill's share against frequency, S-parameters, Z0" width="90%">
+</p>
+
+| Cu in the paste (cure ≥ 130 °C) | Paste, along the via | One via, wall 5 µm | One via, wall 20 µm | Paste's share of the DC current (5 / 20 µm) |
+|---|---|---|---|---|
+| 30 vol% (78 wt%) | 496 µΩ·cm | 22.90 mΩ | 6.718 mΩ | 1.7 / 0.3 % |
+| 40 vol% (85 wt%) | 45.7 µΩ·cm | 19.63 mΩ | 6.553 mΩ | 15.7 / 2.7 % |
+| 55 vol% (91 wt%) | 11.6 µΩ·cm | 13.45 mΩ | 6.073 mΩ | 42.3 / 9.8 % |
+
+The paste matters only where the wall is thin, and only at low frequency: it drops out of the current above the
+frequency at which the skin depth of copper equals the wall (17 MHz for 16 µm). At 10 GHz the current runs in the
+outer 0.7 µm of the wall and every case gives 148.4 mΩ, Z0 60.4 Ω, S21 −0.086 dB and S11 −18.3 dB; Z0 is set by the
+return vias (8 around: 59 Ω, ground-signal-ground: 75 Ω, one return via: 115 Ω). The paste of the cure at 80–100 °C
+carries less than 1 % of the current at any content. Not included: the pads, antipads and planes of the stack-up
+(a 3D full-wave problem). Checks: the Bessel solution against its DC limit (7×10⁻¹⁵), a solid wire's formula and the
+surface resistance (0.33 % at 40 GHz); the cross-section against two parallel wires exactly; a 3D solve of the via
+itself (120 × 120 × 720 voxels of the plated wall, the paste and the laminate) against the DC model, within 0.04 %.
+
 ### A moulded underfill that gels before the mould closes
 
 Silica 5 µm (40 vol%) in epoxy pressed at 1 %/s towards 55 % in a mould at 175 °C while the resin cures. The kinetics
@@ -472,7 +518,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **93 problems with known solutions** (59 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **95 problems with known solutions** (61 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -498,6 +544,8 @@ reference values. A selection:
 | Maximum packing of bidisperse spheres | Farr–Groot simulations, 27 cases | within 0.011 |
 | Impermeable sphere, moisture diffusion | Maxwell 2/(2+φ) | within 2 % |
 | Calibration of R_int and filler k from two particle sizes | known values 2e-7 m²K/W, 2.0 W/m·K | 2.0e-7, 2.01 |
+| Through via: plated wall around a fill | DC limit; a solid wire's Bessel formula; surface resistance; two wires' capacitance | 7e-15; exact; 0.33 % at 40 GHz; exact |
+| Electrical contact resistance on a plane of contact faces | series resistance | exact |
 | Calibration of a bound resin layer from a viscosity (particle dynamics) | known value 10 nm | 10.6 nm (95 % 8.8–12.5) |
 | Blends: two sphere sizes at 55 vol%, cubes with flakes at 45 vol% | no voxel inside two particles | 0 shared voxels, none trimmed |
 | Complete pipelines: filled RVE, thin film, porous RVE, viscosity with live results | all files, all analyses | passed |
@@ -733,7 +781,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.6.7, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.7.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

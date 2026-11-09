@@ -2396,6 +2396,223 @@
      "directions": "z"
     }
    }
+  },
+  {
+   "id": "via_cu_paste",
+   "name": "Through via · Cu paste 85 wt% (40 vol%) filling a plated 100 µm hole through 1.8 mm (18:1), 300 µm pitch",
+   "description": "A hybrid-filled plated-through via of a 1.8 mm board: a 100 µm hole (aspect ratio 18:1) whose wall is electroplated Cu, 20 µm at the hole's ends and 16 µm in the middle, and whose core is filled with a Cu paste; 4 return vias around it at the 300 µm pitch. The RVE is the paste: Cu spheres of 6.38 µm at 40 vol% (85 wt%), allowed to overlap (the necks a cure forms), with the electrical contact resistance 1.09e-14 Ω·m² on their contacts that reproduces the measured 5×10⁻⁵ Ω·cm on this grid (see 'Calibration · Cu via paste'). The through-via analysis takes the paste's conductivity along z. Computed on 128³ voxels of 0.4 µm (about 30 s): the paste 2.19 MS/m along z (46 µΩ·cm; 50 µΩ·cm as the mean of x, y and z); one via 6.55 mΩ at DC with 2.7 % of the current in the paste (wall alone 6.73 mΩ) - with a 5 µm wall 19.6 mΩ and 15.7 %; the paste drops out of the current above about 17 MHz (the skin depth of the wall's middle); Z0 60.4 Ω, at 10 GHz 148 mΩ, S21 −0.086 dB and S11 −18.3 dB, the same for every wall and paste - the current runs in the outer 0.7 µm of the wall. Three realisations of the paste at 40 vol% scatter by ±20 % (40-59 µΩ·cm): the RVE is 8 particles across, and a box of 8 diameters gives the paste a conductivity 15 % high (five realisations each with this R_c,e: 2.38 MS/m in 8 diameters, 2.12 in 12, 2.00 in 16, 2.05 in 20) - for the paste itself use 16-20 diameters and several realisations, and calibrate R_c,e on that grid. Not included: pads, antipads and planes of the stack-up (a 3D full-wave model). Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles of such pastes: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300. Wall: 18:1 holes plated to a hole:surface thickness ratio of 0.80 (G. L. Fisher, W. Sonnenberg, J. Bladon, R. Bernards, Trans. IMF 68 (1990) 50, doi:10.1080/00202967.1990.11870866). Laminate εr 3.37, tan δ 0.002 (J. Temga, T. Shiba, N. Suematsu, Sensors 24 (2024) 714, doi:10.3390/s24020714); the via as a transmission line with its ground vias (O. F. Yildiz, C. Schuster, EDAPS 2019, doi:10.1109/EDAPS47854.2019.9011681); up to 40 GHz (R. Rimolo-Donadio et al., IEEE Trans. Microw. Theory Techn. 57 (2009) 2072, doi:10.1109/TMTT.2009.2025470).",
+   "form": {
+    "name": "Through via · Cu paste 85 wt% (40 vol%) filling a plated 100 µm hole through 1.8 mm (18:1), 300 µm pitch",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 1.09e-14
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 51.2,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "xyz",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 20,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "rve",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 3.37,
+      "tan_d": 0.002,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0
+     }
+    }
+   }
+  },
+  {
+   "id": "via_cu_paste_doe",
+   "name": "DOE · Cu content of a via paste 30–55 vol% × via wall plating 5–25 µm (hybrid-filled 18:1 via)",
+   "description": "A study, ready in the DOE tab: the two things a hybrid filling sets - how much Cu the paste holds (30 to 55 vol%, 79 to 91 wt%) and how much of the hole the plating takes (the wall 5 to 25 µm at the hole's ends, 0.80 of that in the middle) - for the via of 'Through via · Cu paste'. 6 × 5 = 30 cases; the cases of one content share their structure. With the paste of the cure at 130 °C or more, one via at DC: 6.72 → 6.07 mΩ from 30 to 55 vol% with a 20 µm wall (the paste carries 0.3 → 9.8 % of the current), 22.9 → 13.5 mΩ with a 5 µm wall (1.7 → 42 %); at 30 vol% the paste is at its percolation threshold (it conducts along z only, 0.2 MS/m). Z0, S21 and S11 do not change with either factor at GHz frequencies. Responses of every case: the DC resistance per via, Z0 and S21 at 10 GHz; each case's Result Viewer has its full curves. Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles of such pastes: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300. Wall: 18:1 holes plated to a hole:surface thickness ratio of 0.80 (G. L. Fisher, W. Sonnenberg, J. Bladon, R. Bernards, Trans. IMF 68 (1990) 50, doi:10.1080/00202967.1990.11870866). Laminate εr 3.37, tan δ 0.002 (J. Temga, T. Shiba, N. Suematsu, Sensors 24 (2024) 714, doi:10.3390/s24020714); the via as a transmission line with its ground vias (O. F. Yildiz, C. Schuster, EDAPS 2019, doi:10.1109/EDAPS47854.2019.9011681); up to 40 GHz (R. Rimolo-Donadio et al., IEEE Trans. Microw. Theory Techn. 57 (2009) 2072, doi:10.1109/TMTT.2009.2025470).",
+   "form": {
+    "name": "Via paste DOE · Cu content × wall",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 1.09e-14
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 51.2,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "xyz",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 20,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "rve",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 3.37,
+      "tan_d": 0.002,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0
+     }
+    }
+   },
+   "doe": {
+    "name": "Via paste · Cu content × wall plating",
+    "design": "full",
+    "edge": "fixed",
+    "parameters": [
+     {
+      "path": "phases.0.fraction.value",
+      "label": "Cu content of the paste",
+      "unit": "%",
+      "min": 30,
+      "max": 55,
+      "steps": 6,
+      "scale": "lin"
+     },
+     {
+      "path": "options.via.plating_um",
+      "label": "Via wall at the hole's ends",
+      "unit": "µm",
+      "min": 5,
+      "max": 25,
+      "steps": 5,
+      "scale": "lin"
+     }
+    ]
+   }
+  },
+  {
+   "id": "cal_cu_via_paste",
+   "name": "Calibration · Cu via paste 85 wt% (40 vol%): electrical contact resistance from 5×10⁻⁵ Ω·cm",
+   "description": "A calibration, ready in the Calibration tab: the paste of Kawarai and Inoue (Cu of D50 6.38 µm at 85 wt% = 40 vol%), measured at 5×10⁻⁵ Ω·cm (2.0 MS/m, ± 10 %) after a cure at 130 °C or more. The structure: Cu spheres allowed to overlap - the necks between the particles - on 128³ voxels of 0.4 µm; the unknown: the electrical contact resistance R_c,e on the faces where the particles meet, searched from 1e-17 to 1e-11 Ω·m². Result (about 3.5 min): 1.09e-14 Ω·m², and only an upper bound (2.2e-14, 95 %) - the necked network alone already conducts 2.46 MS/m, 20 % above the measurement. For the cure at 80-100 °C enter 8×10⁻⁴ Ω·cm (1.25e5 S/m): 1.18e-12 Ω·m² (95 % 9.3e-13 – 1.5e-12), a value the measurement fixes. The value holds for this grid (contacts on voxel faces). Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles of such pastes: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300. Wall: 18:1 holes plated to a hole:surface thickness ratio of 0.80 (G. L. Fisher, W. Sonnenberg, J. Bladon, R. Bernards, Trans. IMF 68 (1990) 50, doi:10.1080/00202967.1990.11870866). Laminate εr 3.37, tan δ 0.002 (J. Temga, T. Shiba, N. Suematsu, Sensors 24 (2024) 714, doi:10.3390/s24020714); the via as a transmission line with its ground vias (O. F. Yildiz, C. Schuster, EDAPS 2019, doi:10.1109/EDAPS47854.2019.9011681); up to 40 GHz (R. Rimolo-Donadio et al., IEEE Trans. Microw. Theory Techn. 57 (2009) 2072, doi:10.1109/TMTT.2009.2025470).",
+   "form": {
+    "name": "Cu via paste 40 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 0
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 51.2,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true
+    },
+    "options": {
+     "directions": "xyz"
+    }
+   },
+   "cal": {
+    "name": "Cu via paste 40 vol% · R_c,e from 5×10⁻⁵ Ω·cm",
+    "measurements": [
+     {
+      "label": "Cu paste 85 wt% (40 vol%), cured ≥ 130 °C",
+      "set": [],
+      "property": "sigma",
+      "direction": "iso",
+      "value": 2000000.0,
+      "unc": 10
+     }
+    ],
+    "unknowns": [
+     {
+      "path": "phases.0.rc_elec",
+      "label": "Cu (D50 6.38 µm): electrical contact resistance R_c,e",
+      "unit": "Ω·m²",
+      "lo": 1e-17,
+      "hi": 1e-11,
+      "scale": "log",
+      "prior": "uniform",
+      "center": "",
+      "sigma_dec": 1
+     }
+    ],
+    "options": {
+     "model_unc": 5,
+     "refine_rounds": 3
+    }
+   }
   }
  ]
 }

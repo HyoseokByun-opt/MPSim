@@ -71,6 +71,7 @@
     mechtest: { title: "Mechanical test", icon: "cte", color: "var(--c-mech)", solver: "Testing-machine load on the effective stiffness · one FANS solve for the stress fields", out: "Force–displacement line · apparent modulus and Poisson's ratio · von Mises, axial stress and strain fields · load at the matrix strength" },
     thermomech: { title: "Thermal stress and warpage", short: "Thermal stress, warpage", icon: "cte", color: "var(--c-thermal)", solver: "Film heat flow (FV with interface resistances) → per-voxel thermal strain, α1/α2 and E by the local temperature (FANS eigenstrain) → laminate release", out: "Temperature field · curvature and warpage · stress profile through the film · von Mises, principal and peeling stress fields · substrate stress", film: true },
     joule: { title: "Joule heating", icon: "electrical", color: "var(--c-electrical)", solver: "Film potential (FV, σ at each voxel's temperature) ⇄ Joule heat ⇄ temperature (FV), repeated to 1 mK at every step", out: "I–V line · peak and sink temperature per step · thermal runaway · temperature, heat, current-density and potential fields", film: true },
+    via: { title: "Through via", short: "Through via", icon: "electrical", color: "var(--c-electrical)", solver: "The fill's σ from the electrical solve (z) · Bessel solution of the plated wall around the fill · multipole cross-section · transmission line in slices", out: "DC resistance per via · share through the fill · R(f), L(f) · Z0 · S21, S11 up to 40 GHz · wall-thickness sweep" },
     permeability: { title: "Permeability", icon: "permeability", color: "var(--c-flow)", solver: "NASA PuMA · Stokes finite elements", out: "K tensor · flow resistivity · Kozeny constant · velocity field", pores: true },
     moisture: { title: "Moisture uptake and swelling", short: "Moisture and swelling", icon: "tortuosity", color: "var(--c-flow)", solver: "Periodic FV on the activity c/c_sat (permeability D·c_sat) · FANS eigenstrain for swelling", out: "Effective moisture diffusivity · saturated uptake · uptake curve of the part · hygroscopic swelling and CME" },
     viscosity: { title: "Viscosity and flowability", icon: "permeability", color: "var(--c-flow)", solver: "Voxel FE creeping flow (B-bar, FFT-preconditioned CG) · particle dynamics of the fillers (lubrication, contacts, friction, van der Waals; CPU or CUDA GPU) · Krieger–Dougherty with the jammed packing fraction", out: "Relative viscosity · flow curve of the compound · maximum packing fraction · underfill filling time · settling" },
@@ -88,7 +89,7 @@
   const SHORT_AN = { thermal: "Thermal", electrical: "Electrical", dielectric: "Dielectric", magnetic: "Magnetic", emi: "EMI",
     cte: "Elastic/CTE", mechtest: "Mech. test", permeability: "Permeability", filtration: "Filtration", tortuosity: "Diffusion", acoustics: "Acoustics",
     radiation: "Radiation", morphology: "Pore sizes", percolation: "Percolation", porosimetry: "Porosimetry",
-    pore_network: "Pore network", grains: "Grains", viscosity: "Viscosity", moisture: "Moisture", thermomech: "Warpage", joule: "Joule" };
+    pore_network: "Pore network", grains: "Grains", viscosity: "Viscosity", moisture: "Moisture", thermomech: "Warpage", joule: "Joule", via: "Via" };
   const ST = { pass: "Passed", warn: "Warning", fail: "Failed" };
   const STATE = { queued: "Queued", running: "Running", done: "Completed", failed: "Failed", stopped: "Stopped" };
   const QUALITY_HINT = {
@@ -119,6 +120,7 @@
     if (an.has("viscosity")) out.push("viscosity particle dynamics" + (r.dem_direct ? "" : " and FANS"));
     if (an.has("thermomech")) out.push("thermal stress: film FV heat → FANS eigenstrain → laminate");
     if (an.has("joule")) out.push("Joule heating: film FV potential ⇄ FV heat");
+    if (an.has("via")) out.push("through via: Bessel wall + multipole line");
     return { text: out.join(" · ") || (BACKEND[r.backend] || ""), puma };
   }
   const backendTxt = (r) => runMethods(r).text + (r.plan && r.plan.film ? " · thin film" : "");
@@ -344,6 +346,7 @@
         mechtest: { mode: "compression", axis: "z", lateral: "free", control: "force", value: 100, length_mm: null, area_mm2: 10, strength_MPa: null },
         thermomech: { T_ref: 175, T_bottom: 25, T_top: 25, support: "free", substrate: { material_id: "si", E: null, nu: null, alpha: null, thickness_um: 775 }, span_mm: 10, compare_uniform: true },
         joule: { control: "current", values: "1e6, 1e7, 3e7, 1e8", T_amb: 25, R_th: 0.001 },
+        via: { hole_d_um: 100, length_mm: 1.8, plating_um: 20, throw: 1, sweep_um: "5, 10, 15, 20, 25", fill: "rve", fill_sigma: null, wall_sigma: null, pitch_um: 300, returns: "coax4", eps_r: 3.37, tan_d: 0.002, z_ref: 50, f_min: 1e3, f_max: 4e10, n_f: 121, f_ref: 1e10 },
         gas: { molar_mass_g_mol: 28.97, viscosity_Pa_s: 1.81e-5, diffusivity_m2_s: 2.0e-5, pressure_Pa: 101325, molecule_diameter_nm: 0.37, density_kg_m3: 1.204, sound_speed_m_s: 343.2, gamma: 1.4, prandtl: 0.71 },
       },
     };
@@ -500,7 +503,7 @@
         { group: "Result", items: [RB("calApply", "save", "Apply to the case", { dis: !(state.cal && state.cal.result), tip: "Set the calibrated values in the case (only those the measurements determine)" })] },
       ],
       simulation: [
-        { group: "Conduction", items: ["thermal", "electrical"].map(toggle) },
+        { group: "Conduction", items: ["thermal", "electrical", "via"].map(toggle) },
         { group: "Electromagnetics", items: ["dielectric", "magnetic", "emi"].map(toggle) },
         { group: "Mechanics", items: [toggle("cte"), toggle("mechtest")] },
         { group: "Porous media", items: ["permeability", "filtration", "tortuosity", "acoustics"].map(toggle) },
@@ -1044,7 +1047,8 @@
       ${["spheroid", "cylinder", "cuboid", "superellipsoid"].includes(ph.shape) && !vd && (+ph.stack_layers || 1) > 1 ? `<div class="hint">Each particle is a stack of ${+ph.stack_layers} platelets bonded face to face along its own z axis (its thickness: edge c of a box, the axis of a spheroid or disc). Through the thickness the thermal solve puts the ${+ph.stack_layers} layers and ${+ph.stack_layers - 1} plate–plate contacts R<sub>c</sub> in series; in the plane the platelets conduct side by side.</div>` : ""}
       ${!vd ? `<div class="subh">Interfacial thermal resistance</div><div class="g2">
           <div><label class="f">R<sub>int</sub> filler–matrix <span class="u">m²K/W</span></label><input type="number" step="any" data-k="phases.${i}.r_int" data-num></div>
-          ${!isNet ? `<div><label class="f">R<sub>c</sub> filler–filler <span class="u">m²K/W</span></label><input type="number" step="any" data-k="phases.${i}.r_contact" data-num></div>` : ""}</div>
+          ${!isNet ? `<div><label class="f">R<sub>c</sub> filler–filler <span class="u">m²K/W</span></label><input type="number" step="any" data-k="phases.${i}.r_contact" data-num></div>` : ""}
+          ${!isNet ? `<div><label class="f">Electrical contact R<sub>c,e</sub> <span class="u">Ω·m²</span></label><input type="number" step="any" data-k="phases.${i}.rc_elec" data-num title="Resistance per area of the faces where two particles touch, in the electrical solve: the constriction and the film (oxide, binder) between them. Empty or 0: touching particles conduct fully."></div>` : ""}</div>
         <div class="hint">Kapitza resistance on the interface, applied on the voxel faces where the regions meet (thermal conductivity only). Typical values 1e-9 … 1e-7 m²K/W (boundary conductance 1e9 … 1e7 W/m²K). A filler smaller than the critical radius R<sub>int</sub>·k<sub>matrix</sub>${ph.r_int > 0 ? ` = <b>${fmt(ph.r_int * (+state.form.matrix.props.k || 0) * 1e6)} µm</b>` : ""} no longer raises k. R<sub>c</sub> acts where two particles touch.</div>` : ""}
       ${orientable ? '<div class="hint">A platelet (c/a &lt; 1) aligned with z lies in the xy plane; a fibre randomly oriented in the xy plane lies in plane.</div>' : ""}
       ${!isNet ? `<label class="chk"><input type="checkbox" data-k="phases.${i}.overlap"> Overlap permitted (agglomerates, fibre networks)</label>` : ""}
@@ -1724,6 +1728,23 @@
       <div class="g2">${num("options.joule.T_amb", "Ambient temperature", "°C")}${num("options.joule.R_th", "Thermal resistance to ambient", "K·m²/W, per area")}</div>
       <div class="hint">At every step the potential is solved with each voxel's conductivity at its temperature, σ(T) = σ / (1 + TCR (T − 20 °C)), the heat of the current in every voxel follows, then the temperature it raises, and the two are solved in turn until the temperature changes by less than 1 mK. The faces sit at T<sub>amb</sub> + R<sub>th</sub>·P (P the heat per area of the film: R<sub>th</sub> carries the joint's path to ambient; 1e-3 K·m²/W is 10 K/W for 1 cm²). A set current through a conductor whose resistance rises with temperature can run away: the sweep stops at the step where the temperature no longer settles or exceeds 1000 °C. ${tcr.length ? `TCR set for ${tcr.map((m) => esc(m.name)).join(", ")}.` : "No material has a TCR (Material tab, optional): the conductivities stay constant."} The conductor must join the two faces (set the matrix skin to 0 on the Domain tab where particles touch the electrodes).</div>`;
   }
+  // a plated-through via filled with this composite (5.7.0)
+  function viaOptions() {
+    const o = state.form.options.via || (state.form.options.via = { hole_d_um: 100, length_mm: 1.8, plating_um: 20, throw: 1, sweep_um: "5, 10, 15, 20, 25", fill: "rve", pitch_um: 300, returns: "coax4", eps_r: 3.37, tan_d: 0.002, z_ref: 50, f_min: 1e3, f_max: 4e10, n_f: 121, f_ref: 1e10 });
+    const ar = (+o.length_mm || 0) * 1000 / Math.max(+o.hole_d_um || 1, 1e-9);
+    const RET = { coax4: "4 return vias around (square, at the pitch)", coax8: "8 return vias around (every neighbour)", gsg: "Ground-signal-ground in a row", sg: "One return via beside" };
+    return `<div class="g3">${num("options.via.hole_d_um", "Hole diameter", "µm")}${num("options.via.length_mm", "Length (board thickness)", "mm")}${num("options.via.pitch_um", "Pitch", "µm")}</div>
+      <div class="hint">Aspect ratio ${fmt(ar)}:1.</div>
+      <div class="g2">${num("options.via.plating_um", "Wall plating at the hole's ends", "µm")}${num("options.via.throw", "Throwing power (middle / ends)", "")}</div>
+      <div><label class="f">Wall thicknesses compared <span class="u">µm, comma-separated</span></label><input type="text" data-k="options.via.sweep_um"></div>
+      <div><label class="f">Fill</label><select data-k="options.via.fill"><option value="rve" ${o.fill !== "value" ? "selected" : ""}>This composite (σ of the RVE along z)</option><option value="value" ${o.fill === "value" ? "selected" : ""}>A conductivity entered</option></select></div>
+      <div class="g2">${o.fill === "value" ? num("options.via.fill_sigma", "Fill conductivity", "S/m") : ""}${num("options.via.wall_sigma", "Wall conductivity (empty: library copper)", "S/m")}</div>
+      <div><label class="f">Return vias</label><select data-k="options.via.returns">${Object.entries(RET).map(([k, v]) => `<option value="${k}" ${o.returns === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div class="g2">${num("options.via.eps_r", "Laminate εr", "")}${num("options.via.tan_d", "Laminate tan δ", "")}</div>
+      <div class="g2">${num("options.via.f_min", "Lowest frequency", "Hz")}${num("options.via.f_max", "Highest frequency", "Hz")}</div>
+      <div class="g2">${num("options.via.f_ref", "Reference frequency", "Hz")}${num("options.via.z_ref", "Port impedance", "Ω")}</div>
+      <div class="hint">The via as a transmission line along its axis: the plated wall around the fill (Bessel solution: from the DC resistance of the two in parallel to the wall's skin effect, and the share of the current the fill carries), the capacitance between the signal via and its return vias (multipole method), the laminate's losses, slices along the via for a wall thinner in the middle (throwing power). Includes the electrical analysis (the fill's conductivity along z). Pads, antipads, planes and the transitions to traces are not included: they need a 3D full-wave model of the stack-up.</div>`;
+  }
   function gasDetails() {
     return `<details class="more"><summary>Gas properties (pores)</summary><div class="g2">${num("options.gas.viscosity_Pa_s", "Viscosity", "Pa·s")}${num("options.gas.density_kg_m3", "Density", "kg/m³")}
       ${num("options.gas.pressure_Pa", "Pressure", "Pa")}${num("options.gas.sound_speed_m_s", "Speed of sound", "m/s")}${num("options.gas.molar_mass_g_mol", "Molar mass", "g/mol")}${num("options.gas.diffusivity_m2_s", "Molecular diffusivity", "m²/s")}
@@ -1782,7 +1803,7 @@
       anCard("mechtest", mechOptions()) +
       anCard("permeability", gasDetails()) +
       anCard("viscosity", viscosityOptions()) +
-      anCard("thermomech", tmOptions()) + anCard("joule", jhOptions()) +
+      anCard("thermomech", tmOptions()) + anCard("joule", jhOptions()) + anCard("via", viaOptions()) +
       anCard("moisture", `<div class="g3">${num("options.moisture.thickness_mm", "Thickness", "mm")}${num("options.moisture.hours", "Exposure", "h")}<div><label class="f">Exposed faces</label><select data-k="options.moisture.sides"><option value="both">Both</option><option value="one">One (the other sealed)</option></select></div></div>
         <div class="hint">Uses the optional moisture properties of each material (Material tab): diffusivity D_w and saturated uptake c_sat at the test condition (e.g. 85 °C / 85 % RH) and the swelling coefficient CME. A material without them takes up no water. The uptake curve is Crank's solution for a plate of the given thickness; 168 h is the JEDEC level-1 soak.</div>`) +
       anCard("filtration", `<div class="g3">${num("options.filtration.face_velocity_m_s", "Face velocity", "m/s")}${num("options.filtration.n_particles", "Particles per size", "", "1")}${num("options.filtration.particle_density_kg_m3", "Particle density", "kg/m³")}</div>
@@ -2587,6 +2608,7 @@
     if (P.moisture) add("moisture", "Moisture uptake and swelling", "tortuosity", "var(--c-flow)", "Simulation", secMoist(P.moisture));
     if (P.thermomech) add("thermomech", "Thermal stress and warpage", "cte", "var(--c-thermal)", "Multiphysics", secTM(P.thermomech));
     if (P.joule) add("joule", "Joule heating", "electrical", "var(--c-electrical)", "Multiphysics", secJoule(P.joule));
+    if (P.via) add("via", "Through via", "electrical", "var(--c-electrical)", "Electrical", secVia(P.via));
     if (P.filtration) add("filtration", "Filtration efficiency", "pores", "var(--c-flow)", "Simulation", secFiltration(P.filtration));
     if (P.tortuosity) add("tortuosity", "Diffusion and tortuosity", "tortuosity", "var(--c-diff)", "Simulation", secTort(P.tortuosity));
     if (P.acoustics) add("acoustics", "Acoustic absorption", "acoustics", "var(--c-ac)", "Simulation", secAcoustics(P.acoustics));
@@ -2985,6 +3007,34 @@
         ${tbl(["J (A/m²)", "V (V)", "R (Ω·mm²)", "Heat (W/m²)", "Faces / peak (°C)", "Rise (K)", "Passes", "State"], rows, "tight")}
         ${p.lumped ? `<p class="hint">As one resistor R(T) = R₂₀ (1 + a (T − 20 °C)) from the first and last settled steps: a = ${fmt(p.lumped.tcr_eff)} 1/K, R₂₀ = ${Rmm(p.lumped.R20_ohm_m2)} Ω·mm²${p.lumped.J_crit_A_m2 ? `; a set current runs away above J ≈ 1/√(a R₂₀ R<sub>th</sub>) = <b>${fmt(p.lumped.J_crit_A_m2)} A/m²</b>, where the heating R<sub>th</sub>J²R grows faster with temperature than the temperature itself` : ""}.</p>` : ""}
         <p class="hint">Each step solves the potential with every voxel's conductivity at its temperature, the heat of the current, and the temperature, in turn, until the temperature changes by less than 1 mK. The fields of the last step that settled are in the 3D and 2D views: temperature, heat per volume (log), current density (log) and potential. Direct current, steady state; the thermal conductivities are taken constant and touching particles conduct across a whole voxel face (no electrical contact resistance).</p></div></div>`;
+  }
+  function secVia(p) {
+    const tile = (v, l, d) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div><div class="d">${esc(d || "")}</div></div>`;
+    const f = p.freq_hz, ar = p.at_ref, GHz = fmt(p.f_ref / 1e9);
+    const tiles_ = [
+      [`${fmt(p.R_dc_mohm)} mΩ`, "DC resistance per via", `${fmt(100 * p.fill_share_dc)} % through the fill; wall alone ${fmt(p.R_dc_wall_only_mohm)} mΩ`],
+      [`${fmt(p.Z0_lossless_ohm)} Ω`, "Characteristic impedance", `${p.n_returns} return via(s) at ${fmt(p.pitch_um)} µm, εr ${fmt(p.eps_r)}`],
+      [`${fmt(ar.S21_dB)} dB`, `S21 at ${GHz} GHz`, `S11 ${fmt(ar.S11_dB)} dB · ports ${fmt(p.z_ref)} Ω`],
+      [`${fmt(p.f_wall_Hz / 1e6)} MHz`, "Skin depth = wall (mid-hole)", "above it the fill carries next to no current"]];
+    const pal = ["#0b62c4", "#1a7f37", "#e36209", "#d1242f", "#8250df", "#bf8700", "#0a7480"];
+    draws.push(() => CH.line($("#viaR"), { xlog: true, ylog: true, xlabel: "Frequency (Hz)", ylabel: "Resistance (mΩ)", series:
+      p.sweep.map((s, i) => ({ x: f, y: s.R_via_mohm, color: pal[i % pal.length], width: s.t_um === p.plating_um ? 2.6 : 1.5, label: `wall ${fmt(s.t_um)} µm` })) }));
+    draws.push(() => CH.line($("#viaShare"), { xlog: true, ymin: 0, xlabel: "Frequency (Hz)", ylabel: "In the fill (%)", series:
+      p.sweep.map((s, i) => ({ x: f, y: s.fill_share.map((v) => 100 * v), color: pal[i % pal.length], width: s.t_um === p.plating_um ? 2.6 : 1.5, label: `wall ${fmt(s.t_um)} µm` })) }));
+    draws.push(() => CH.line($("#viaS"), { xlog: true, xlabel: "Frequency (Hz)", ylabel: "S-parameters (dB)", series: [
+      { x: f, y: p.S21_dB, color: "#0b62c4", width: 2.2, label: "S21" }, { x: f, y: p.S11_dB, color: "#8250df", width: 1.8, dash: [5, 4], label: "S11" }] }));
+    draws.push(() => CH.line($("#viaZ"), { xlog: true, ylog: true, xlabel: "Frequency (Hz)", ylabel: "|Z0| (Ω)", series: [
+      { x: f, y: p.Z0_abs_ohm, color: "#0b62c4", width: 2.2, label: "|Z0|" },
+      { x: f, y: f.map(() => p.Z0_lossless_ohm), color: "#8c959f", width: 1.4, dash: [5, 4], label: "lossless √(L/C)" }] }));
+    const rows = p.sweep.map((s) => [fmt(s.t_um), fmt(s.t_mid_um), fmt(s.R_dc_mohm), fmt(s.R_dc_wall_only_mohm), `${fmt(100 * s.fill_share_dc)} %`, fmt(s.R_ref_mohm), fmt(s.S21_ref_dB)]);
+    return `<div class="tiles">${tiles_.map((x) => tile(...x)).join("")}</div><div class="rgrid">
+      <div class="box"><div class="bt">Resistance of one via against frequency</div>${canvas("viaR", 240)}<p class="hint">The wall and the fill in parallel at DC; the current leaves the fill and crowds into the wall's outer skin as the frequency rises (Bessel solution of the plated wall around the fill).</p></div>
+      <div class="box"><div class="bt">Share of the current in the fill</div>${canvas("viaShare", 240)}<p class="hint">σ of the fill ${fmt(p.sigma_fill_S_m)} S/m (${p.fill_from === "rve" ? "this composite along z" : "entered"}), wall ${fmt(p.sigma_wall_S_m)} S/m.</p></div>
+      <div class="box"><div class="bt">S-parameters <span class="hint">ports ${fmt(p.z_ref)} Ω</span></div>${canvas("viaS", 240)}</div>
+      <div class="box"><div class="bt">Characteristic impedance</div>${canvas("viaZ", 240)}<p class="hint">${esc(p.layout_text)}, pitch ${fmt(p.pitch_um)} µm; laminate εr ${fmt(p.eps_r)}, tan δ ${fmt(p.tan_d)}; delay ${fmt(p.delay_ps)} ps through ${fmt(p.length_mm)} mm. Loop inductance of the signal and its return vias ${fmt(ar.L_loop_pH)} pH at ${GHz} GHz. Below a few MHz the line's resistance dominates and |Z0| rises above the lossless value.</p></div>
+      <div class="box" style="grid-column:1/-1"><div class="bt">Wall thicknesses compared <span class="hint">hole ${fmt(p.hole_d_um)} µm, ${fmt(p.length_mm)} mm (${fmt(p.aspect_ratio)}:1), throwing power ${fmt(p.throw)}</span></div>
+        ${tbl(["Wall at the ends (µm)", "Middle (µm)", "DC per via (mΩ)", "Wall alone (mΩ)", "Fill share DC", `R at ${GHz} GHz (mΩ)`, `S21 at ${GHz} GHz (dB)`], rows, "tight")}
+        <p class="hint">The via as a transmission line along its axis (quasi-TEM). Not included: pads, antipads and planes of the stack-up and the transitions to traces (a 3D full-wave model), the proximity effect between the vias, the frequency dependence of the fill's conductivity and of the laminate.</p></div></div>`;
   }
   function secCte(p) {
     const c = p.constants, vo = ["xx", "yy", "zz", "yz", "xz", "xy"];
@@ -3545,6 +3595,7 @@
       const n = ph.name || `Phase ${i + 1}`, p = ph.props || {};
       add(`phases.${i}.r_int`, `${n}: interfacial resistance R_int`, "m²K/W", ph.r_int || 0, 1e-9, 1e-5, "log");
       add(`phases.${i}.r_contact`, `${n}: contact resistance R_c`, "m²K/W", ph.r_contact || 0, 1e-9, 1e-4, "log");
+      add(`phases.${i}.rc_elec`, `${n}: electrical contact resistance R_c,e`, "Ω·m²", ph.rc_elec || 0, 1e-16, 1e-11, "log");
       add(`phases.${i}.props.k`, `${n}: thermal conductivity`, "W/m·K", p.k, r3(p.k * 0.1), r3(p.k * 2), "log");
       add(`phases.${i}.props.E`, `${n}: Young's modulus`, "GPa", p.E, r3(p.E * 0.1), r3(p.E * 1.5), "log");
       add(`phases.${i}.props.alpha`, `${n}: CTE`, "ppm/K", p.alpha, r3(Math.max(p.alpha * 0.3, 0.1)), r3(p.alpha * 2 + 0.5), "lin");

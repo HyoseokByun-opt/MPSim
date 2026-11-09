@@ -98,14 +98,14 @@ _UNKNOWN_RE = [
     (re.compile(r"^matrix\.props\.(k|sigma|eps_r|E|nu|alpha)$"), "matrix"),
     (re.compile(r"^phases\.(\d+)\.props\.(k|sigma|eps_r|E|nu|alpha)$"), "phase"),
     (re.compile(r"^phases\.(\d+)\.shell\.props\.(k|sigma|eps_r|E|nu|alpha)$"), "shell"),
-    (re.compile(r"^phases\.(\d+)\.(r_int|r_contact)$"), "interface"),
+    (re.compile(r"^phases\.(\d+)\.(r_int|r_contact|rc_elec)$"), "interface"),
     (re.compile(r"^contact_rc\.(\d+)-(\d+)$"), "pair"),
     # the particle surface of the particle dynamics (viscosity measurements)
     (re.compile(r"^options\.viscosity\.dem\.(bound_nm|adhesion_mJ_m2|mu_f|roughness_nm|hmin_nm|hamaker_J)$"), "dem"),
 ]
 UNIT_TXT = {"nm": "nm", "um": "µm", "mm": "mm"}
 PROP_UNITS = {"k": "W/m·K", "sigma": "S/m", "eps_r": "-", "E": "GPa", "nu": "-", "alpha": "ppm/K",
-              "r_int": "m²K/W", "r_contact": "m²K/W", "bound_nm": "nm", "adhesion_mJ_m2": "mJ/m²", "mu_f": "-",
+              "r_int": "m²K/W", "r_contact": "m²K/W", "rc_elec": "Ω·m²", "bound_nm": "nm", "adhesion_mJ_m2": "mJ/m²", "mu_f": "-",
               "roughness_nm": "nm", "hmin_nm": "nm", "hamaker_J": "J"}
 
 
@@ -397,6 +397,8 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
     reuse_dirs = [os.path.join(out_dir)] + list(job.get("_structure_dirs") or [])
     any_contact = any(p.endswith("r_contact") or p.startswith("contact_rc.")
                       for p in [u.path for u in unknowns] + [ln["path"] for u in unknowns for ln in u.links])
+    any_contact_e = any(p.endswith("rc_elec") for p in [u.path for u in unknowns]
+                        + [ln["path"] for u in unknowns for ln in u.links])
     mid = [u.value(0.5) for u in unknowns]
     for i, m in enumerate(job["measurements"]):
         form = copy.deepcopy(base)
@@ -407,6 +409,9 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
             # the contact faces must be recorded even if the value set is 0
             for ph in form.get("phases") or []:
                 ph["r_contact"] = ph.get("r_contact") or 1e-12
+        if any_contact_e:
+            for ph in form.get("phases") or []:
+                ph["rc_elec"] = ph.get("rc_elec") or 1e-30
         spec = S.normalize(form)
         if PROPERTIES[m["property"]]["solver"] == "dem":
             samples.append(_dem_sample(i, m, form, spec, log))
@@ -550,7 +555,8 @@ def _cond_tasks(sample, theta_form, tol, pool, tag):
         rpair, rcpair = PL.thermal_interfaces(spec, h, sample["area_ratio"])
     else:
         vals = np.array(S.label_values(spec["labels"], prop), float)
-        rpair = rcpair = None
+        rpair = None
+        rcpair = PL.electrical_contacts(spec, h) if prop == "sigma" else None
     tasks = []
     cache = {}
     for d in _dirs(m):

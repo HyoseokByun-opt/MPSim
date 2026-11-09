@@ -12,6 +12,7 @@ independent implementations of the same quantity, and the browser API.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -602,6 +603,80 @@ def t_live_frames():
         expect(img[:, -1].mean() - img[:, 0].mean() > 0.5 * img.shape[1], f"no gradient along x: {img.mean(axis=0)}")
     return (f"{len(frames)} frames over {r['iterations']} iterations, last {h['shape'][0]}x{h['shape'][1]} "
             f"section marked done, k {r['k_eff']:.4g}")
+
+
+@check("Through via: the plated wall around a fill against its DC limit, a solid wire's Bessel formula and the surface "
+       "resistance; two wires' capacitance exact; a matched lossless line passes all")
+def t_via():
+    from scipy import special as SPF
+    from mpsim.solvers import via as VIA
+    s_cu, a = 5.96e7, 50e-6
+    worst_dc = 0.0
+    for t_, sc in ((20e-6, 2e6), (5e-6, 1.25e5), (20e-6, 0.0), (a, 0.0)):
+        Z, _, rdc = VIA.wire_impedance([1.0], a, t_, s_cu, sc)
+        worst_dc = max(worst_dc, abs(Z[0].real / rdc - 1))
+    expect(worst_dc < 1e-9, f"DC limit {worst_dc:.1e}")
+    k = np.sqrt(1j * 2 * math.pi * 1e7 * VIA.MU0 * s_cu)
+    classic = k * SPF.iv(0, k * a) / (2 * math.pi * a * s_cu * SPF.iv(1, k * a))
+    Zw, _, _ = VIA.wire_impedance([1e7], a, 30e-6, s_cu, s_cu)
+    expect(abs(Zw[0] / classic - 1) < 1e-9, f"a wall around a core of the same metal {Zw[0]} vs a solid wire {classic}")
+    Rs = math.sqrt(math.pi * 4e10 * VIA.MU0 / s_cu)
+    Zh, sh, _ = VIA.wire_impedance([4e10], a, 20e-6, s_cu, 2e6)
+    hf = Zh[0].real / (Rs / (2 * math.pi * a))
+    expect(abs(hf - 1) < 0.005 and sh[0] < 1e-12, f"40 GHz: {hf:.4f} of the surface resistance, fill share {sh[0]:.1e}")
+    c, res = VIA.cross_section("sg", 100e-6, 300e-6)
+    ex = VIA.two_wire_capacitance(100e-6, 300e-6)
+    expect(abs(c / ex - 1) < 1e-8 and res < 1e-6, f"two wires {c} vs {ex}, residual {res}")
+    r_dc = VIA.dc_resistance(a, 20e-6, 1.0, 1.8e-3, s_cu, 2e6)
+    r_ex = 1.8e-3 / (math.pi * (s_cu * (a * a - 30e-6 ** 2) + 2e6 * 30e-6 ** 2))
+    expect(abs(r_dc / r_ex - 1) < 1e-9, f"DC per via {r_dc} vs {r_ex}")
+    # a lossless line whose characteristic impedance is the ports': no reflection, |S21| 1, phase -w l / v
+    f = np.array([1e9, 1e10])
+    C = 1e-10
+    L = 50.0 ** 2 * C
+    ln = VIA.line(f, np.zeros((4, 2), complex), np.zeros((4, 2), complex), 1, L, C, 0.0, 2e-3, 50.0)
+    ph = -2 * math.pi * f * 2e-3 * math.sqrt(L * C)
+    expect(np.max(np.abs(ln["S11"])) < 1e-12 and np.max(np.abs(np.abs(ln["S21"]) - 1)) < 1e-12
+           and np.max(np.abs(np.angle(ln["S21"] * np.exp(-1j * ph)))) < 1e-9, "matched lossless line")
+    return (f"DC limit {worst_dc:.0e}; wall + same core = solid wire; 40 GHz {hf:.4f} x Rs/(2 pi a); two wires "
+            f"{c * 1e12:.3f} pF/m exact; matched line S11 0, S21 1")
+
+
+@check("Electrical contact resistance: the mean of two phases on their contact faces, exact in series on a contact "
+       "plane, and a paste conducts less with it")
+def t_rc_elec():
+    from mpsim import pipeline as PL
+    from mpsim.solvers import conduction as CD
+    spec = {"phases": [{"rc_elec": 2e-12}, {"rc_elec": 0.0}],
+            "labels": [{"kind": "matrix", "phase": None}, {"kind": "core", "phase": 0}, {"kind": "core", "phase": 1}]}
+    rc = PL.electrical_contacts(spec, 0.5)
+    expect(abs(rc[1, 1] - 2e-12 / 0.5e-6) < 1e-12 and abs(rc[1, 2] - 1e-12 / 0.5e-6) < 1e-12 and rc[0, 1] == 0.0,
+           f"pair values {rc}")
+    lab = np.ones((32, 8, 8), np.uint8)
+    cm = np.zeros_like(lab)
+    cm[15] = 1
+    sig = 1e6
+    h = 0.5e-6
+    r = CD.solve_direction(lab, np.array([1e-12, sig]), 0, cmask=cm, rcpair=PL.electrical_contacts(
+        {"phases": [{"rc_elec": 1e-12}], "labels": [{"kind": "matrix", "phase": None}, {"kind": "core", "phase": 0}]}, 0.5),
+        tol=1e-12)["k_eff"]
+    exact = 32 * h / (32 * h / sig + 1e-12)
+    expect(abs(r / exact - 1) < 1e-8, f"contact plane {r} vs {exact}")
+    out = {}
+    with tempfile.TemporaryDirectory() as d:
+        for rc_ in (0.0, 1e-13):
+            form = {"name": "paste", "matrix": {"material_id": "epoxy"},
+                    "phases": [{"material_id": "cu", "name": "Cu", "shape": "sphere", "size": {"d": 4, "unit": "um"},
+                                "fraction": {"value": 40, "basis": "vol"}, "overlap": True, "rc_elec": rc_}],
+                    "rve": {"auto": False, "L_um": 16, "voxel_um": 0.5, "auto_enlarge": False, "seed": 1},
+                    "analyses": {"electrical": True}, "options": {"directions": "x"}}
+            o_ = os.path.join(d, str(rc_))
+            PL.run(form, o_, log=lambda *a: None)
+            res = json.load(open(os.path.join(o_, "result.json"), encoding="utf-8"))
+            out[rc_] = res["properties"]["electrical"]["diag"][0]
+    expect(out[1e-13] < 0.7 * out[0.0], f"paste: {out[0.0]:.4g} S/m without, {out[1e-13]:.4g} with 1e-13 ohm m^2")
+    return (f"pair values; contact plane exact; overlapping Cu spheres 40 vol% {out[0.0]:.3g} S/m, with 1e-13 ohm m^2 "
+            f"on their contacts {out[1e-13]:.3g}")
 
 
 @check("Contact faces per pair of fillers: counted across faces and the periodic boundary")

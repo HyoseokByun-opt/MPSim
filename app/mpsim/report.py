@@ -493,6 +493,39 @@ def write(out_dir, r):
                          f"R<sub>20</sub> = {_fmt(lu['R20_ohm_m2'] * 1e6)} Ω·mm²"
                          + (f"; a set current runs away above J ≈ 1/√(a R<sub>20</sub> R<sub>th</sub>) = "
                             f"{_fmt(lu['J_crit_A_m2'])} A/m²" if lu.get("J_crit_A_m2") else "") + ".</p>")
+    if "via" in props:
+        p = props["via"]
+        P.append("<h3>Through via filled with this composite</h3>")
+        P.append(f"<p>A hole of {_fmt(p['hole_d_um'])} µm through {_fmt(p['length_mm'])} mm (aspect ratio "
+                 f"{_fmt(p['aspect_ratio'])}:1), its wall plated {_fmt(p['plating_um'])} µm at the ends and "
+                 f"{_fmt(p['throw'] * p['plating_um'])} µm in the middle (throwing power {_fmt(p['throw'])}), the rest filled "
+                 f"with {'this composite' if p['fill_from'] == 'rve' else 'a fill'} of σ = {_fmt(p['sigma_fill_S_m'])} S/m "
+                 f"(wall {_fmt(p['sigma_wall_S_m'])} S/m); {e(p['layout_text'])}, pitch {_fmt(p['pitch_um'])} µm, laminate "
+                 f"εr {_fmt(p['eps_r'])}, tan δ {_fmt(p['tan_d'])}, ports {_fmt(p['z_ref'])} Ω.</p>")
+        P.append(_table(["Quantity", "Value"], [
+            ["DC resistance per via", f"{_fmt(p['R_dc_mohm'])} mΩ"],
+            ["Wall alone (no fill)", f"{_fmt(p['R_dc_wall_only_mohm'])} mΩ"],
+            ["Share of the DC current in the fill", f"{_fmt(100 * p['fill_share_dc'])} %"],
+            ["Loop with the return vias, DC", f"{_fmt(p['loop_R_dc_mohm'])} mΩ"],
+            ["Characteristic impedance (lossless)", f"{_fmt(p['Z0_lossless_ohm'])} Ω"],
+            ["Delay through the board", f"{_fmt(p['delay_ps'])} ps"],
+            ["Skin depth = wall (mid-hole) above", f"{_fmt(p['f_wall_Hz'] / 1e6)} MHz"],
+            [f"At {_fmt(p['f_ref'] / 1e9)} GHz: via resistance, loop inductance",
+             f"{_fmt(p['at_ref']['R_via_mohm'])} mΩ, {_fmt(p['at_ref']['L_loop_pH'])} pH"],
+            [f"At {_fmt(p['f_ref'] / 1e9)} GHz: S21, S11", f"{_fmt(p['at_ref']['S21_dB'])} dB, {_fmt(p['at_ref']['S11_dB'])} dB"]]))
+        P.append(_svg_lines([("via resistance", p["freq_hz"], [x * 1e3 for x in p["R_via_ohm"]], "#d1242f", "")],
+                            "frequency [Hz]", "resistance of one via [mΩ]", xlog=True, ylog=True))
+        P.append(_svg_lines([("S21", p["freq_hz"], p["S21_dB"], "#0969da", ""), ("S11", p["freq_hz"], p["S11_dB"], "#8250df", "4 3")],
+                            "frequency [Hz]", "S-parameters [dB]", xlog=True))
+        P.append(_table(["Wall at the ends [µm]", "in the middle [µm]", "DC per via [mΩ]", "wall alone [mΩ]", "fill share DC",
+                         f"R at {_fmt(p['f_ref'] / 1e9)} GHz [mΩ]", f"S21 at {_fmt(p['f_ref'] / 1e9)} GHz [dB]"],
+                        [[_fmt(s["t_um"]), _fmt(s["t_mid_um"]), _fmt(s["R_dc_mohm"]), _fmt(s["R_dc_wall_only_mohm"]),
+                          f"{_fmt(100 * s['fill_share_dc'])} %", _fmt(s["R_ref_mohm"]), _fmt(s["S21_ref_dB"])] for s in p["sweep"]]))
+        P.append("<p>The via as a transmission line along its axis (quasi-TEM): the Bessel solution of the plated wall "
+                 "around the fill for its internal impedance, the cross-section's capacitance by the multipole method, "
+                 "slices along the via cascaded. Not included: pads, antipads and planes of the stack-up and the "
+                 "transitions to traces (a 3D full-wave problem), the proximity effect between vias, the frequency "
+                 "dependence of the fill and of the laminate.</p>")
     if "viscosity" in props:
         p = props["viscosity"]
         P.append("<h3>Viscosity and flowability of the uncured compound</h3>")
@@ -768,7 +801,7 @@ def write(out_dir, r):
 _AN_OPTS = {
     "emi": "emi", "acoustics": "acoustics", "radiation": "radiation", "filtration": "filtration",
     "porosimetry": "porosimetry", "moisture": "moisture", "mechtest": "mechtest", "thermomech": "thermomech",
-    "joule": "joule",
+    "joule": "joule", "via": "via",
 }
 
 
@@ -962,6 +995,12 @@ def _methods(r):
         out.append("Joule heating: the film's electric potential and temperature by the same film FV, σ(T) = σ/(1 + TCR "
                    "(T - 20 °C)) per voxel, the heat of every face split by its two halves' resistances, alternated to "
                    "1 mK.")
+    if "via" in an:
+        out.append("Through via: the fill's conductivity from the electrical solve along z; the internal impedance of "
+                   "the plated wall around the fill by its Bessel solution (Schelkunoff 1934), the cross-section's "
+                   "capacitance by the multipole method, the via as a transmission line cascaded in slices.")
+    if any((p.get("rc_elec") or 0) > 0 for p in spec.get("phases") or []):
+        out.append("Electrical contact resistance on the faces where two particles touch (per area of contact).")
     if (spec.get("rve") or {}).get("arrangement") == "pressed":
         out.append("Compression: three-dimensional creeping flow of the resins on the voxels (FANS, B-bar), rigid "
                    "spheres, the pores a compressible gas, material markers"
@@ -1016,4 +1055,6 @@ def _methods_short(r):
         out.append("thermal stress FV + FANS + laminate")
     if "joule" in an:
         out.append("Joule heating FV potential and heat")
+    if "via" in an:
+        out.append("through via Bessel wall + multipole line")
     return " · ".join(out) or "structure analyses"
