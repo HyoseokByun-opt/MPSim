@@ -71,7 +71,7 @@
     mechtest: { title: "Mechanical test", icon: "cte", color: "var(--c-mech)", solver: "Testing-machine load on the effective stiffness · one FANS solve for the stress fields", out: "Force–displacement line · apparent modulus and Poisson's ratio · von Mises, axial stress and strain fields · load at the matrix strength" },
     thermomech: { title: "Thermal stress and warpage", short: "Thermal stress, warpage", icon: "cte", color: "var(--c-thermal)", solver: "Film heat flow (FV with interface resistances) → per-voxel thermal strain, α1/α2 and E by the local temperature (FANS eigenstrain) → laminate release", out: "Temperature field · curvature and warpage · stress profile through the film · von Mises, principal and peeling stress fields · substrate stress", film: true },
     joule: { title: "Joule heating", icon: "electrical", color: "var(--c-electrical)", solver: "Film potential (FV, σ at each voxel's temperature) ⇄ Joule heat ⇄ temperature (FV), repeated to 1 mK at every step", out: "I–V line · peak and sink temperature per step · thermal runaway · temperature, heat, current-density and potential fields", film: true },
-    via: { title: "Through via", short: "Through via", icon: "electrical", color: "var(--c-electrical)", solver: "The fill's σ from the electrical solve (z) · Bessel solution of the plated wall around the fill · multipole cross-section · transmission line in slices", out: "DC resistance per via · share through the fill · R(f), L(f) · Z0 · S21, S11 up to 40 GHz · wall-thickness sweep" },
+    via: { title: "Through via", short: "Through via", icon: "electrical", color: "var(--c-electrical)", solver: "The fill's σ from the electrical solve (z) · Bessel solution of the plated wall around the fill · multipole cross-section · transmission line in slices · optional thermal stress: axisymmetric FEM (9-node quadrilaterals)", out: "DC resistance per via · share through the fill · R(f), L(f) · Z0 · S21, S11 up to 40 GHz · wall-thickness sweep · substrate and wall stress (optional)" },
     permeability: { title: "Permeability", icon: "permeability", color: "var(--c-flow)", solver: "NASA PuMA · Stokes finite elements", out: "K tensor · flow resistivity · Kozeny constant · velocity field", pores: true },
     moisture: { title: "Moisture uptake and swelling", short: "Moisture and swelling", icon: "tortuosity", color: "var(--c-flow)", solver: "Periodic FV on the activity c/c_sat (permeability D·c_sat) · FANS eigenstrain for swelling", out: "Effective moisture diffusivity · saturated uptake · uptake curve of the part · hygroscopic swelling and CME" },
     viscosity: { title: "Viscosity and flowability", icon: "permeability", color: "var(--c-flow)", solver: "Voxel FE creeping flow (B-bar, FFT-preconditioned CG) · particle dynamics of the fillers (lubrication, contacts, friction, van der Waals; CPU or CUDA GPU) · Krieger–Dougherty with the jammed packing fraction", out: "Relative viscosity · flow curve of the compound · maximum packing fraction · underfill filling time · settling" },
@@ -120,7 +120,7 @@
     if (an.has("viscosity")) out.push("viscosity particle dynamics" + (r.dem_direct ? "" : " and FANS"));
     if (an.has("thermomech")) out.push("thermal stress: film FV heat → FANS eigenstrain → laminate");
     if (an.has("joule")) out.push("Joule heating: film FV potential ⇄ FV heat");
-    if (an.has("via")) out.push("through via: Bessel wall + multipole line");
+    if (an.has("via")) out.push("through via: Bessel wall + multipole line" + (((state.form.options.via || {}).stress || {}).on ? " + axisymmetric FEM of the thermal stress" : ""));
     return { text: out.join(" · ") || (BACKEND[r.backend] || ""), puma };
   }
   const backendTxt = (r) => runMethods(r).text + (r.plan && r.plan.film ? " · thin film" : "");
@@ -346,7 +346,7 @@
         mechtest: { mode: "compression", axis: "z", lateral: "free", control: "force", value: 100, length_mm: null, area_mm2: 10, strength_MPa: null },
         thermomech: { T_ref: 175, T_bottom: 25, T_top: 25, support: "free", substrate: { material_id: "si", E: null, nu: null, alpha: null, thickness_um: 775 }, span_mm: 10, compare_uniform: true },
         joule: { control: "current", values: "1e6, 1e7, 3e7, 1e8", T_amb: 25, R_th: 0.001 },
-        via: { hole_d_um: 100, length_mm: 1.8, plating_um: 20, throw: 1, sweep_um: "5, 10, 15, 20, 25", fill: "rve", fill_sigma: null, wall_sigma: null, pitch_um: 300, returns: "coax4", eps_r: 3.37, tan_d: 0.002, z_ref: 50, f_min: 1e3, f_max: 4e10, n_f: 121, f_ref: 1e10 },
+        via: { hole_d_um: 100, length_mm: 1.8, plating_um: 20, throw: 1, sweep_um: "5, 10, 15, 20, 25", fill: "rve", fill_sigma: null, wall_sigma: null, pitch_um: 300, returns: "coax4", eps_r: 3.37, tan_d: 0.002, z_ref: 50, f_min: 1e3, f_max: 4e10, n_f: 121, f_ref: 1e10, stress: { on: false, T_free: 150, T_use: 25, sub_E: 73, sub_nu: 0.22, sub_alpha: 3.8, core: "rve", R_factor: 10, compare: true, mesh: "standard" } },
         gas: { molar_mass_g_mol: 28.97, viscosity_Pa_s: 1.81e-5, diffusivity_m2_s: 2.0e-5, pressure_Pa: 101325, molecule_diameter_nm: 0.37, density_kg_m3: 1.204, sound_speed_m_s: 343.2, gamma: 1.4, prandtl: 0.71 },
       },
     };
@@ -1728,6 +1728,23 @@
       <div class="g2">${num("options.joule.T_amb", "Ambient temperature", "°C")}${num("options.joule.R_th", "Thermal resistance to ambient", "K·m²/W, per area")}</div>
       <div class="hint">At every step the potential is solved with each voxel's conductivity at its temperature, σ(T) = σ / (1 + TCR (T − 20 °C)), the heat of the current in every voxel follows, then the temperature it raises, and the two are solved in turn until the temperature changes by less than 1 mK. The faces sit at T<sub>amb</sub> + R<sub>th</sub>·P (P the heat per area of the film: R<sub>th</sub> carries the joint's path to ambient; 1e-3 K·m²/W is 10 K/W for 1 cm²). A set current through a conductor whose resistance rises with temperature can run away: the sweep stops at the step where the temperature no longer settles or exceeds 1000 °C. ${tcr.length ? `TCR set for ${tcr.map((m) => esc(m.name)).join(", ")}.` : "No material has a TCR (Material tab, optional): the conductivities stay constant."} The conductor must join the two faces (set the matrix skin to 0 on the Domain tab where particles touch the electrodes).</div>`;
   }
+  // the via's thermal stress in its substrate (5.8.0): axisymmetric FEM
+  function viaStressOptions(o) {
+    const s = o.stress || (o.stress = { on: false, T_free: 150, T_use: 25, sub_E: 73, sub_nu: 0.22, sub_alpha: 3.8, core: "rve", R_factor: 10, compare: true, mesh: "standard" });
+    const cu = mat(o.wall_material || "cu"), cp = cu ? cu.props : {};
+    const CORE = { rve: "This composite (E, ν, α of the RVE)", value: "Values entered", cu: "Copper (a fully plated via)", none: "Empty (a conformal via)" };
+    const head = `<label class="chk"><span class="switch"><input type="checkbox" data-k="options.via.stress.on"><span></span></span> Thermal stress in the substrate (axisymmetric FEM)</label>`;
+    if (!s.on) return head;
+    return `${head}
+      <div class="g2">${num("options.via.stress.T_free", "Stress-free temperature", "°C (cure of the fill)")}${num("options.via.stress.T_use", "Temperature of use", "°C")}</div>
+      <div class="g3">${num("options.via.stress.sub_E", "Substrate E", "GPa")}${num("options.via.stress.sub_nu", "Substrate ν", "")}${num("options.via.stress.sub_alpha", "Substrate CTE", "ppm/K")}</div>
+      <div><label class="f">Core of the via</label><select data-k="options.via.stress.core">${Object.entries(CORE).map(([k, v]) => `<option value="${k}" ${(s.core || "rve") === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      ${s.core === "value" ? `<div class="g3">${num("options.via.stress.core_E", "Core E", "GPa")}${num("options.via.stress.core_nu", "Core ν", "")}${num("options.via.stress.core_alpha", "Core CTE", "ppm/K")}</div>` : ""}
+      <div class="g3"><div><label class="f">Wall E <span class="u">GPa, empty = ${fmt(cp.E)}</span></label><input type="number" step="any" data-k="options.via.stress.wall_E" data-num></div><div><label class="f">Wall ν <span class="u">empty = ${fmt(cp.nu)}</span></label><input type="number" step="any" data-k="options.via.stress.wall_nu" data-num></div><div><label class="f">Wall CTE <span class="u">ppm/K, empty = ${fmt(cp.alpha)}</span></label><input type="number" step="any" data-k="options.via.stress.wall_alpha" data-num></div></div>
+      <div class="g2">${num("options.via.stress.R_factor", "Substrate disc around the via", "hole radii")}<div><label class="f">Mesh</label><select data-k="options.via.stress.mesh"><option value="standard" ${s.mesh !== "fine" ? "selected" : ""}>Standard (0.15 µm at the corners)</option><option value="fine" ${s.mesh === "fine" ? "selected" : ""}>Fine (0.075 µm)</option></select></div></div>
+      <label class="chk"><span class="switch"><input type="checkbox" data-k="options.via.stress.compare"><span></span></span> Compare a conformal (empty) and a fully plated via at the same wall thicknesses</label>
+      <div class="hint">The via cools (or heats) uniformly from the stress-free temperature to the temperature of use; the wall, the core and the substrate expand by their own α and stay bonded. Axisymmetric, linear elastic finite elements (9-node quadrilaterals) on half the via (mid-plane symmetry), graded to 0.15 µm at the wall's surfaces and the top; the substrate a disc of ${fmt(s.R_factor || 10)} hole radii. Reported: the substrate's tension at the interface half way along the via, on its top surface 1-20 µm from the hole's edge (the corner itself is a singular point of elasticity), along the interface, the wall's von Mises stress and how far the via's top sinks or rises. Checked against the concentric-cylinder solution at mid-height and against FEniCSx (DOLFINx) in the self-test. ${s.core === "rve" ? "Adds the elasticity and CTE analysis (the core's E, ν and α)." : ""} Not included: plasticity and creep of the copper, debonding, the pads and build-up layers.</div>`;
+  }
   // a plated-through via filled with this composite (5.7.0)
   function viaOptions() {
     const o = state.form.options.via || (state.form.options.via = { hole_d_um: 100, length_mm: 1.8, plating_um: 20, throw: 1, sweep_um: "5, 10, 15, 20, 25", fill: "rve", pitch_um: 300, returns: "coax4", eps_r: 3.37, tan_d: 0.002, z_ref: 50, f_min: 1e3, f_max: 4e10, n_f: 121, f_ref: 1e10 });
@@ -1743,6 +1760,7 @@
       <div class="g2">${num("options.via.eps_r", "Laminate εr", "")}${num("options.via.tan_d", "Laminate tan δ", "")}</div>
       <div class="g2">${num("options.via.f_min", "Lowest frequency", "Hz")}${num("options.via.f_max", "Highest frequency", "Hz")}</div>
       <div class="g2">${num("options.via.f_ref", "Reference frequency", "Hz")}${num("options.via.z_ref", "Port impedance", "Ω")}</div>
+      ${viaStressOptions(o)}
       <div class="hint">The via as a transmission line along its axis: the plated wall around the fill (Bessel solution: from the DC resistance of the two in parallel to the wall's skin effect, and the share of the current the fill carries), the capacitance between the signal via and its return vias (multipole method), the laminate's losses, slices along the via for a wall thinner in the middle (throwing power). Includes the electrical analysis (the fill's conductivity along z). Pads, antipads, planes and the transitions to traces are not included: they need a 3D full-wave model of the stack-up.</div>`;
   }
   function gasDetails() {
@@ -3034,7 +3052,38 @@
       <div class="box"><div class="bt">Characteristic impedance</div>${canvas("viaZ", 240)}<p class="hint">${esc(p.layout_text)}, pitch ${fmt(p.pitch_um)} µm; laminate εr ${fmt(p.eps_r)}, tan δ ${fmt(p.tan_d)}; delay ${fmt(p.delay_ps)} ps through ${fmt(p.length_mm)} mm. Loop inductance of the signal and its return vias ${fmt(ar.L_loop_pH)} pH at ${GHz} GHz. Below a few MHz the line's resistance dominates and |Z0| rises above the lossless value.</p></div>
       <div class="box" style="grid-column:1/-1"><div class="bt">Wall thicknesses compared <span class="hint">hole ${fmt(p.hole_d_um)} µm, ${fmt(p.length_mm)} mm (${fmt(p.aspect_ratio)}:1), throwing power ${fmt(p.throw)}</span></div>
         ${tbl(["Wall at the ends (µm)", "Middle (µm)", "DC per via (mΩ)", "Wall alone (mΩ)", "Fill share DC", `R at ${GHz} GHz (mΩ)`, `S21 at ${GHz} GHz (dB)`], rows, "tight")}
-        <p class="hint">The via as a transmission line along its axis (quasi-TEM). Not included: pads, antipads and planes of the stack-up and the transitions to traces (a 3D full-wave model), the proximity effect between the vias, the frequency dependence of the fill's conductivity and of the laminate.</p></div></div>`;
+        <p class="hint">The via as a transmission line along its axis (quasi-TEM). Not included: pads, antipads and planes of the stack-up and the transitions to traces (a 3D full-wave model), the proximity effect between the vias, the frequency dependence of the fill's conductivity and of the laminate.</p></div>${p.layouts ? secViaLayouts(p) : ""}${p.stress ? secViaStress(p.stress) : ""}</div>`;
+  }
+  function secViaLayouts(p) {
+    const GHz = fmt(p.f_ref / 1e9), FMX = fmt(p.freq_hz[p.freq_hz.length - 1] / 1e9);
+    const SHORT = { coax8: "8 around", coax4: "4 around", gsg: "Ground-signal-ground", sg: "One beside" };
+    const rows = Object.entries(p.layouts).map(([k, l]) => [`<span title="${esc(l.text)}" style="white-space:nowrap">${SHORT[k] || esc(l.text)}${k === p.layout ? " (this via)" : ""}</span>`, `<span title="C′ ${fmt(l.C_pF_m)} pF/m, L′ ${fmt(l.L_ext_nH_m)} nH/m">${fmt(l.Z0_ohm)}</span>`,
+      fmt(l.S11_ref_dB), fmt(l.S21_ref_dB), fmt(l.S11_max_dB), fmt(+l.S21_low_dB.toPrecision(3)), fmt(+l.f_S21_low_GHz.toPrecision(3))]);
+    return `<div class="box" style="grid-column:1/-1"><div class="bt">Return-via layouts compared <span class="hint">pitch ${fmt(p.pitch_um)} µm, εr ${fmt(p.eps_r)}, ports ${fmt(p.z_ref)} Ω; S in dB</span></div>
+        ${tbl(["Layout", "Z0 (Ω)", `S11 ${GHz} GHz`, `S21 ${GHz} GHz`, `S11 ${FMX} GHz`, "Lowest S21", "at (GHz)"], rows, "tight")}
+        <p class="hint">The same via and wall with each arrangement of return vias at the pitch: their number and distance set the capacitance and inductance per length, so Z0 = √(L′/C′) and the reflection against the ports. The lowest S21 above 1 GHz of a mismatched line falls where the via is a quarter wavelength long in the substrate.</p></div>`;
+  }
+  function secViaStress(st) {
+    const m = st.main, mt = st.materials, NAME = { fill: "This via", none: "Conformal (empty)", cu: "Fully plated" };
+    const COL = { fill: "#c8703c", none: "#1f8fa6", cu: "#d7263d" };
+    const comp = st.compare || {};
+    draws.push(() => CH.line($("#vsT"), { ymin: 0, xlabel: "Wall at the ends (µm)", ylabel: "Substrate tension (MPa)", series:
+      Object.entries(comp).flatMap(([k, arr]) => [
+        { x: arr.map((c) => c.t_um), y: arr.map((c) => c.mid.rr), color: COL[k], width: 2.2, marker: true, label: `${NAME[k]}: mid-height` },
+        { x: arr.map((c) => c.t_um), y: arr.map((c) => c.top_p1[2]), color: COL[k], width: 1.6, dash: [5, 4], marker: true, label: `${NAME[k]}: top, 5 µm` }]) }));
+    draws.push(() => CH.line($("#vsD"), { xlog: true, xlabel: "Depth below the top surface (µm)", ylabel: "Substrate at the interface (MPa)", series: [
+      { x: m.depth_um, y: m.depth_p1, color: "#c8703c", width: 2.2, label: "largest principal" },
+      { x: m.depth_um, y: m.depth_rz, color: "#8250df", width: 1.6, dash: [5, 4], label: "shear τrz" }] }));
+    const rows = [];
+    Object.entries(comp).forEach(([k, arr]) => arr.forEach((c) => rows.push([NAME[k], fmt(c.t_um), fmt(c.mid.rr), fmt(c.top_p1[0]), fmt(c.top_p1[2]), fmt(c.top_p1[3]), fmt(c.wall_mises_mid), fmt(c.top_dz_nm)])));
+    const tile = (v, l, d) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div><div class="d">${esc(d || "")}</div></div>`;
+    const core = st.core_kind === "rve" ? "this composite" : st.core_kind === "value" ? "entered" : st.core_kind === "cu" ? "copper" : "empty";
+    return `<div class="box" style="grid-column:1/-1"><div class="bt">Thermal stress <span class="hint">ΔT ${fmt(st.dT)} K (${fmt(st.T_free)} → ${fmt(st.T_use)} °C) · ${esc(st.solver)}</span></div>
+        <div class="tiles">${tile(`${fmt(m.mid.rr)} MPa`, "Substrate at mid-height", "radial tension at the interface")}${tile(`${fmt(m.top_p1[2])} MPa`, "Substrate at the top", "5 µm from the hole's edge")}${tile(`${fmt(m.wall_mises_mid)} MPa`, "Wall von Mises", "mid-height")}${tile(`${fmt(m.top_dz_nm)} nm`, "Top of the via", "against the substrate far away")}</div>
+        <div class="rgrid"><div class="box"><div class="bt">Substrate tension against the wall thickness</div>${canvas("vsT", 240)}</div>
+        <div class="box"><div class="bt">Along the interface</div>${canvas("vsD", 240)}<p class="hint">The substrate side of the wall, from the top surface down to mid-height (log scale).</p></div></div>
+        ${tbl(["Via", "Wall (µm)", "Mid-height (MPa)", "Top 1 µm", "Top 5 µm", "Top 10 µm", "Wall von Mises", "Top Δz (nm)"], rows, "tight")}
+        <p class="hint">Core ${core}${mt.fill ? ` (E ${fmt(mt.fill.E_GPa)} GPa, ν ${fmt(mt.fill.nu)}, α ${fmt(mt.fill.alpha_ppm)} ppm/K)` : ""}; wall E ${fmt(mt.wall.E_GPa)} GPa, ν ${fmt(mt.wall.nu)}, α ${fmt(mt.wall.alpha_ppm)} ppm/K; substrate E ${fmt(mt.sub.E_GPa)} GPa, ν ${fmt(mt.sub.nu)}, α ${fmt(mt.sub.alpha_ppm)} ppm/K. Mid-height against the concentric-cylinder solution: ${fmt(100 * st.lame_dev)} %. ${fmt(m.n_dofs)} unknowns. The map of the largest principal stress near the top is among the figures (via_stress_map.png). Linear elastic: a stress beyond the copper's yield is an upper bound. Results scale with ΔT.</p></div>`;
   }
   function secCte(p) {
     const c = p.constants, vo = ["xx", "yy", "zz", "yz", "xz", "xy"];

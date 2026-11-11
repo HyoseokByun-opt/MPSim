@@ -2613,6 +2613,846 @@
      "refine_rounds": 3
     }
    }
+  },
+  {
+   "id": "via_glass_tgv",
+   "name": "Glass-core TGV · Cu paste 40 vol% in a 100 µm hole through 1.8 mm glass: resistance, impedance and thermal stress",
+   "description": "A through-glass via (TGV) of a 1.8 mm glass core: a 100 µm hole (18:1) plated with Cu, 10 µm at the hole's ends and 8 µm in the middle, filled with a Cu paste; 4 return vias at the 300 µm pitch. The RVE is the paste on 12 particle diameters (76.8 µm, 192³ voxels of 0.4 µm, a box whose mean conductivity is within 5 % of a 20-diameter one): Cu spheres of 6.38 µm at 40 vol%, overlapping (the necks of the cure), with the contact resistance 8.41e-15 Ω·m² calibrated on this grid to 5×10⁻⁵ Ω·cm ('Calibration · Cu via paste on 12 diameters'). Results (about 6 min): the paste 2.27 MS/m along z, E 12.0 GPa, α 32.2 ppm/K; one via 11.26 mΩ at DC with 7.7 % of the current in the paste (5 µm wall: 19.5 mΩ, 16 %; 20 µm: 6.55 mΩ); in the glass (εr 4.8) Z0 50.6 Ω with 4 return vias, S11 -39 dB at 10 GHz (8 around 49.5 Ω; ground-signal-ground 63 Ω; one return via 96 Ω and S11 -7 dB - the table 'Return-via layouts compared'). Thermal stress, cooling from the cure at 150 °C to 25 °C: the glass at the interface half way along the via 85 MPa, on its top surface 5 µm from the hole 139 MPa, the wall 182 MPa (von Mises), the via's top 277 nm below the glass. Compared at the same walls (mid-height / top 5 µm): this paste 5 µm: 78 / 162 MPa, 10 µm: 85 / 139 MPa, 15 µm: 90 / 120 MPa, 20 µm: 94 / 104 MPa, 25 µm: 98 / 91 MPa; conformal (empty) 5 µm: 23 / 95 MPa, 10 µm: 41 / 101 MPa, 15 µm: 56 / 97 MPa, 20 µm: 69 / 91 MPa, 25 µm: 79 / 84 MPa; fully plated 110 / 62 MPa. The resin paste expands more than copper, so it pulls the thin wall inward at the top and loads the glass more than an empty via: it does not buffer the glass (a core would need α at or below copper's to). Linear elastic: the copper's yield and creep would lower these values. Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300. Wall: 18:1 holes plated to a hole:surface thickness ratio of 0.80 (G. L. Fisher, W. Sonnenberg, J. Bladon, R. Bernards, Trans. IMF 68 (1990) 50, doi:10.1080/00202967.1990.11870866). Glass εr 4.8 and tan δ 0.007 at 30 GHz as used for through-glass vias by J. Liu, J. Zhang, L. Gao, H. Chen, Micromachines 14 (2023) 803, doi:10.3390/mi14040803; glass CTE 3.8 ppm/K (alkali-free boroaluminosilicate): M. Zhai, H. Shi, M. Swaminathan, A. Locquet, D. Citrin, CLEO/Europe-EQEC 2023, doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702; glass E 73 GPa and ν 0.22 are typical values (assumed). Copper: E 123.5 GPa, ν 0.350 (polycrystal; H. M. Ledbetter, E. R. Naimon, J. Phys. Chem. Ref. Data 3 (1974) 897, doi:10.1063/1.3253150), α 17.0 ppm/K from 25 to 150 °C (NIST SRM 736; T. A. Hahn, J. Appl. Phys. 41 (1970) 5096, doi:10.1063/1.1658614). The via as a transmission line with its ground vias (O. F. Yildiz, C. Schuster, EDAPS 2019, doi:10.1109/EDAPS47854.2019.9011681); up to 40 GHz (R. Rimolo-Donadio et al., IEEE Trans. Microw. Theory Techn. 57 (2009) 2072, doi:10.1109/TMTT.2009.2025470). Thin copper keeps glass from cracking: circumferential cracks around Cu TGVs (47.5 µm, fused silica, 400 °C) from 12 µm of Cu, none below (C. Okoro, A. Park, T. Allowatt, S. Pollard, IEEE Trans. Device Mater. Reliab. 21 (2021) 354, doi:10.1109/TDMR.2021.3096931); conformal TGVs deform the glass far less than filled ones (K. Pan et al., ECTC 2022, 1211, doi:10.1109/ECTC51906.2022.00194).",
+   "form": {
+    "name": "Glass-core TGV · Cu paste 40 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 8.41e-15
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 76.8,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "z",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 10,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "rve",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 4.8,
+      "tan_d": 0.007,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0,
+      "stress": {
+       "on": true,
+       "T_free": 150,
+       "T_use": 25,
+       "sub_E": 73,
+       "sub_nu": 0.22,
+       "sub_alpha": 3.8,
+       "wall_E": 123.5,
+       "wall_nu": 0.35,
+       "wall_alpha": 17.0,
+       "core": "rve",
+       "R_factor": 10,
+       "compare": true,
+       "mesh": "standard"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "via_glass_conformal",
+   "name": "Glass-core TGV · conformal Cu wall (empty core): thermal stress against the wall thickness",
+   "description": "The via of 'Glass-core TGV · Cu paste' with nothing in it: the Cu wall alone (fill conductivity 0, core empty), the conformal TGV. The RVE is not used (fill entered), so the run takes seconds. One via 12.2 mΩ at DC with a 10 µm wall; Z0 50.6 Ω. Cooling from 150 °C to 25 °C, mid-height / top 5 µm: 5 µm: 23 / 95 MPa, 10 µm: 41 / 101 MPa, 15 µm: 56 / 97 MPa, 20 µm: 69 / 91 MPa, 25 µm: 79 / 84 MPa - against a fully plated via 110 / 62 MPa. The thinner the wall, the less the glass is loaded at mid-height, and the wall itself carries the most (von Mises 283 MPa at 5 µm, beyond the yield of most plated copper: an upper bound). Wall: 18:1 holes plated to a hole:surface thickness ratio of 0.80 (G. L. Fisher, W. Sonnenberg, J. Bladon, R. Bernards, Trans. IMF 68 (1990) 50, doi:10.1080/00202967.1990.11870866). Glass εr 4.8 and tan δ 0.007 at 30 GHz as used for through-glass vias by J. Liu, J. Zhang, L. Gao, H. Chen, Micromachines 14 (2023) 803, doi:10.3390/mi14040803; glass CTE 3.8 ppm/K (alkali-free boroaluminosilicate): M. Zhai, H. Shi, M. Swaminathan, A. Locquet, D. Citrin, CLEO/Europe-EQEC 2023, doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702; glass E 73 GPa and ν 0.22 are typical values (assumed). Copper: E 123.5 GPa, ν 0.350 (polycrystal; H. M. Ledbetter, E. R. Naimon, J. Phys. Chem. Ref. Data 3 (1974) 897, doi:10.1063/1.3253150), α 17.0 ppm/K from 25 to 150 °C (NIST SRM 736; T. A. Hahn, J. Appl. Phys. 41 (1970) 5096, doi:10.1063/1.1658614). Thin copper keeps glass from cracking: circumferential cracks around Cu TGVs (47.5 µm, fused silica, 400 °C) from 12 µm of Cu, none below (C. Okoro, A. Park, T. Allowatt, S. Pollard, IEEE Trans. Device Mater. Reliab. 21 (2021) 354, doi:10.1109/TDMR.2021.3096931); conformal TGVs deform the glass far less than filled ones (K. Pan et al., ECTC 2022, 1211, doi:10.1109/ECTC51906.2022.00194).",
+   "form": {
+    "name": "Glass-core TGV · conformal Cu wall",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 0
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 51.2,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "z",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 10,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "value",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 4.8,
+      "tan_d": 0.007,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0,
+      "stress": {
+       "on": true,
+       "T_free": 150,
+       "T_use": 25,
+       "sub_E": 73,
+       "sub_nu": 0.22,
+       "sub_alpha": 3.8,
+       "wall_E": 123.5,
+       "wall_nu": 0.35,
+       "wall_alpha": 17.0,
+       "core": "none",
+       "R_factor": 10,
+       "compare": true,
+       "mesh": "standard"
+      },
+      "fill_sigma": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "via_glass_sintered",
+   "name": "Glass-core TGV · sintered Cu paste (3.5 µΩ·cm) in a 5 µm Cu wall",
+   "description": "A sintered Cu paste as the via's core instead of a resin-bonded one: its resistivity entered, 3.5 µΩ·cm (28.6 MS/m), the lowest reached for a TGV fill sintered at 350 °C in hydrogen, with resistance changes within 3 % after 1000 cycles of -55/125 °C (Y. Ejiri, M. Sakamoto, C. Shimizu, N. Kikuchi, M. Nishimoto, S. Kai, H. Uragami, SMTA International 27 (2025) 65, doi:10.37665/smljgma44644). The RVE is not used (fill entered). With a 5 µm wall the via is 6.80 mΩ at DC, 71 % of the current in the paste - as low as a 20 µm wall alone (6.73 mΩ); 20 µm wall with the paste 4.95 mΩ. For the thermal stress the core is taken as copper (a sintered core is porous copper: its expansion is copper's, its stiffness lower), which makes the stress an upper bound: the glass 110 MPa at mid-height, as a fully plated via. Wall: 18:1 holes plated to a hole:surface thickness ratio of 0.80 (G. L. Fisher, W. Sonnenberg, J. Bladon, R. Bernards, Trans. IMF 68 (1990) 50, doi:10.1080/00202967.1990.11870866). Glass εr 4.8 and tan δ 0.007 at 30 GHz as used for through-glass vias by J. Liu, J. Zhang, L. Gao, H. Chen, Micromachines 14 (2023) 803, doi:10.3390/mi14040803; glass CTE 3.8 ppm/K (alkali-free boroaluminosilicate): M. Zhai, H. Shi, M. Swaminathan, A. Locquet, D. Citrin, CLEO/Europe-EQEC 2023, doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702; glass E 73 GPa and ν 0.22 are typical values (assumed). Copper: E 123.5 GPa, ν 0.350 (polycrystal; H. M. Ledbetter, E. R. Naimon, J. Phys. Chem. Ref. Data 3 (1974) 897, doi:10.1063/1.3253150), α 17.0 ppm/K from 25 to 150 °C (NIST SRM 736; T. A. Hahn, J. Appl. Phys. 41 (1970) 5096, doi:10.1063/1.1658614).",
+   "form": {
+    "name": "Glass-core TGV · sintered Cu paste 3.5 µΩ·cm",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 55,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 0
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 51.2,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "z",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 5,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "value",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 4.8,
+      "tan_d": 0.007,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0,
+      "stress": {
+       "on": true,
+       "T_free": 150,
+       "T_use": 25,
+       "sub_E": 73,
+       "sub_nu": 0.22,
+       "sub_alpha": 3.8,
+       "wall_E": 123.5,
+       "wall_nu": 0.35,
+       "wall_alpha": 17.0,
+       "core": "cu",
+       "R_factor": 10,
+       "compare": true,
+       "mesh": "standard"
+      },
+      "fill_sigma": 28570000.0
+     }
+    }
+   }
+  },
+  {
+   "id": "via_glass_tgv_doe",
+   "name": "DOE · Cu content of the TGV paste 30–55 vol%: conductivity, stiffness, expansion, via resistance and glass stress",
+   "description": "A study, ready in the DOE tab: the paste of 'Glass-core TGV · Cu paste' at 30, 35, 40, 45, 50 and 55 vol% Cu (6 cases; each case's Result Viewer compares the walls 5-25 µm). Each case solves the paste's conductivity along z, its stiffness and thermal expansion (12 particle diameters, about 7 min a case), then the via's resistance, impedance and thermal stress. Results of this study: the paste's E 7.8, 9.7, 12.0, 15.2, 19.2, 24.1 GPa and α 38.7, 35.2, 32.2, 29.2, 26.6, 24.6 ppm/K from 30 to 55 vol% (still above copper's 17 ppm/K at 55 vol%: half of it is resin); along z the paste does not connect at 30 vol% (the percolation threshold of overlapping spheres is 0.29 - M. D. Rintoul, S. Torquato, J. Phys. A 30 (1997) L585, doi:10.1088/0305-4470/30/16/005) and conducts 0.88, 2.27, 3.62, 6.15, 8.87 MS/m from 35 to 55 vol%; with a 10 µm wall the glass carries 84 MPa at mid-height and 139 MPa on top with 40 vol%, 89 and 126 MPa with 55 vol% (a stiffer, less expanding paste loads the top less). DOE responses: the via's DC resistance, the paste's share, Z0, S21, the glass stress (largest, mid-height, top), the wall's von Mises stress, and the paste's α and E. Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300. Glass εr 4.8 and tan δ 0.007 at 30 GHz as used for through-glass vias by J. Liu, J. Zhang, L. Gao, H. Chen, Micromachines 14 (2023) 803, doi:10.3390/mi14040803; glass CTE 3.8 ppm/K (alkali-free boroaluminosilicate): M. Zhai, H. Shi, M. Swaminathan, A. Locquet, D. Citrin, CLEO/Europe-EQEC 2023, doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702; glass E 73 GPa and ν 0.22 are typical values (assumed). Copper: E 123.5 GPa, ν 0.350 (polycrystal; H. M. Ledbetter, E. R. Naimon, J. Phys. Chem. Ref. Data 3 (1974) 897, doi:10.1063/1.3253150), α 17.0 ppm/K from 25 to 150 °C (NIST SRM 736; T. A. Hahn, J. Appl. Phys. 41 (1970) 5096, doi:10.1063/1.1658614).",
+   "form": {
+    "name": "Glass-core TGV DOE · Cu content",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 8.41e-15
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 76.8,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "z",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 10,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "rve",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 4.8,
+      "tan_d": 0.007,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0,
+      "stress": {
+       "on": true,
+       "T_free": 150,
+       "T_use": 25,
+       "sub_E": 73,
+       "sub_nu": 0.22,
+       "sub_alpha": 3.8,
+       "wall_E": 123.5,
+       "wall_nu": 0.35,
+       "wall_alpha": 17.0,
+       "core": "rve",
+       "R_factor": 10,
+       "compare": true,
+       "mesh": "standard"
+      }
+     }
+    }
+   },
+   "doe": {
+    "name": "Glass-core TGV · Cu content of the paste",
+    "design": "full",
+    "edge": "fixed",
+    "parameters": [
+     {
+      "path": "phases.0.fraction.value",
+      "label": "Cu content of the paste",
+      "unit": "%",
+      "min": 30,
+      "max": 55,
+      "steps": 6,
+      "scale": "lin"
+     }
+    ]
+   }
+  },
+  {
+   "id": "cal_cu_via_paste_12d",
+   "name": "Calibration · Cu via paste on 12 diameters (192³): contact resistance from 5×10⁻⁵ Ω·cm (cure at 130 °C or more)",
+   "description": "The calibration of 'Calibration · Cu via paste' on the grid of the glass-core TGV study: 12 particle diameters (76.8 µm, 192³ voxels of 0.4 µm), whose mean conductivity is within 5 % of a 20-diameter box (8 diameters read about 15 % high). Measured 5×10⁻⁵ Ω·cm (2.0 MS/m, ± 10 %) after a cure at 130 °C or more. Result (about 16 min): R_c,e 8.41e-15 Ω·m², an upper bound (95 % below 1.66e-14): the necked network alone conducts about as measured, so the contacts no longer decide the value; re-solved with it 1.979 MS/m (-1.1 %). The value holds for this grid. Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300.",
+   "form": {
+    "name": "Cu via paste 40 vol% (12 diameters)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 0
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 76.8,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true
+    },
+    "options": {
+     "directions": "xyz"
+    }
+   },
+   "cal": {
+    "name": "Cu via paste 40 vol% · R_c,e from 5×10⁻⁵ Ω·cm (12 diameters)",
+    "measurements": [
+     {
+      "label": "Cu paste 85 wt% (40 vol%), cured ≥ 130 °C",
+      "set": [],
+      "property": "sigma",
+      "direction": "iso",
+      "value": 2000000.0,
+      "unc": 10
+     }
+    ],
+    "unknowns": [
+     {
+      "path": "phases.0.rc_elec",
+      "label": "Cu (D50 6.38 µm): electrical contact resistance R_c,e",
+      "unit": "Ω·m²",
+      "lo": 1e-17,
+      "hi": 1e-11,
+      "scale": "log",
+      "prior": "uniform",
+      "center": "",
+      "sigma_dec": 1
+     }
+    ],
+    "options": {
+     "model_unc": 5,
+     "refine_rounds": 3
+    }
+   }
+  },
+  {
+   "id": "cal_cu_via_paste_12d_b",
+   "name": "Calibration · Cu via paste on 12 diameters: contact resistance from 8×10⁻⁴ Ω·cm (cure at 80–100 °C)",
+   "description": "The paste of 'Calibration · Cu via paste on 12 diameters' cured at 80-100 °C, where the contacts and the resin's cross-links form incompletely: measured 8×10⁻⁴ Ω·cm (0.125 MS/m, ± 10 %). Result (about 50 min): R_c,e 1.08e-12 Ω·m², 95 % 8.5e-13 – 1.34e-12 - a value the measurement fixes, at least 65 times the contact resistance of the cure at 130 °C or more; re-solved with it 0.1248 MS/m (-0.1 %). In a via such a paste carries at most 5 % of the DC current, whatever its content and the wall. Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300.",
+   "form": {
+    "name": "Cu via paste 40 vol% (12 diameters)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 0
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 76.8,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true
+    },
+    "options": {
+     "directions": "xyz"
+    }
+   },
+   "cal": {
+    "name": "Cu via paste 40 vol% · R_c,e from 8×10⁻⁴ Ω·cm (12 diameters)",
+    "measurements": [
+     {
+      "label": "Cu paste 85 wt% (40 vol%), cured at 80-100 °C",
+      "set": [],
+      "property": "sigma",
+      "direction": "iso",
+      "value": 125000.0,
+      "unc": 10
+     }
+    ],
+    "unknowns": [
+     {
+      "path": "phases.0.rc_elec",
+      "label": "Cu (D50 6.38 µm): electrical contact resistance R_c,e",
+      "unit": "Ω·m²",
+      "lo": 1e-17,
+      "hi": 1e-11,
+      "scale": "log",
+      "prior": "uniform",
+      "center": "",
+      "sigma_dec": 1
+     }
+    ],
+    "options": {
+     "model_unc": 5,
+     "refine_rounds": 3
+    }
+   }
+  },
+  {
+   "id": "rve_size_cu_paste",
+   "name": "DOE · RVE size of a Cu paste near percolation: 8, 12, 16, 20 particle diameters × 3 structures",
+   "description": "How big a box a conductive paste needs: the Cu paste of 'Through via · Cu paste' (40 vol%, overlapping spheres of 6.38 µm, R_c,e 1.09e-14 Ω·m², voxels of 0.4 µm) in boxes of 51.2, 76.8, 102.4 and 128 µm (8, 12, 16 and 20 diameters, 128³ to 320³) with three random structures each (12 cases; 12 s to 5 min each on a 16 GB laptop). The response is the conductivity along z. With five structures per size this study gave 2.38, 2.12, 2.00 and 2.05 MS/m (±9, ±9, ±9 and ±2 % between structures): an 8-diameter box reads about 15 % high, 12 diameters within 5 % - near the percolation threshold a small box is both scattered and biased. The box, not the memory, set the accuracy: 320³ runs on a laptop. Paste: K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199 (Cu of D50 6.38 µm at 85 wt% = 40 vol% in a cured resin: 5×10⁻⁵ Ω·cm after 1 h in air at 130 °C or more, 8×10⁻⁴ Ω·cm at 80-100 °C); necks between the particles: M. Inoue, Y. Niwayama, Y. Sakaniwa, Y. Tada, J. Smart Process. 5 (2016) 300, doi:10.7791/jspmee.5.300.",
+   "form": {
+    "name": "Cu paste · box size",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 40,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 1.09e-14
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 51.2,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   },
+   "doe": {
+    "name": "Cu paste · box size × structure",
+    "design": "full",
+    "edge": "fixed",
+    "parameters": [
+     {
+      "path": "rve.L_um",
+      "label": "RVE edge length",
+      "unit": "µm",
+      "min": 51.2,
+      "max": 128,
+      "steps": 4,
+      "scale": "lin"
+     },
+     {
+      "path": "rve.seed",
+      "label": "Random seed (one realisation of the structure)",
+      "unit": "-",
+      "min": 1,
+      "max": 3,
+      "steps": 3,
+      "scale": "lin"
+     }
+    ]
+   }
+  },
+  {
+   "id": "via_glass_tgv_lowcte",
+   "name": "Glass-core TGV · low-CTE Cu paste: Cu 45 + fused silica 20 vol% - expansion near copper's, the glass's stress",
+   "description": "The paste of 'Glass-core TGV · Cu paste' with fused silica spheres (4 µm, may not overlap) in place of resin: Cu 45 vol% (6.38 µm spheres that may overlap, the contact resistance 8.41e-15 Ω·m² calibrated on this grid), silica 20 vol%, resin 35 vol%; the same 10 µm Cu wall through 1.8 mm glass, cooled from the cure at 150 °C to 25 °C. A resin-bonded paste expands more than copper and loads the glass more than an empty via; silica brings its expansion down to copper's. Results (about 9 min; structure by the clump relaxation, Cu 44.97 + silica 20.00 vol%): the paste 4.45 MS/m along z, E 33.2 GPa, ν 0.252, α 18.3 ppm/K (Cu 45 vol% without silica: E 15.2 GPa, α 29.2 ppm/K); one via 10.49 mΩ at DC; the glass at the interface half way along the via 79 MPa, on its top surface 5 µm from the hole 102 MPa (without silica 86 and 135 MPa; an empty via of the same wall 41 and 101 MPa, a fully plated one 110 and 62 MPa); the via's top 188 nm below the glass (without silica 258 nm). With silica the paste loads the glass's top about as much as an empty via of the same 10 µm wall; with a thinner wall still more, with a thicker one less. The walls compared, mid-height / top with this paste (top of an empty via): 5 µm 72 / 113 MPa (95), 10 µm 79 / 102 MPa (101), 15 µm 85 / 92 MPa (97), 20 µm 91 / 84 MPa (91), 25 µm 95 / 78 MPa (84). Fused silica (library): E 72 GPa and ν 0.17 (S. Spinner, J. Am. Ceram. Soc. 45 (1962) 394, doi:10.1111/j.1151-2916.1962.tb11177.x), α 0.5 ppm/K near room temperature (SRM 739: T. A. Hahn, R. K. Kirby, AIP Conf. Proc. 3 (1972) 13, doi:10.1063/1.2948551). Copper: E 123.5 GPa, ν 0.350 (H. M. Ledbetter, E. R. Naimon, J. Phys. Chem. Ref. Data 3 (1974) 897, doi:10.1063/1.3253150), α 17.0 ppm/K (NIST SRM 736; T. A. Hahn, J. Appl. Phys. 41 (1970) 5096, doi:10.1063/1.1658614). Glass: α 3.8 ppm/K (M. Zhai et al., CLEO/Europe-EQEC 2023, doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702), εr 4.8, tan δ 0.007 (J. Liu et al., Micromachines 14 (2023) 803, doi:10.3390/mi14040803), E 73 GPa and ν 0.22 typical values (assumed). The paste's Cu and its contact resistance as in 'Glass-core TGV · Cu paste' (K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199).",
+   "form": {
+    "name": "Glass-core TGV · Cu 45 + fused silica 20 vol% paste",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 45.0,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 8.41e-15
+     },
+     {
+      "material_id": "sio2",
+      "name": "Fused silica (4 µm)",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 20.0,
+       "basis": "vol"
+      },
+      "overlap": false
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 76.8,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "z",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 10,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "rve",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 4.8,
+      "tan_d": 0.007,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0,
+      "stress": {
+       "on": true,
+       "T_free": 150,
+       "T_use": 25,
+       "sub_E": 73,
+       "sub_nu": 0.22,
+       "sub_alpha": 3.8,
+       "wall_E": 123.5,
+       "wall_nu": 0.35,
+       "wall_alpha": 17.0,
+       "core": "rve",
+       "R_factor": 10,
+       "compare": true,
+       "mesh": "standard"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "via_glass_tgv_lowcte_doe",
+   "name": "DOE · fused silica in the TGV paste 0–20 vol% at Cu 45 vol%: expansion, stiffness, conductivity, glass stress",
+   "description": "A study, ready in the DOE tab: the paste of 'Glass-core TGV · low-CTE Cu paste' with 0, 5, 10, 15 and 20 vol% fused silica in place of resin, Cu fixed at 45 vol% (5 cases, 6-9 min each). Each case solves the paste's conductivity along z, its stiffness and expansion, then the via's resistance, impedance and thermal stress (10 µm wall; each case's Result Viewer compares the walls 5-25 µm). Results of this study (seed 1): 0 vol%: α 29.2 ppm/K, E 15.2 GPa, top 135 MPa, mid-height 86 MPa, 10.77 mΩ; 5 vol%: α 26.4 ppm/K, E 18.1 GPa, top 129 MPa, mid-height 85 MPa, 10.45 mΩ; 10 vol%: α 23.8 ppm/K, E 21.7 GPa, top 123 MPa, mid-height 84 MPa, 9.98 mΩ; 15 vol%: α 20.5 ppm/K, E 27.6 GPa, top 111 MPa, mid-height 81 MPa, 10.58 mΩ; 20 vol%: α 18.3 ppm/K, E 33.2 GPa, top 102 MPa, mid-height 79 MPa, 10.49 mΩ. The expansion falls about 0.55 ppm/K per vol% of silica and the glass's top stress with it (135 → 102 MPa); the stress at mid-height changes less (86 → 79 MPa). The conductivity: the structure is made by the random placement up to 10 vol% silica and by the clump relaxation from 15 vol% (the random placement jams). In the random placement the Cu spheres are placed first and the silica in the space they leave; in the relaxation both start mixed, so silica lies between Cu particles. With three structures each: 5.71 ± 0.41 MS/m at 10 vol%, 4.01 ± 0.17 MS/m at 15 vol% - the conductivity steps down where the route changes (-30 %), more than the scatter between structures; the expansion, the stiffness and the stress do not. Compare conductivities within one route, or measure. DOE responses: the paste's α and E, its conductivity, the via's DC resistance, the glass stress (largest, mid-height, top), the wall's von Mises stress, the top's displacement. Fused silica (library): E 72 GPa and ν 0.17 (S. Spinner, J. Am. Ceram. Soc. 45 (1962) 394, doi:10.1111/j.1151-2916.1962.tb11177.x), α 0.5 ppm/K near room temperature (SRM 739: T. A. Hahn, R. K. Kirby, AIP Conf. Proc. 3 (1972) 13, doi:10.1063/1.2948551). Copper: E 123.5 GPa, ν 0.350 (H. M. Ledbetter, E. R. Naimon, J. Phys. Chem. Ref. Data 3 (1974) 897, doi:10.1063/1.3253150), α 17.0 ppm/K (NIST SRM 736; T. A. Hahn, J. Appl. Phys. 41 (1970) 5096, doi:10.1063/1.1658614). Glass: α 3.8 ppm/K (M. Zhai et al., CLEO/Europe-EQEC 2023, doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702), εr 4.8, tan δ 0.007 (J. Liu et al., Micromachines 14 (2023) 803, doi:10.3390/mi14040803), E 73 GPa and ν 0.22 typical values (assumed). The paste's Cu and its contact resistance as in 'Glass-core TGV · Cu paste' (K. Kawarai, M. Inoue, J. Smart Process. 7 (2018) 199, doi:10.7791/jspmee.7.199).",
+   "form": {
+    "name": "Glass-core TGV DOE · fused silica in the paste",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "cu",
+      "name": "Cu (D50 6.38 µm)",
+      "props": {
+       "k": 401.0,
+       "sigma": 59600000.0,
+       "eps_r": 1.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 123.5,
+       "nu": 0.35,
+       "alpha": 17.0,
+       "rho": 8.96,
+       "cp": 385,
+       "tcr": 0.004
+      },
+      "shape": "sphere",
+      "size": {
+       "d": 6.38,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 45.0,
+       "basis": "vol"
+      },
+      "overlap": true,
+      "rc_elec": 8.41e-15
+     },
+     {
+      "material_id": "sio2",
+      "name": "Fused silica (4 µm)",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 10.0,
+       "basis": "vol"
+      },
+      "overlap": false
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "voxel_um": 0.4,
+     "L_um": 76.8,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "electrical": true,
+     "via": true
+    },
+    "options": {
+     "directions": "z",
+     "via": {
+      "hole_d_um": 100,
+      "length_mm": 1.8,
+      "plating_um": 10,
+      "throw": 0.8,
+      "sweep_um": "5, 10, 15, 20, 25",
+      "fill": "rve",
+      "pitch_um": 300,
+      "returns": "coax4",
+      "eps_r": 4.8,
+      "tan_d": 0.007,
+      "z_ref": 50,
+      "f_min": 1000,
+      "f_max": 40000000000.0,
+      "n_f": 121,
+      "f_ref": 10000000000.0,
+      "stress": {
+       "on": true,
+       "T_free": 150,
+       "T_use": 25,
+       "sub_E": 73,
+       "sub_nu": 0.22,
+       "sub_alpha": 3.8,
+       "wall_E": 123.5,
+       "wall_nu": 0.35,
+       "wall_alpha": 17.0,
+       "core": "rve",
+       "R_factor": 10,
+       "compare": true,
+       "mesh": "standard"
+      }
+     }
+    }
+   },
+   "doe": {
+    "name": "Glass-core TGV · fused silica in the Cu paste",
+    "design": "full",
+    "edge": "fixed",
+    "parameters": [
+     {
+      "path": "phases.1.fraction.value",
+      "label": "Fused silica in the paste",
+      "unit": "%",
+      "min": 0,
+      "max": 20,
+      "steps": 5,
+      "scale": "lin"
+     }
+    ]
+   }
   }
  ]
 }

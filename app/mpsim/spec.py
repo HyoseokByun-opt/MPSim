@@ -290,8 +290,43 @@ def _via(vo, errors):
         out["f_max"] = _num(vo.get("f_max", 4e10), "highest frequency of the via", out["f_min"] * 1.0001, 1e13)
         out["n_f"] = int(_num(vo.get("n_f", 121), "frequencies of the via", 3, 2001))
         out["f_ref"] = _num(vo.get("f_ref", 1e10), "reference frequency of the via", out["f_min"], out["f_max"])
+        out["stress"] = _via_stress(vo.get("stress") or {})
     except ValueError as e:
         errors.append(str(e))
+    return out
+
+
+def _via_stress(so):
+    """The via's thermal stress (solvers/via_stress.py, 5.8.0): a uniform temperature change from T_free (stress
+    free: the cure of the fill) to T_use; the substrate (a glass core by default: E, nu, alpha), the plated wall
+    (the library's copper unless entered) and the core - this composite (its stiffness and expansion from the cte
+    analysis), values entered, copper (a fully plated via) or none (a conformal via); the substrate disc R_factor
+    hole radii wide; the conformal and fully plated vias compared at the same wall thicknesses."""
+    out = {"on": bool(so.get("on")), "T_free": 150.0, "T_use": 25.0, "sub_E": 73.0, "sub_nu": 0.22, "sub_alpha": 3.8,
+           "wall_E": None, "wall_nu": None, "wall_alpha": None, "core": "rve", "core_E": None, "core_nu": None,
+           "core_alpha": None, "R_factor": 10.0, "compare": True, "mesh": "standard"}
+    if not out["on"]:
+        return out
+    out["T_free"] = _num(so.get("T_free", 150.0), "stress-free temperature of the via", -273.0, 2000.0)
+    out["T_use"] = _num(so.get("T_use", 25.0), "temperature of use of the via", -273.0, 2000.0)
+    if out["T_free"] == out["T_use"]:
+        raise ValueError("The via's temperature of use equals its stress-free temperature: there is no thermal stress")
+    out["sub_E"] = _num(so.get("sub_E", 73.0), "Young's modulus of the via's substrate", 0.01, 2000.0)
+    out["sub_nu"] = _num(so.get("sub_nu", 0.22), "Poisson's ratio of the via's substrate", 0.0, 0.49)
+    out["sub_alpha"] = _num(so.get("sub_alpha", 3.8), "expansion coefficient of the via's substrate", -50.0, 500.0)
+    for k, what, lo, hi in (("wall_E", "Young's modulus of the via wall", 0.01, 2000.0),
+                            ("wall_nu", "Poisson's ratio of the via wall", 0.0, 0.49),
+                            ("wall_alpha", "expansion coefficient of the via wall", -50.0, 500.0)):
+        if so.get(k) not in (None, ""):
+            out[k] = _num(so.get(k), what, lo, hi)
+    out["core"] = so.get("core") if so.get("core") in ("rve", "value", "cu", "none") else "rve"
+    if out["core"] == "value":
+        out["core_E"] = _num(so.get("core_E"), "Young's modulus of the via core", 0.001, 2000.0)
+        out["core_nu"] = _num(so.get("core_nu", 0.3), "Poisson's ratio of the via core", 0.0, 0.49)
+        out["core_alpha"] = _num(so.get("core_alpha"), "expansion coefficient of the via core", -50.0, 500.0)
+    out["R_factor"] = _num(so.get("R_factor", 10.0), "substrate disc around the via (hole radii)", 3.0, 100.0)
+    out["compare"] = so.get("compare", True) not in (False, "off", "false", 0)
+    out["mesh"] = "fine" if so.get("mesh") == "fine" else "standard"
     return out
 
 
@@ -774,6 +809,10 @@ def normalize(form):
     thickness = _num(opts.get("thickness_mm", emi.get("thickness_mm", 1.0)), "layer thickness", 1e-6, 1e4)
     fluid = por.get("fluid") if por.get("fluid") in (*FLUIDS, "custom") else "mercury"
     gamma0, theta0 = FLUIDS.get(fluid, FLUIDS["mercury"])
+    # the via's thermal stress with the composite as the core needs its stiffness and expansion (5.8)
+    vst = ((opts.get("via") or {}).get("stress") or {})
+    if "via" in chosen and vst.get("on") and (vst.get("core") or "rve") == "rve" and "cte" not in chosen:
+        chosen.append("cte")
     out["analyses"] = chosen
     out["options"] = {
         # z first: the fields, arrows, field lines and the resolution check

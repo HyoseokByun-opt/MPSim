@@ -526,6 +526,31 @@ def write(out_dir, r):
                  "slices along the via cascaded. Not included: pads, antipads and planes of the stack-up and the "
                  "transitions to traces (a 3D full-wave problem), the proximity effect between vias, the frequency "
                  "dependence of the fill and of the laminate.</p>")
+        if p.get("stress"):
+            st = p["stress"]
+            m = st["main"]
+            mt = st["materials"]
+            P.append(f"<h4>Thermal stress (ΔT {_fmt(st['dT'])} K, {_fmt(st['T_free'])} → {_fmt(st['T_use'])} °C)</h4>")
+            P.append(_table(["Quantity", "Value"], [
+                ["Substrate, radial tension at the interface, mid-height", f"{_fmt(m['mid']['rr'])} MPa"],
+                ["Substrate top surface, largest principal 1 / 5 / 10 µm from the hole", " / ".join(_fmt(v) for v in m["top_p1"][:4:1][:1] + m["top_p1"][2:4]) + " MPa"],
+                ["Wall von Mises stress, mid-height", f"{_fmt(m['wall_mises_mid'])} MPa"],
+                ["Top of the via against the substrate far away", f"{_fmt(m['top_dz_nm'])} nm"],
+                ["Mid-height against the concentric-cylinder solution", f"{_fmt(100 * st['lame_dev'])} %"]]))
+            rows = []
+            names = {"fill": "this via", "none": "conformal (empty)", "cu": "fully plated"}
+            for k, arr in (st.get("compare") or {}).items():
+                for c in arr:
+                    rows.append([names.get(k, k), _fmt(c["t_um"]), _fmt(c["mid"]["rr"]), _fmt(c["top_p1"][2]), _fmt(c["wall_mises_mid"]),
+                                 _fmt(c["top_dz_nm"])])
+            if rows:
+                P.append(_table(["Via", "Wall [µm]", "Mid-height [MPa]", "Top 5 µm [MPa]", "Wall von Mises [MPa]", "Top Δz [nm]"], rows))
+            P.append(f"<p>Axisymmetric linear elastic finite elements (9-node quadrilaterals) on half the via; wall E "
+                     f"{_fmt(mt['wall']['E_GPa'])} GPa, ν {_fmt(mt['wall']['nu'])}, α {_fmt(mt['wall']['alpha_ppm'])} ppm/K; substrate E "
+                     f"{_fmt(mt['sub']['E_GPa'])} GPa, ν {_fmt(mt['sub']['nu'])}, α {_fmt(mt['sub']['alpha_ppm'])} ppm/K"
+                     + (f"; core E {_fmt(mt['fill']['E_GPa'])} GPa, ν {_fmt(mt['fill']['nu'])}, α {_fmt(mt['fill']['alpha_ppm'])} ppm/K"
+                        if mt.get("fill") else "; empty core") +
+                     ". Not included: plasticity and creep of the copper, debonding, pads and build-up layers.</p>")
     if "viscosity" in props:
         p = props["viscosity"]
         P.append("<h3>Viscosity and flowability of the uncured compound</h3>")
@@ -998,7 +1023,10 @@ def _methods(r):
     if "via" in an:
         out.append("Through via: the fill's conductivity from the electrical solve along z; the internal impedance of "
                    "the plated wall around the fill by its Bessel solution (Schelkunoff 1934), the cross-section's "
-                   "capacitance by the multipole method, the via as a transmission line cascaded in slices.")
+                   "capacitance by the multipole method, the via as a transmission line cascaded in slices."
+                   + (" Thermal stress: axisymmetric linear elastic finite elements (9-node quadrilaterals), the thermal "
+                      "strain as an eigenstrain, checked at mid-height against the concentric-cylinder solution."
+                      if ((spec.get("options") or {}).get("via") or {}).get("stress", {}).get("on") else ""))
     if any((p.get("rc_elec") or 0) > 0 for p in spec.get("phases") or []):
         out.append("Electrical contact resistance on the faces where two particles touch (per area of contact).")
     if (spec.get("rve") or {}).get("arrangement") == "pressed":

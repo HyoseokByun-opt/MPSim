@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.7.0-0b62c4" alt="version 5.7.0">
+  <img src="https://img.shields.io/badge/version-5.8.0-0b62c4" alt="version 5.8.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -107,7 +107,8 @@ The main capabilities are listed below.
   frequency from the Bessel solution of the plated wall around the fill, the characteristic impedance set by the
   return vias around it and the S-parameters of the via as a transmission line up to 40 GHz. The particles of a paste
   can carry an electrical contact resistance on their contacts, fitted to a measured resistivity in the Calibration
-  tab (5.7.0).
+  tab (5.7.0). The thermal stress the via puts into its substrate - a glass core - with the composite as its core, by
+  axisymmetric finite elements checked against FEniCSx; the four layouts of return vias compared (5.8.0).
 - **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
   in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
   packing follows the requested density by Monte-Carlo moves weighted against the crowding of hard spheres, and the
@@ -491,6 +492,48 @@ carries less than 1 % of the current at any content. Not included: the pads, ant
 surface resistance (0.33 % at 40 GHz); the cross-section against two parallel wires exactly; a 3D solve of the via
 itself (120 × 120 × 720 voxels of the plated wall, the paste and the laminate) against the DC model, within 0.04 %.
 
+### The same via in a glass core: its thermal stress
+
+The via in a 1.8 mm glass core (εr 4.8, tan δ 0.007 as used for through-glass vias by J. Liu, J. Zhang, L. Gao, H. Chen,
+*Micromachines* **14** (4), 803 (2023), [doi:10.3390/mi14040803](https://doi.org/10.3390/mi14040803)), the paste on a
+box of 12 particle diameters with its contact resistance calibrated there (8.41×10⁻¹⁵ Ω·m², an upper bound), the wall
+10 µm. With 4 return vias Z0 is 50.6 Ω (S11 −39 dB at 10 GHz); with one beside it 96 Ω (S11 −6.7 dB). Cooled from the
+cure at 150 °C to 25 °C, the copper (E 123.5 GPa, ν 0.350: H. M. Ledbetter, E. R. Naimon, *J. Phys. Chem. Ref. Data*
+**3**, 897 (1974), [doi:10.1063/1.3253150](https://doi.org/10.1063/1.3253150); α 17.0 ppm/K: NIST SRM 736, T. A. Hahn,
+*J. Appl. Phys.* **41**, 5096 (1970), [doi:10.1063/1.1658614](https://doi.org/10.1063/1.1658614)) and the paste (E 12.0
+GPa and α 32.2 ppm/K from the RVE) shrink more than the glass (α 3.8 ppm/K: M. Zhai et al., CLEO/Europe-EQEC 2023,
+[doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702](https://doi.org/10.1109/CLEO/Europe-EQEC57999.2023.10231702); E 73
+GPa, ν 0.22 typical) and pull on it. Axisymmetric finite elements (9-node quadrilaterals, half the via):
+
+<p align="center">
+  <img src="docs/images/via_stress.png" alt="The via's thermal stress in the Result Viewer: the glass's tension against the wall for the paste, an empty and a fully plated via" width="90%">
+</p>
+
+| The glass's largest tension (MPa) | Wall 5 µm | 10 µm | 15 µm | 20 µm | 25 µm |
+|---|---|---|---|---|---|
+| Fully plated, at mid-height | 110 | 110 | 110 | 110 | 110 |
+| Conformal (empty), at mid-height | 23 | 41 | 56 | 69 | 79 |
+| Cu paste 40 vol%, at mid-height | 78 | 84 | 90 | 94 | 98 |
+| Cu 45 + fused silica 20 vol% paste, at mid-height | 72 | 79 | 85 | 91 | 95 |
+| Conformal, top surface 5 µm from the hole | 95 | 101 | 97 | 91 | 84 |
+| Cu paste 40 vol%, top surface 5 µm from the hole | 162 | 139 | 120 | 104 | 91 |
+| Cu 45 + fused silica 20 vol% paste, top surface 5 µm from the hole | 113 | 102 | 92 | 84 | 78 |
+
+The less copper, the less the glass is loaded half way along the via - as the cracks that appear around copper TGVs
+only above a copper thickness (C. Okoro et al., *IEEE Trans. Device Mater. Reliab.* **21**, 354 (2021),
+[doi:10.1109/TDMR.2021.3096931](https://doi.org/10.1109/TDMR.2021.3096931)) and the smaller deformation of conformal
+vias (K. Pan et al., ECTC 2022, 1211, [doi:10.1109/ECTC51906.2022.00194](https://doi.org/10.1109/ECTC51906.2022.00194)).
+The resin-bonded paste, softer than copper but expanding more, does not buffer the glass: in a 5 µm wall it raises
+the stress on the glass's top surface next to the hole by 70 % over an empty via. Fused silica in place of part of the
+resin (E 72 GPa, ν 0.17: S. Spinner, *J. Am. Ceram. Soc.* **45**, 394 (1962),
+[doi:10.1111/j.1151-2916.1962.tb11177.x](https://doi.org/10.1111/j.1151-2916.1962.tb11177.x); α 0.5 ppm/K: T. A. Hahn,
+R. K. Kirby, *AIP Conf. Proc.* **3**, 13 (1972), [doi:10.1063/1.2948551](https://doi.org/10.1063/1.2948551)) brings the
+paste's expansion down from 29.2 to 18.3 ppm/K at Cu 45 vol% and 20 vol% silica, and the glass's top stress to about an
+empty via's.
+Checks: the concentric-cylinder solution at mid-height (0.3 %), the same model in FEniCSx (DOLFINx 0.11, P2
+triangles; 16 values within 0.32 %), a mesh four times finer (0.3 %). Linear elastic: the copper's yield and creep
+would lower these values.
+
 ### A moulded underfill that gels before the mould closes
 
 Silica 5 µm (40 vol%) in epoxy pressed at 1 %/s towards 55 % in a mould at 175 °C while the resin cures. The kinetics
@@ -518,7 +561,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **95 problems with known solutions** (61 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **97 problems with known solutions** (62 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -538,6 +581,7 @@ reference values. A selection:
 | Sobol indices of the Ishigami function | closed form | passed |
 | FANS elasticity against PuMA (corrected) | same discretisation | 3.5e-9 |
 | Dilute rigid sphere in a viscous liquid | Einstein [η] = 2.5 | within 15 % (voxelised sphere) |
+| Thermal stress of a through via (axisymmetric FEM) | concentric cylinders (Lamé); FEniCSx (DOLFINx) | 0.31 %; 16 values within 0.32 % |
 | Particle dynamics, frictionless spheres at 50 vol% | Krieger–Dougherty with random close packing, 11.4 | 12.6 (200 spheres, strain 2) |
 | Particle dynamics of cubes (rigid multi-sphere particles) | dissipated power = shear stress × rate | within 0.1 % |
 | Anisotropic conduction: rotated tensor; tilted anisotropic laminate | exact; laminate formula | 2e-15; 2.6 % at 16 cells per layer (first order) |
@@ -569,6 +613,7 @@ reference values. A selection:
 | A run stopped while it waits at the memory gate | the queue keeps answering (a killed waiter hangs a multiprocessing Event) | passed; the gate is a non-blocking flag |
 | Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
 | Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (without: 61.3 % at the size entered) |
+| Cu spheres that may overlap with SiO₂ spheres that may not (Cu 45 + SiO₂ 10, Cu 40 + SiO₂ 20 vol%) | both loadings reached, Cu overlapping in both routes | 44.82 + 9.96 %, 39.86 + 20.00 % |
 | Progressive overlap in the random placement: log-normal spheroids (c/a 0.5) at 50 vol% whose placement jams 2-3 % short | loading reached without a clump relaxation, with the particles drawn (sizes within three standard errors); overlap counted by drawing every particle again | 49.8-50.0 % in under 1 s with ≤ 2 voxels, 0.2 % shared; 0 shared at 30 vol% |
 | Spheres of different sizes packed largest first: 3 + 0.6 µm at 27 + 18 vol% | loading reached; k of the packing grown at once with ten times the equilibration (within 5 %); no overlap after 200 more two-grid moves | 27.0 + 18.0 vol%, k 1.392 against 1.362; closest pairs at 1.0001 of contact |
 | Particle files: particles.csv and polyhedra.csv redrawn by plain numpy with the README's conventions, eight shapes, bulk and film | the generated structure | identical voxel for voxel |
@@ -781,7 +826,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.7.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.8.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

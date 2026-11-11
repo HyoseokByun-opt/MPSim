@@ -52,6 +52,7 @@ from .solvers import elastic as EL
 from .solvers import fans as FA
 from .solvers import viscosity as VI
 from .solvers import via as VIA
+from .solvers import via_stress as VST
 from . import figworker as FWK
 from .solvers import emi as EMI
 from .solvers import fullwave as FW
@@ -1909,7 +1910,40 @@ def _mu_r_at(curve, gd, fallback):
     return np.exp(np.interp(np.log(np.maximum(np.asarray(gd, float), 1e-12)), lg, lm))
 
 
-def _via_entry(spec, vo, el, checks, log):
+def _via_stress_entry(vo, cte, fig_dir, checks, log):
+    """The via's thermal stress (solvers/via_stress.py, 5.8.0): the wall's thickness, throwing power and sweep of
+    the electrical via; the core this composite (stiffness and expansion of the cte analysis), entered, copper or
+    empty."""
+    so = vo["stress"]
+    lib = M.library_by_id()
+    cu = ((lib.get(vo["wall_material"]) or lib.get("cu") or {}).get("props") or {})
+    wall = (so["wall_E"] or float(cu.get("E") or 120.0),
+            so["wall_nu"] if so["wall_nu"] is not None else float(cu.get("nu") or 0.34),
+            so["wall_alpha"] if so["wall_alpha"] is not None else float(cu.get("alpha") or 16.5))
+    fill = None
+    if so["core"] == "rve":
+        if not cte:
+            raise ValueError("the via's thermal stress with this composite as the core needs the elasticity and CTE analysis")
+        k = cte["constants"]
+        fill = (float(k["E_hill"]), float(k["nu_hill"]), float(cte["alpha_vol"]))
+    elif so["core"] == "value":
+        fill = (so["core_E"], so["core_nu"], so["core_alpha"])
+    elif so["core"] == "cu":
+        fill = wall
+    png = os.path.join(fig_dir, "via_stress_map.png") if fig_dir else None
+    st = VST.analyse(so, 0.5 * vo["hole_d_um"], 1000.0 * vo["length_mm"], vo["plating_um"], vo["throw"], vo["sweep_um"],
+                     fill, wall, log=log, map_png=png)
+    st["core_kind"] = so["core"]
+    dev = st["lame_dev"]
+    checks.append({"id": "via_stress_lame", "group": "Through via",
+                   "label": "Thermal stress: mid-height against the concentric-cylinder solution (Lamé)",
+                   "value": dev, "target": 0.01, "unit": "rel", "status": "pass" if dev <= 0.01 else "warn",
+                   "note": "the substrate's radial stress at the interface, half way along the via, where the via is far "
+                           "from its ends (generalized plane strain)"})
+    return st
+
+
+def _via_entry(spec, vo, el, checks, log, cte=None, fig_dir=None, stress=True):
     """The through via filled with this composite (solvers/via.py, 5.7.0): its fill conducts as the RVE does
     along z (the via's axis), or as the value entered; the wall is the library's (copper) or a value."""
     lib = M.library_by_id()
@@ -1920,6 +1954,20 @@ def _via_entry(spec, vo, el, checks, log):
         d_ = el.get("diag") or [el.get("iso")] * 3
         s_fill = float(d_[2] if d_[2] is not None and np.isfinite(d_[2]) else el.get("iso") or 0.0)
     out = VIA.analyse(vo, max(s_fill, 0.0), s_wall, log=log)
+    # the same via with each layout of return vias (5.8.0): Z0 and the S-parameters set by the layout
+    lays = {}
+    for lay, (txt, pos) in VIA.LAYOUTS.items():
+        w = out if lay == vo["returns"] else VIA.analyse(dict(vo, returns=lay, sweep_um=[]), max(s_fill, 0.0), s_wall,
+                                                         log=lambda *a: None)
+        f_ = np.asarray(w["freq_hz"])
+        s21 = np.asarray(w["S21_dB"])
+        hi = f_ >= 1e9
+        k_min = int(np.argmin(np.where(hi, s21, np.inf)))
+        lays[lay] = {"text": txt, "n_returns": len(pos), "Z0_ohm": w["Z0_lossless_ohm"], "C_pF_m": w["C_pF_m"],
+                     "L_ext_nH_m": w["L_ext_nH_m"], "S21_ref_dB": w["at_ref"]["S21_dB"], "S11_ref_dB": w["at_ref"]["S11_dB"],
+                     "S21_max_dB": float(s21[-1]), "S11_max_dB": float(w["S11_dB"][-1]), "S21_low_dB": float(s21[k_min]),
+                     "f_S21_low_GHz": float(f_[k_min] / 1e9), "L_loop_pH": w["at_ref"]["L_loop_pH"]}
+    out["layouts"] = lays
     res = out["multipole_residual_V"]
     checks.append({"id": "via_cs", "group": "Through via",
                    "label": "Cross-section: the via surfaces at their potentials (multipole solution)",
@@ -1930,6 +1978,14 @@ def _via_entry(spec, vo, el, checks, log):
                        "value": out["fill_share_dc"], "target": 0.01, "unit": "", "status": "warn",
                        "note": "less than 1 % of the current flows through the fill: the wall decides the via's "
                                "resistance (a thicker wall or a fill below its percolation threshold)"})
+    if (vo.get("stress") or {}).get("on") and stress:
+        # (not in the provisional results: the core's stiffness may still be missing, and the FEM is solved once)
+        try:
+            out["stress"] = _via_stress_entry(vo, cte, fig_dir, checks, log)
+        except Exception as e:  # noqa: BLE001
+            log(f"   via thermal stress failed: {e}")
+            checks.append({"id": "via_stress", "group": "Through via", "label": "Thermal stress of the via",
+                           "value": 0, "target": 1, "unit": "", "status": "fail", "note": str(e)})
     return out
 
 
@@ -4130,7 +4186,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 checks.append({"id": "jh_perc", "group": "Joule heating", "label": "A conducting path joins the faces",
                                "value": 0, "target": 1, "unit": "", "status": "fail", "note": jr["error"]})
         if "via" in need and "electrical" in props:
-            props["via"] = _via_entry(spec, opts["via"], props["electrical"], checks, log)
+            props["via"] = _via_entry(spec, opts["via"], props["electrical"], checks, log, cte=props.get("cte"),
+                                      fig_dir=fig_dir, stress=live_box.get("final", False))
         if "viscosity" in need and "viscosity" in results_first:
             props["viscosity"] = _viscosity_entry(spec, opts, table, realisations, results_first,
                                                   samples.get("viscosity") or [], checks)
@@ -4302,6 +4359,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "overlap_limit": ginfo.get("overlap_limit"),
                  "shrunk": ginfo.get("shrunk"),
                  "pack_scale": ginfo.get("pack_scale"),
+                 "overlap_topup": ginfo.get("overlap_topup"),
                  "sheared": ginfo.get("sheared"),
                  "pressed": ({k: v for k, v in ginfo["pressed"].items() if k not in ("frames", "von_mises", "pressure")}
                              if ginfo.get("pressed") else None),
@@ -5196,6 +5254,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         prog.end()
 
     # ---------------------------------------------------------- aggregation
+    live_box["final"] = True
     props, composition, rho, cp = aggregate(results_first, realisations, checks)
 
     # --------------------------------------------------------------- layer
@@ -5247,6 +5306,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         prog.stage("Figures", "PyVista 3D · matplotlib sections", units=1.5)
         figures = default_figures(out_dir, meta, log, done=done_figs)
         prog.end()
+    if ((props.get("via") or {}).get("stress") or {}).get("map_png") and os.path.exists(props["via"]["stress"]["map_png"]):
+        figures["via_stress_map.png"] = "Through via: thermal stress near the top"
     try:
         os.remove(os.path.join(out_dir, "result.partial.json"))
     except OSError:
@@ -5364,6 +5425,19 @@ def headline_numbers(props, comp):
         out.append({"key": "via_S21", "label": f"Through via: S21 at {v_['f_ref'] / 1e9:.3g} GHz",
                     "value": v_["at_ref"]["S21_dB"], "unit": "dB",
                     "sub": f"S11 {v_['at_ref']['S11_dB']:.1f} dB · ports {v_['z_ref']:g} Ω"})
+        if v_.get("stress"):
+            st_ = v_["stress"]
+            m_ = st_["main"]
+            out.append({"key": "via_sg", "label": "Through via: largest tension in the substrate", "value": m_["glass_max"],
+                        "unit": "MPa", "sub": f"ΔT {st_['dT']:g} K · the larger of mid-height and the top surface 5 µm from the hole"})
+            out.append({"key": "via_sg_mid", "label": "Through via: substrate stress at mid-height", "value": m_["mid"]["rr"],
+                        "unit": "MPa", "sub": "radial, at the interface"})
+            out.append({"key": "via_sg_top", "label": "Through via: substrate stress at the top surface",
+                        "value": m_["top_p1"][2], "unit": "MPa", "sub": "largest principal, 5 µm from the hole's edge"})
+            out.append({"key": "via_wall_vm", "label": "Through via: wall von Mises stress", "value": m_["wall_mises_mid"],
+                        "unit": "MPa", "sub": "mid-height, mid-thickness of the wall"})
+            out.append({"key": "via_dz", "label": "Through via: top surface displacement", "value": m_["top_dz_nm"],
+                        "unit": "nm", "sub": "the via's top against the substrate far away (negative: sinks)"})
     if "viscosity" in props:
         out.append({"key": "mu_r", "label": "Relative viscosity μ/μresin", "value": props["viscosity"]["mu_r"], "unit": "-"})
         out.append({"key": "mu_c", "label": f"Compound viscosity at {props['viscosity']['gd_ref']:g} 1/s",

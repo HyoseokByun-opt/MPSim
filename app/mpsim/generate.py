@@ -1759,6 +1759,11 @@ CLUMP_STAGED = False
 CLUMP_STAGED_MC = True
 CLUMP_MC_MOVES = 3.0e7
 CLUMP_MC_SWEEPS_MIN = 200
+# a phase whose particles may overlap, packed by the clump relaxation beside others: packed again at most this
+# many times with the volume drawn corrected until its voxels are 98.5-100.5 % of the loading, each time aimed at
+# CLUMP_OVERLAP_AIM of it (the random placement tops up the rest)
+CLUMP_OVERLAP_PASSES = 4
+CLUMP_OVERLAP_AIM = 0.993
 MAX_COMPRESS_ITER = 1_500
 # a tighter budget for jamming_fraction, which only needs where the packing
 # stops (set and reset around its call; None outside it)
@@ -4059,6 +4064,43 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 f"{phases[i].get('name', i+1)} {100*count[i]/nvox:.2f}/{100*target[i]/nvox:.2f} %"
                 for i in part_idx))
 
+        def topup_overlap():
+            """A phase whose particles may overlap one another, placed beside other phases: where its particles
+            overlap they share voxels, so its voxel fraction comes out short of the target unless more of them
+            are placed (up to 5.7 the random placement stopped after 6 rounds and the clump relaxation drew only
+            the target volume: Cu spheres at 45 vol% beside fused silica gave 43.3 % with 10 vol% of silica and
+            31.9 % with 20). More are placed at random - overlapping only their own phase - until the voxels
+            reach the target or two rounds in a row add less than 0.1 % of it (no room left). Returns {phase:
+            reached fraction} for the phases it topped up."""
+            ov = [i for i in part_idx if phases[i].get("overlap") and count[i] < 0.995 * target[i]]
+            if not ov:
+                return {}
+            log("  " + ", ".join(f"{phases[i].get('name', i + 1)} {100 * count[i] / nvox:.2f} of "
+                                 f"{100 * target[i] / nvox:.2f} vol%" for i in ov)
+                + ": overlapping particles share voxels, so more are placed at random (overlapping only their own "
+                  "phase) until the voxels reach the loading")
+            remaining.clear()
+            for i in ov:
+                remaining[i] = True
+                jammed[i] = False
+            k_up, stall = 0, 0
+            while remaining and k_up < 40 and stall < 2:
+                if should_stop is not None and should_stop():
+                    raise InterruptedError
+                k_up += 1
+                before = {i: int(count[i]) for i in ov}
+                rsa_round(f"overlapping phase, round {k_up}", gap_on=False)
+                gain = max((count[i] - before[i]) / max(target[i], 1) for i in ov)
+                stall = stall + 1 if gain < 1e-3 else 0
+                for i in ov:
+                    if count[i] < 0.995 * target[i] and i not in remaining and stall < 2:
+                        remaining[i] = True                  # a round that placed few is not the end
+                        jammed[i] = False
+            for i in ov:
+                carry.pop(i, None)
+                jammed[i] = count[i] < 0.995 * target[i]
+            return {int(i): float(count[i] / max(target[i], 1)) for i in ov}
+
         while remaining and rounds < 6:
             if should_stop is not None and should_stop():
                 raise InterruptedError
@@ -4113,6 +4155,9 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         short = [i for i in part_idx if not phases[i].get("overlap") and count[i] < 0.995 * target[i]
                  and int(i) not in (info.get("kept_short") or {})]
         if not short:
+            topped = topup_overlap()
+            if topped:
+                info["overlap_topup"] = topped
             for key in parts:
                 parts[key].extend(rsa_parts[key])
             for i, (cP, _) in carry.items():
@@ -4144,8 +4189,11 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             for i in part_idx:
                 ph = phases[i]
                 nom = nominal[i]
-                n = max(1, int(round(ph["vf"] * V / mean_vol[i])))
-                target_v = ph["vf"] * V
+                # a phase whose particles may overlap: drawn to the volume that leaves its voxels at the
+                # loading once they overlap (clump_vf, see the end of this route)
+                vf_draw = float(ph.get("clump_vf") or ph["vf"])
+                n = max(1, int(round(vf_draw * V / mean_vol[i])))
+                target_v = vf_draw * V
                 # as many of the drawn particles as make up the target volume,
                 # then the small remainder by a common factor
                 mono = (ph.get("dist") or {}).get("type") not in ("lognormal", "normal", "table")
@@ -4377,6 +4425,56 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             if conflicts and not ov_k:
                 log(f"  !! {conflicts:,} voxels claimed by two particles (corners the clumps do not cover) "
                     f"were kept by the first particle")
+            # an overlapping phase packed beside others: drawn to the target volume, its particles overlap as
+            # they were drawn (necks, as in the random placement) and the voxels they share leave it short (Cu 40 +
+            # SiO2 20 vol%: Cu 29.4 %). Packing them apart instead reached the loading but changed the structure
+            # with the route (Cu 45 vol% + SiO2: 6.1 MS/m at 10 %, 3.2 MS/m at 15 %). Packed again with the volume
+            # drawn corrected - first as for overlapping spheres, 1 - exp(-v), then by the secant - up to
+            # CLUMP_OVERLAP_PASSES times; the random placement tops up what is left (topup_overlap)
+            if any(phases[i].get("overlap") for i in part_idx):
+                lab_now = np.where(owner > 0, phase_of[np.maximum(owner, 0)], -1)
+                for i in part_idx:
+                    count[i] = int(np.count_nonzero(lab_now == i))
+                del lab_now
+                ov_i = [i for i in part_idx if phases[i].get("overlap")]
+                # aimed a little below the loading, which the random placement then tops up (it only adds)
+                off = [i for i in ov_i if not 0.985 <= count[i] / max(target[i], 1) <= 1.005]
+                passes = len(phases[ov_i[0]].get("clump_hist") or [])
+                if off and passes < CLUMP_OVERLAP_PASSES and not (should_stop and should_stop()):
+                    ph_new = [dict(ph_) for ph_ in phases]
+                    for i in ov_i:
+                        vf_t = float(phases[i]["vf"])
+                        aim = CLUMP_OVERLAP_AIM * vf_t
+                        drawn = float(phases[i].get("clump_vf") or vf_t)
+                        u = count[i] / nvox
+                        hist = list(phases[i].get("clump_hist") or []) + [(drawn, u)]
+                        if len(hist) >= 2 and abs(hist[-1][1] - hist[-2][1]) > 1e-6:
+                            (d0, u0), (d1, u1) = hist[-2], hist[-1]
+                            nxt = d1 + (aim - u1) * (d1 - d0) / (u1 - u0)
+                        else:
+                            kk = -math.log(max(1.0 - u, 1e-9)) / max(drawn, 1e-9)
+                            nxt = -math.log(max(1.0 - aim, 1e-9)) / max(kk, 1e-9)
+                        ph_new[i]["clump_vf"] = float(min(max(nxt, vf_t), 3.0 * vf_t))
+                        ph_new[i]["clump_hist"] = hist
+                        log(f"  {phases[i].get('name', i + 1)}: {100 * u:.2f} of {100 * vf_t:.2f} vol% with "
+                            f"{100 * drawn:.2f} vol% drawn - its particles overlap as they were drawn; packed again "
+                            f"with {100 * ph_new[i]['clump_vf']:.2f} vol% drawn")
+                    lab2, info2 = generate(N, h, ph_new, seed=seed, log=log, should_stop=should_stop,
+                                           contacts=contacts, want_contact_faces=want_contact_faces,
+                                           nz=nz if film else None, skin=skin, shear=shear, dispersion=dispersion,
+                                           gap_vox=gap_vox, overlap_steps=overlap_steps, keep_sizes=keep_sizes)
+                    if lab2 is not None:
+                        info2["seconds"] = time.time() - t0
+                    return lab2, info2
+                if passes:
+                    info["overlap_drawn"] = {int(i): float(phases[i].get("clump_vf") or phases[i]["vf"]) for i in ov_i}
+                rsa_parts = {"codes": [], "P": [], "R": [], "centers": [], "phase": []}
+                carry.clear()
+                topped = topup_overlap()
+                if topped:
+                    info["overlap_topup"] = topped
+                    for key in parts:
+                        parts[key].extend(rsa_parts[key])
     else:
         info["route"] = "random-field network" if any(net_of[:nph]) else "matrix only"
     info["voxel_conflicts"] = int(conflicts)

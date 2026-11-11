@@ -642,6 +642,33 @@ def t_via():
             f"{c * 1e12:.3f} pF/m exact; matched line S11 0, S21 1")
 
 
+@check("Through via thermal stress (axisymmetric FEM): a homogeneous disc free of stress, the concentric-cylinder "
+       "solution at mid-height, and the FEniCSx (DOLFINx) reference")
+def t_via_stress():
+    from mpsim.solvers import via_stress as VS
+    cu, gl = (123500.0, 0.35, 17.0e-6), (73000.0, 0.22, 3.8e-6)
+    # one material everywhere: a uniform temperature change expands it freely - no stress anywhere
+    same = {"wall": gl, "sub": gl, "fill": gl}
+    r0 = VS.solve_case(50.0, 900.0, 10.0, 0.8, 500.0, "fill", same, -125.0)
+    free = max(abs(r0["mid"]["rr"]), abs(r0["mid"]["tt"]), abs(max(r0["top_p1"])), r0["wall_mises_mid"])
+    expect(free < 1e-6, f"homogeneous disc: stress {free:.2e} MPa")
+    # FEniCSx 0.11 (P2 triangles, gmsh, MUMPS) on the same cases, Cu 40 vol% paste E 11.99 GPa, nu 0.279, alpha 32.16 ppm/K:
+    # substrate at mid-height (r = a + 0.05 um), top surface 5 and 10 um from the hole, wall von Mises at mid-height
+    paste = (11992.26, 0.27921, 32.1626e-6)
+    ref = {("cu", 25.0): (109.88, 61.5, 63.7, 166.1), ("none", 10.0): (40.93, 100.8, 85.2, 257.6),
+           ("fill", 10.0): (84.36, 138.9, 116.0, 181.6), ("fill", 5.0): (78.07, 161.6, 126.2, 185.9)}
+    worst, lame = 0.0, 0.0
+    for (core, t), (mid, top5, top10, vm) in ref.items():
+        r = VS.solve_case(50.0, 900.0, t, 0.8, 500.0, core, {"wall": cu, "sub": gl, "fill": paste}, -125.0)
+        corr = (1 + 0.05 / 50.0) ** -2            # FEniCSx read the substrate 0.05 um off the interface (1/r^2)
+        for a_, b_ in ((r["mid"]["rr"] * corr, mid), (r["top_p1"][2], top5), (r["top_p1"][3], top10), (r["wall_mises_mid"], vm)):
+            worst = max(worst, abs(a_ / b_ - 1))
+        lame = max(lame, abs(r["mid"]["rr"] / r["lame_mid_rr"] - 1))
+    expect(worst < 0.005, f"against FEniCSx: worst {100 * worst:.2f} %")
+    expect(lame < 0.005, f"against the concentric cylinders: {100 * lame:.2f} %")
+    return f"homogeneous disc {free:.0e} MPa; Lamé {100 * lame:.2f} %; FEniCSx (4 cases, 16 values) within {100 * worst:.2f} %"
+
+
 @check("Electrical contact resistance: the mean of two phases on their contact faces, exact in series on a contact "
        "plane, and a paste conducts less with it")
 def t_rc_elec():
@@ -2049,6 +2076,34 @@ def t_rsa_overlap():
     expect(info.get("overlap_vox", 0) == 0 and oc["shared"] == 0 and abs(float((lab == 1).mean()) - 0.3) < 0.002,
            f"30 vol%: overlap {info.get('overlap_vox')}, shared {oc['shared']}")
     return "; ".join(out) + f"; sizes placed {100 * err:+.1f} % (3 se {100 * se3:.1f} %), p {ks['p']:.2f}; 30 vol% without overlap"
+
+
+@check("Overlapping and non-overlapping phases together: Cu spheres that may overlap with SiO2 spheres that may not "
+       "reach the Cu loading, overlapping in both routes: in the random placement the voxels Cu spheres share are "
+       "topped up, in the clump relaxation the Cu volume drawn is corrected until its voxels reach the loading", quick=False)
+def t_mixed_overlap():
+    from mpsim import generate as GEN
+    from mpsim import pipeline as PL
+    from mpsim import spec as S
+    out = []
+    for cu, si in ((45, 10), (40, 20)):
+        form = {"name": "m", "matrix": {"material_id": "epoxy"},
+                "phases": [{"material_id": "cu", "name": "Cu", "shape": "sphere", "size": {"d": 6.38, "unit": "um"},
+                            "fraction": {"value": cu, "basis": "vol"}, "overlap": True},
+                           {"material_id": "sio2", "name": "SiO2", "shape": "sphere", "size": {"d": 4.0, "unit": "um"},
+                            "fraction": {"value": si, "basis": "vol"}, "overlap": False}],
+                "rve": {"auto": False, "L_um": 51.2, "voxel_um": 0.4, "quality": "standard", "seed": 1},
+                "analyses": {"electrical": True}, "options": {"directions": "z"}}
+        spec = S.normalize(form)
+        gp = PL._generator_phases(spec)
+        t0 = time.time()
+        lab, info = GEN.generate(128, 0.4, gp, seed=1, log=lambda *a: None, contacts="keep", gap_vox=0.0,
+                                 overlap_steps=PL.overlap_steps(spec["options"]))
+        v_cu, v_si = float((lab == 1).mean()), float((lab == 2).mean())
+        expect(v_cu > 0.98 * cu / 100 and abs(v_si / (si / 100) - 1) < 0.02,
+               f"Cu {cu} + SiO2 {si}: Cu {100 * v_cu:.2f} %, SiO2 {100 * v_si:.2f} %")
+        out.append(f"Cu {cu} + SiO2 {si}: {100 * v_cu:.2f} + {100 * v_si:.2f} vol% ({time.time() - t0:.0f} s)")
+    return "; ".join(out)
 
 
 @check("Progressive overlap: spheres at 66 vol% (above random close packing) reach the loading with an overlap of "
