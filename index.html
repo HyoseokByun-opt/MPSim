@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.8.0",
+  "softwareVersion": "5.9.0",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -161,6 +161,7 @@
       <a href="#how">How it works</a>
       <a href="#analyses">Analyses</a>
       <a href="#example">Example</a>
+      <a href="#fem">FEM</a>
       <a href="#coupled">Coupled</a>
       <a href="#verification">Verification</a>
       <a href="#download">Download</a>
@@ -181,7 +182,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.8.0</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.9.0</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -219,7 +220,7 @@
         underfills, thermal interface materials, conductive adhesives, dielectrics, EMI absorbers, porous ceramics and filters.</p>
       <div class="grid">
         <div class="card"><span class="tag">Conduction</span><h3>Thermal and electrical</h3>
-          <ul><li>Conductivity tensors, interfacial and contact resistance, electrical contact resistance of pastes</li><li>Percolation of conductive fillers</li><li>Through vias filled with a paste: DC resistance, R(f), Z0, S-parameters to 40 GHz, four return-via layouts compared</li><li>Thermal stress of a via in a glass core: axisymmetric finite elements, checked against FEniCSx</li></ul></div>
+          <ul><li>Conductivity tensors, interfacial and contact resistance, electrical contact resistance of pastes</li><li>Finite volume on voxels, or finite elements on a tetrahedral mesh fitted to the particles (the same values as FEniCSx on the same mesh)</li><li>Percolation of conductive fillers</li><li>Through vias filled with a paste: DC resistance, R(f), Z0, S-parameters to 40 GHz, four return-via layouts compared</li><li>Thermal stress of a via in a glass core: axisymmetric finite elements, checked against FEniCSx</li></ul></div>
         <div class="card"><span class="tag">Electromagnetics</span><h3>Dielectric, magnetic, EMI</h3>
           <ul><li>Dk, Df, field enhancement, permeability</li><li>Shielding effectiveness with a full-wave check</li></ul></div>
         <div class="card"><span class="tag">Mechanics</span><h3>Elasticity, CTE and testing</h3>
@@ -233,7 +234,7 @@
         <div class="card"><span class="tag">Porous media</span><h3>Flow, filtration, acoustics</h3>
           <ul><li>Permeability, filtration efficiency, tortuosity</li><li>Acoustic absorption, radiative extinction</li></ul></div>
         <div class="card"><span class="tag">Structure</span><h3>Morphology</h3>
-          <ul><li>Porosity, size distributions, porosimetry</li><li>Pore networks, grain statistics, percolation paths</li></ul></div>
+          <ul><li>Porosity, size distributions, porosimetry</li><li>Pore networks, grain statistics, percolation paths</li><li>Grain analysis: volume-equivalent and circumscribed diameters by number and by volume, every dimension against the input</li></ul></div>
         <div class="card"><span class="tag">Inverse problems</span><h3>Calibration</h3>
           <ul><li>Unknown material values from measured properties, including viscosity</li><li>Credible intervals, identifiability, next measurement</li><li>Every parameter set solved, and the reason when no value reaches a measurement</li></ul></div>
         <div class="card"><span class="tag">Studies</span><h3>DOE and optimisation</h3>
@@ -371,6 +372,31 @@
     </div>
   </section>
 
+  <section id="fem">
+    <div class="wrap">
+      <h2>Finite elements on a mesh fitted to the particles</h2>
+      <p class="sub">A voxel solver sees a particle as the voxels it holds: a staircase surface, and a contact wherever two voxels touch.
+        Since 5.9.0 the conduction-type properties can also be solved by finite elements on a tetrahedral mesh that follows the particles'
+        exact surfaces. The finite volume stays the default.</p>
+      <div class="ex">
+        <h3>The same compound, on voxels and on the fitted mesh</h3>
+        <ul>
+          <li>The lattice of the voxel corners is cut into tetrahedra, and every tetrahedron is cut where it crosses a particle's exact
+            surface; a film of resin between two particles thinner than a voxel is carried as an interface element of its width.</li>
+          <li>Alumina 45 vol% with BN platelets 5 vol% in epoxy: the finite-volume conductivity falls from 4.34 to 3.22 W/m·K over a four
+            times finer grid and is still falling; the FEM moves by 9 % (1.75 → 1.90).</li>
+          <li>A filler five times finer than another needs no finer grid: with the small spheres 3 voxels across the FEM is within 9 % of
+            its value on the finest grid.</li>
+          <li>The same elements as FEniCS, on Windows: on the mesh MPSim writes, FEniCSx (DOLFINx 0.11) gives the same conductivity to
+            twelve digits (1.16977753126), and one sphere per periodic cell converges with the square of the voxel size to Rayleigh's
+            solution.</li>
+        </ul>
+        <figure class="shot plots"><img src="assets/fem_showcase.webp" width="2635" height="918" loading="lazy"
+             alt="Heat flux in a section of an alumina and BN compound on voxels and on the body-fitted tetrahedral mesh, and the conductivity against the grid for both methods"></figure>
+      </div>
+    </div>
+  </section>
+
   <section id="coupled">
     <div class="wrap">
       <h2>Coupled analyses</h2>
@@ -440,11 +466,14 @@
     <div class="wrap">
       <h2>Verification</h2>
       <p class="sub">The engine is verified against problems with known solutions. Every run also reports its own checks (RVE size,
-        resolution, particle count, convergence and rigorous bounds) as passed, warning or failed, together with the reason.</p>
+        resolution, particle count, convergence and rigorous bounds) as passed, warning or failed, together with the reason; a
+        structure that misses its loading is not solved. The particle generator is audited at 40-70 vol% for every shape and
+        size distributions of CV 0.2-0.5 on 256³-400³ grids: every case reaches its loading within 2 %, its mean sizes within
+        2 % of the input (3 % with only 800 particles in the box).</p>
       <div class="stats">
-        <div class="stat"><b>97</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>105</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
-        <div class="stat"><b>55</b><span>ready-to-run presets for semiconductor materials, at least one for every analysis, four compared with published measurements, each with a tutorial in the guide</span></div>
+        <div class="stat"><b>56</b><span>ready-to-run presets for semiconductor materials, at least one for every analysis, four compared with published measurements, each with a tutorial in the guide</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
       </div>
       <h3 style="margin:30px 0 8px">Presets</h3>
@@ -471,6 +500,7 @@
         <li>Glass-core TGV · sintered Cu paste in a 5 µm wall</li><li>DOE · Cu content of the TGV paste with the glass stress</li>
         <li>Calibration · Cu via paste on 12 diameters, two cures</li><li>DOE · RVE size of a Cu paste near percolation</li>
         <li>Glass-core TGV · low-CTE Cu paste with fused silica</li><li>DOE · fused silica in the TGV paste</li>
+        <li>FEM · alumina + BN compound on a tetrahedral mesh fitted to the particles</li>
         <li>Short glass fibres · diameter and length distributed independently</li><li>Alumina flakes · three axes</li>
         <li>Crushed silica · sized by volume-equivalent diameter</li><li>Structure from a TIFF · CT-like stack of an EMC</li>
       </ul>
@@ -521,7 +551,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.8.0},
+  version   = {5.9.0},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
