@@ -823,6 +823,9 @@ def normalize(form):
         # a run with the same geometry reuses the structure an earlier run
         # generated, and more analyses on the same inputs continue that run
         "reuse_runs": bool(opts.get("reuse_runs", True)),
+        # a structure whose particle phases miss their loadings (the volume-fraction check fails) is not solved:
+        # the run stops with what was reached (5.9.0); "continue" solves it as built, as up to 5.8.0
+        "loading_short": "continue" if opts.get("loading_short") == "continue" else "stop",
         # every field also kept on the solver's grid (2 bytes per voxel), so
         # the viewer's sections and voxel volume show its full resolution
         "view_full_fields": bool(opts.get("view_full_fields", True)),
@@ -835,7 +838,8 @@ def normalize(form):
         # with the periodic finite-volume discretisation (default; on voxel grids
         # it came 2-3x closer to converged references than PuMA's finite
         # elements, guide 7.2), "fe" with PuMA's periodic finite elements
-        "cond_method": "fe" if opts.get("cond_method") == "fe" else "fv",
+        # "tet" (5.9.0): linear finite elements on a tetrahedral mesh that follows the particles' exact surfaces
+        "cond_method": opts.get("cond_method") if opts.get("cond_method") in ("fe", "tet") else "fv",
         # elasticity and thermal expansion: "fans" voxel finite elements with an
         # FFT-preconditioned CG (default: PuMA's elements, iterations independent
         # of the grid), "puma" PuMA's own solve (MINRES; its isotropic material

@@ -1384,7 +1384,7 @@ SHRINK_FLOOR = 0.92
 
 def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nfaces, ph_arr, pid0,
                     log=None, max_rounds=160, net_of=None, apart=False, apart_rounds=300, zwall=False,
-                    rotmode=None, shrink=True, names=None, inset=0.0):
+                    rotmode=None, shrink=True, names=None, inset=0.0, gain_stop=0.01):
     """Push and turn particles off the voxels they share until no voxel is
     claimed twice; what pushing cannot clear is cleared by shrinking.
 
@@ -1399,9 +1399,14 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
     caught in each other come free by turning, which pushing alone could not
     do in a dense packing (cubes and flakes at 45 vol% kept 271 shared voxels).
 
-    The pushing goes on past max_rounds while it still makes progress (a new
-    fewest count of shared voxels within the last 40 rounds), up to four times
-    max_rounds - all counted in rounds, not seconds.
+    From max_rounds / 2 on, the pushing stops once 40 rounds have passed
+    without lowering the fewest count of shared voxels by 1 % or more (5.9.0;
+    a new fewest by a few voxels kept it going), at most four times
+    max_rounds - all counted in rounds, not seconds. gain_stop: the gain that
+    counts as progress; a caller that repairs again with an overlap of a voxel
+    allowed (progressive overlap) gives 0.10 and the pushing stops from round
+    40 on (irregular grains at 60 vol%: 513 rounds, 12 min, from 39,100 to
+    8,800 shared voxels; with 1 voxel of overlap the rest went in 11 rounds).
     If voxels are still shared after that, the particles involved shrink
     in steps of 2 % - shape and orientation kept - until none is: particles
     never overlap and are never trimmed (v5.0 and earlier left the shared
@@ -1435,6 +1440,7 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
     touch = -1
     rnd = 0
     last_gain = 0
+    sig = None                       # the fewest shared voxels at the last gain of 1 % or more
 
     # which of two particles gives way when pushing cannot clear a voxel:
     # the clearly smaller one (box volume of its shape, as generated)
@@ -1511,12 +1517,17 @@ def repair_overlaps(owner, phase_of, overlap_of, h, codes, C, Rs, Ps, planes, nf
         else:
             if best is None and (fewest is None or conf < fewest[0]):
                 fewest = (conf, C.copy(), Rs.copy())
-                last_gain = rnd
+                if sig is None or conf < (1.0 - gain_stop) * sig:
+                    # progress is a gain of 1 % or more: a new fewest by a few voxels is noise (irregular grains
+                    # at 61 vol% sat at 96,600-100,300 shared voxels from round 50 to 171)
+                    sig = conf
+                    last_gain = rnd
             if best is not None:
                 stale += 1
                 if stale >= 10 or since_clean >= apart_rounds:
                     break
-            elif rnd >= max_rounds and (rnd - last_gain >= 40 or rnd >= 4 * max_rounds - 1):
+            elif rnd >= (40 if gain_stop >= 0.05 else max_rounds // 2) and (rnd - last_gain >= 40
+                                                                           or rnd >= 4 * max_rounds - 1):
                 break
         if best is not None:
             since_clean += 1
@@ -1732,8 +1743,13 @@ RSA_KEEP_SHORT = 0.03
 # (a cube 2.7, a disc of aspect 0.25 4, of aspect 0.1 10)
 SPARSE_SHAPE = 4.0
 # with progressive overlap the packings stop creeping near the target (clump_pack);
-# below g_min they stop once the size has not grown by `stall` (relative) over the same window
+# below g_min they stop once the size has not grown by `stall` (relative) over the same window.
 CREEP = {"g_min": 0.97, "gain": 0.003, "min_steps": 2000, "frac": 0.25, "stall": 0.001}
+# the clump relaxation of other shapes (5.9.0): above g_min a gain below 0.8 % over max(1000 steps, 15 % of the
+# steps) ends the creep: irregular grains with fibres on 400³ took 41 min from 0.976 to 0.998 of their size, which
+# one voxel of overlap (1.7 % of a 3 µm grain at 0.05 µm) closes in seconds. Spheres keep CREEP (with this one a
+# 5:1 blend grown at once conducted 4 % less than with a full creep)
+CREEP_CLUMP = {"g_min": 0.97, "gain": 0.008, "min_steps": 1000, "frac": 0.15, "stall": 0.001}
 # spheres of very different sizes are packed largest first (pack_by_size): a new class of sizes starts below
 # the largest of the class before it by this factor (None: every sphere grown at once, as up to 5.6.4)
 STAGED_RATIO = 2.5
@@ -1763,6 +1779,12 @@ CLUMP_MC_SWEEPS_MIN = 200
 # many times with the volume drawn corrected until its voxels are 98.5-100.5 % of the loading, each time aimed at
 # CLUMP_OVERLAP_AIM of it (the random placement tops up the rest)
 CLUMP_OVERLAP_PASSES = 4
+# the share of every sub-sphere push in the clump relaxation directed away from the other particle's centre (see
+# _relax_step): 0 up to 5.8.0
+CENTRE_PUSH = 0.25
+# particles thinner than this many voxels lose voxels when drawn: after the clump relaxation (which draws a phase to
+# its target volume) a phase of them that may not overlap is topped up at random to its voxel loading
+THIN_VOX = 4.0
 CLUMP_OVERLAP_AIM = 0.993
 MAX_COMPRESS_ITER = 1_500
 # a tighter budget for jamming_fraction, which only needs where the packing
@@ -2350,6 +2372,8 @@ def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L,
     # some 60 fines in every cell and each fine tested 1,600 candidates a
     # step; for equal spheres both are the same.
     rc = max(rsum / m, 0.25 * rmax)
+    if rc <= 0.0:
+        rc = 0.25 * L                       # no sub-sphere with a radius (see g_lo in clump_pack): a coarse grid
     nc = max(int(L / (2.0 * rc)), 3)
     ncz = max(int(Lz / (2.0 * rc)), 3)
     while nc * nc * ncz > head.shape[0] and (nc > 3 or ncz > 3):
@@ -2448,10 +2472,26 @@ def _relax_step(C, Rm, s, tpl, toff, tcnt, tq, tr, gap, ph, same_ok, rotmode, L,
                                     rel = dl / min(wrad[a], wrad[b])
                                     if rel > worst_i:
                                         worst_i = rel
-                                    # a is pushed away from b
-                                    fx = -0.5 * dl * dx / d
-                                    fy = -0.5 * dl * dy / d
-                                    fz = -0.5 * dl * dz / d
+                                    # a is pushed away from b - and a share CENTRE_PUSH of it away from b's
+                                    # particle centre: two particles lying in each other (a centre inside the
+                                    # other) get sphere pushes from every side that cancel, and they never come
+                                    # apart (6,049 irregular grains at 60 vol% placed at 0.55 of their size: no
+                                    # overlap-free state in 9,000 steps); the centre share always separates them
+                                    ex = C[ib, 0] - C[i, 0]
+                                    ey = C[ib, 1] - C[i, 1]
+                                    ez = C[ib, 2] - C[i, 2]
+                                    ex -= L * math.floor(ex / L + 0.5)
+                                    ey -= L * math.floor(ey / L + 0.5)
+                                    ez -= Lz * math.floor(ez / Lz + 0.5)
+                                    ed = math.sqrt(ex * ex + ey * ey + ez * ez)
+                                    if ed < 1e-12:
+                                        ex = 1.0 if i < ib else -1.0
+                                        ey = 0.0
+                                        ez = 0.0
+                                        ed = 1.0
+                                    fx = -0.5 * dl * ((1.0 - CENTRE_PUSH) * dx / d + CENTRE_PUSH * ex / ed)
+                                    fy = -0.5 * dl * ((1.0 - CENTRE_PUSH) * dy / d + CENTRE_PUSH * ey / ed)
+                                    fz = -0.5 * dl * ((1.0 - CENTRE_PUSH) * dz / d + CENTRE_PUSH * ez / ed)
                                     f0 += fx
                                     f1 += fy
                                     f2 += fz
@@ -3034,6 +3074,16 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
     T = np.zeros((n, 3))
     ncon = np.zeros(n, np.int64)
     g = float(min(max(g0, 0.05), 1.0))
+    # a gap below zero (progressive overlap) shrinks every sub-sphere by half of it: at a small size the smaller
+    # sub-spheres would have no radius left (irregular grains restarted thin at 0.3 of their size with a gap of
+    # -1 voxel: every radius <= 0, a cell size of 0 and a division by zero in the step), so the size stays where
+    # the smallest sub-sphere keeps a fifth of its radius
+    g_lo = 0.0
+    if np.any(gap < 0.0):
+        rsub = np.array([float(np.min(templates[t_][1])) for t_ in range(len(templates))])[tpl] * s
+        neg = gap < 0.0
+        g_lo = float(min(1.0, 1.25 * np.max(-0.5 * gap[neg] / np.maximum(rsub[neg], 1e-300))))
+        g = max(g, g_lo)
     best_g, best = 0.0, (C.copy(), Rm.copy())
     growth = 1.02
     t0 = t_log = time.time()
@@ -3097,7 +3147,7 @@ def clump_pack(L, C, Rm, s, tpl, templates, gap, ph, same_ok, rotmode, circ,
                 growth = min(1.02, 1.0 + 1.15 * (growth - 1.0))
         else:
             stuck += 1
-            g = max(best_g, g / (1.0 + 0.5 * (growth - 1.0)))
+            g = max(best_g, g_lo, g / (1.0 + 0.5 * (growth - 1.0)))
             growth = max(1.001, 1.0 + 0.7 * (growth - 1.0))
         if stuck > 60:
             break
@@ -3432,6 +3482,18 @@ def _generate_kept(N, h, phases, **kw):
     return lab, info
 
 
+def _misses_loading(info, tol=0.05):
+    """Whether a build misses its loading by much: a phase's voxels more than tol (relative) below its target, or
+    particles shrunk to clear overlaps by more than 3 % of their volume on average. A smaller loss is the price of
+    a share entered (spheres at 66 vol% within 2.5 %: 64.53 vol%, kept as before)."""
+    for p in info.get("phases") or []:
+        t = float(p.get("vf_target") or 0.0)
+        if t > 0 and float(p.get("vf_voxel") or 0.0) < (1.0 - tol) * t:
+            return True
+    shr = info.get("shrunk") or {}
+    return bool(shr.get("n")) and float(shr.get("mean", 1.0)) ** 3 < 0.97
+
+
 def _generate_share_limited(N, h, phases, overlap_steps, **kw):
     """Progressive overlap with a largest share: overlap_steps["max_pct"] % of
     the particle voxels may lie in two particles. The structure is built with
@@ -3453,9 +3515,22 @@ def _generate_share_limited(N, h, phases, overlap_steps, **kw):
             + (f" (Auto: {overlap_steps['auto']})" if overlap_steps.get("auto") else "") + " - packed without overlap")
         steps = None
     n_builds = 0
+    # the last build over the share that reached the loading: kept should less overlap miss it (5.9.0; platelets at
+    # 50 vol% reached it with 1.423 % of their voxels in two particles, 1.39 % allowed, and built again without
+    # overlap 3,073 of 3,456 were shrunk to 94 % - 42.95 vol%, every size 5 % small)
+    over = None
     while True:
         lab, info = generate(N, h, phases, overlap_steps=steps, **kw)
         n_builds += 1
+        if over is not None and (lab is None or _misses_loading(info)):
+            lab, info, share_o, k_o = over
+            log(f"  !! with less overlap the loading is missed: the build with an overlap of up to {k_o} voxel"
+                f"{'s' if k_o > 1 else ''} is kept, {share_o:.3f} % of its particle voxels in two particles - above the "
+                f"{lim:g} % allowed (the check reports it)")
+            info["overlap_over_share"] = {"share_pct": share_o, "max_pct": lim, "max_vox": k_o}
+            steps = {"max_vox": k_o}
+            k = k_o
+            break
         if lab is None:
             # (keep_sizes "core") this try fell short of the loading: with less overlap, and without any, the
             # caller packs again with less content (_generate_kept)
@@ -3475,6 +3550,18 @@ def _generate_share_limited(N, h, phases, overlap_steps, **kw):
         if share <= lim:
             log(f"  {share:.3f} % of the particle voxels lie in two particles: within the {lim:g} % allowed")
             break
+        if not _misses_loading(info):
+            over = (lab, info, share, k)
+            s0 = info.get("scale_no_overlap")
+            if k == 1 and s0 is not None and s0 ** 3 < 0.97:
+                # without overlap this packing stopped at s0 of the size: built again without it the particles would
+                # be shrunk by 1 - s0^3 of their volume, more than the loading may lose - the build is kept at once
+                # (a 30 µm box of 11,633 irregular grains: 3 h of packing again to end the same way)
+                log(f"  !! {share:.3f} % of the particle voxels lie in two particles at an overlap of 1 voxel, more than "
+                    f"the {lim:g} % allowed; without overlap the packing stopped at {s0:.3f} of the size ({100 * (1 - s0 ** 3):.1f} % "
+                    f"of the volume short), so this build is kept (the check reports its share)")
+                info["overlap_over_share"] = {"share_pct": share, "max_pct": lim, "max_vox": k, "scale_no_overlap": s0}
+                break
         if k > 1:
             log(f"  !! {share:.3f} % of the particle voxels lie in two particles, more than the {lim:g} % allowed: "
                 f"built again with an overlap of up to {k - 1} voxel{'s' if k > 2 else ''}")
@@ -4064,21 +4151,26 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 f"{phases[i].get('name', i+1)} {100*count[i]/nvox:.2f}/{100*target[i]/nvox:.2f} %"
                 for i in part_idx))
 
-        def topup_overlap():
+        def topup_overlap(thin=()):
             """A phase whose particles may overlap one another, placed beside other phases: where its particles
             overlap they share voxels, so its voxel fraction comes out short of the target unless more of them
             are placed (up to 5.7 the random placement stopped after 6 rounds and the clump relaxation drew only
             the target volume: Cu spheres at 45 vol% beside fused silica gave 43.3 % with 10 vol% of silica and
             31.9 % with 20). More are placed at random - overlapping only their own phase - until the voxels
             reach the target or two rounds in a row add less than 0.1 % of it (no room left). Returns {phase:
-            reached fraction} for the phases it topped up."""
-            ov = [i for i in part_idx if phases[i].get("overlap") and count[i] < 0.995 * target[i]]
+            reached fraction} for the phases it topped up.
+            thin: phases that may not overlap but whose particles are thinner than a few voxels - drawn to the target
+            volume by the clump relaxation, their voxels come out short (cylinders 0.1 µm across on a 0.05 µm grid:
+            0.54 of 0.62 vol%); more of them are placed the same way, in the room the packing left."""
+            ov = [i for i in part_idx if (phases[i].get("overlap") or i in thin) and count[i] < 0.995 * target[i]]
             if not ov:
                 return {}
             log("  " + ", ".join(f"{phases[i].get('name', i + 1)} {100 * count[i] / nvox:.2f} of "
                                  f"{100 * target[i] / nvox:.2f} vol%" for i in ov)
-                + ": overlapping particles share voxels, so more are placed at random (overlapping only their own "
-                  "phase) until the voxels reach the loading")
+                + (": overlapping particles share voxels" if any(phases[i].get("overlap") for i in ov) else "")
+                + (", " if any(phases[i].get("overlap") for i in ov) and any(i in thin for i in ov) else ": ")
+                + ("particles a few voxels thin lose voxels when drawn" if any(i in thin for i in ov) else "")
+                + " - more are placed at random until the voxels reach the loading")
             remaining.clear()
             for i in ov:
                 remaining[i] = True
@@ -4089,7 +4181,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                     raise InterruptedError
                 k_up += 1
                 before = {i: int(count[i]) for i in ov}
-                rsa_round(f"overlapping phase, round {k_up}", gap_on=False)
+                rsa_round(f"top-up, round {k_up}", gap_on=False)
                 gain = max((count[i] - before[i]) / max(target[i], 1) for i in ov)
                 stall = stall + 1 if gain < 1e-3 else 0
                 for i in ov:
@@ -4105,7 +4197,18 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             if should_stop is not None and should_stop():
                 raise InterruptedError
             rounds += 1
+            before_ = {i: int(count[i]) for i in remaining}
             rsa_round(f"round {rounds}")
+            # far short and closing little of it: the clump relaxation packs it (irregular grains at 60 vol%: rounds
+            # 3-6 added 1.2 % of the 17 % missing, a minute each on 256³)
+            far = [i for i in before_ if count[i] < (1.0 - RSA_OVERLAP_SHORT) * target[i]]
+            if (rounds >= 2 and far and len(far) == len([i for i in remaining if i in before_])
+                    and all(count[i] - before_[i] < 0.1 * (target[i] - count[i]) for i in far)):
+                log("  the random placement closes less than a tenth of what is missing per round: jammed")
+                for i in far:
+                    jammed[i] = True
+                remaining.clear()
+                break
         short = [i for i in part_idx if not phases[i].get("overlap") and count[i] < 0.995 * target[i]]
         if short and overlap_steps and all(count[i] >= (1.0 - RSA_OVERLAP_SHORT) * target[i] for i in short):
             # progressive overlap in the random placement: the placement fell
@@ -4196,7 +4299,14 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 target_v = vf_draw * V
                 # as many of the drawn particles as make up the target volume,
                 # then the small remainder by a common factor
-                mono = (ph.get("dist") or {}).get("type") not in ("lognormal", "normal", "table")
+                # every particle of the same volume: the count from the mean volume (as before). A phase whose size
+                # has no distribution but another dimension has (a fibre's length), or irregular grains of several
+                # shapes, has particles of different volumes: drawn to the volume as a distributed phase is - with the
+                # count from a mean volume of 400 draws, the common factor that met the target scaled every dimension
+                # (fibres of length CV 0.5: every diameter 1.6 % small, 1.0 µm entered)
+                mono = ((ph.get("dist") or {}).get("type") not in ("lognormal", "normal", "table")
+                        and not varied_proportions(ph)
+                        and not (nom["code"] == 6 and len(nom.get("poly_ids") or ()) > 1))
                 Ps, Rs, s = _draw(ph, nom, n if mono else 2 * n + 16, rng, poly_meta)
                 v = np.array([SH.volume(nom["code"], P, poly_meta) for P in Ps])
                 while not mono and v.sum() < target_v:
@@ -4281,7 +4391,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 staged = pack_clumps_by_size(float(L), C, Rs, s, tpl, templates, gap, ph_arr,
                                              overlap_of.astype(np.int64), rotm, circ, T if film else None, Lz_pack,
                                              Wt, rng, log=log, should_stop=should_stop,
-                                             creep=CREEP if overlap_steps else None)
+                                             creep=CREEP_CLUMP if overlap_steps else None)
             if staged is not None and staged[2] >= 1.0:
                 C, Rs, scale = staged
             else:
@@ -4289,7 +4399,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                           Rs if staged is None else staged[1], s, tpl, templates, gap, ph_arr,
                                           overlap_of.astype(np.int64), rotm, circ, log=log, should_stop=should_stop,
                                           Lz=Lz_pack, Wt=Wt, g0=0.55 if staged is None else 0.999 * staged[2],
-                                          recover=True, creep=CREEP if overlap_steps else None)
+                                          recover=True, creep=CREEP_CLUMP if overlap_steps else None)
             if staged is not None and CLUMP_STAGED_MC:
                 # packed by size: the smaller particles brought to the larger ones by Monte-Carlo moves, as the
                 # spheres' equilibration does (left where they were drawn, they kept a layer of matrix around
@@ -4308,12 +4418,16 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 C, Rs, scale = clump_pack(float(L), C, Rs, s, tpl, templates, gap_user, ph_arr,
                                           overlap_of.astype(np.int64), rotm, circ, log=log,
                                           should_stop=should_stop, Lz=Lz_pack, Wt=Wt, recover=True,
-                                          creep=CREEP if overlap_steps else None)
+                                          g0=0.999 * scale, thin_start=False,
+                                          creep=CREEP_CLUMP if overlap_steps else None)
             if scale < 1.0 and overlap_steps:
                 # progressive overlap: the clump spheres' gap k voxels below
                 # the gap asked for (never below half the smallest sphere of
                 # a clump), so that two particles may overlap by up to k voxels
                 C0_, Rs0_, sc0 = C.copy(), Rs.copy(), scale
+                # the size the packing reached without overlap: a build without it would end there (see
+                # _generate_share_limited)
+                info["scale_no_overlap"] = float(scale)
                 rmin = np.array([float(np.min(templates[t_][1])) for t_ in tpl]) * s
 
                 def pack_k(k, t):
@@ -4331,7 +4445,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                     c_, r_, s_ = clump_pack(float(L), np.ascontiguousarray(c0, float), np.ascontiguousarray(r0), s, tpl,
                                             templates, g_k, ph_arr, overlap_of.astype(np.int64), rotm, circ, log=log,
                                             should_stop=should_stop, Lz=Lz_pack, Wt=Wt, recover=True, g0=g,
-                                            creep=CREEP)
+                                            thin_start=False, creep=CREEP_CLUMP)
                     return (c_, r_), float(s_)
 
                 st_, sc_, k_ = escalate_overlap(pack_k, scale, overlap_steps, log=log, should_stop=should_stop)
@@ -4383,7 +4497,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 owner, conflicts, rounds, touch, shr = repair_overlaps(
                     owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces, ph_arr, pid, log=log,
                     net_of=net_of, apart=contacts == "apart", zwall=film, rotmode=rotm,
-                    names=names_, shrink=not overlap_steps)
+                    names=names_, shrink=not overlap_steps, gain_stop=0.10 if overlap_steps else 0.01)
                 log(f"  exact-shape overlap repair (push and turn): {rounds} round(s), {conflicts:,} shared voxels "
                     f"left" + (f", {touch:,} touching voxel pairs" if touch >= 0 else ""))
                 if overlap_steps and conflicts:
@@ -4401,7 +4515,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                         owner, conflicts, rounds, touch, shr = repair_overlaps(
                             owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces, ph_arr, pid,
                             log=log, net_of=net_of, apart=False, zwall=film, rotmode=rotm, names=names_,
-                            shrink=k == kmax, inset=0.5 * k * h)
+                            shrink=k == kmax, inset=0.5 * k * h, gain_stop=0.10 if k < kmax else 0.01)
                         log(f"  overlap up to {k} voxel{'s' if k > 1 else ''}: {rounds} round(s), {conflicts:,} shared "
                             f"voxels left")
                         if conflicts == 0:
@@ -4431,15 +4545,20 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             # with the route (Cu 45 vol% + SiO2: 6.1 MS/m at 10 %, 3.2 MS/m at 15 %). Packed again with the volume
             # drawn corrected - first as for overlapping spheres, 1 - exp(-v), then by the secant - up to
             # CLUMP_OVERLAP_PASSES times; the random placement tops up what is left (topup_overlap)
-            if any(phases[i].get("overlap") for i in part_idx):
-                lab_now = np.where(owner > 0, phase_of[np.maximum(owner, 0)], -1)
-                for i in part_idx:
-                    count[i] = int(np.count_nonzero(lab_now == i))
-                del lab_now
+            lab_now = np.where(owner > 0, phase_of[np.maximum(owner, 0)], -1)
+            for i in part_idx:
+                count[i] = int(np.count_nonzero(lab_now == i))
+            del lab_now
+            # phases that may not overlap, whose particles are under THIN_VOX voxels across, short of the loading
+            thin = [i for i in part_idx if not phases[i].get("overlap") and nominal[i] is not None
+                    and count[i] < 0.99 * target[i]
+                    and 2.0 * float(np.min(SH.local_half_extents(nominal[i]["code"], nominal[i]["P"], planes, nfaces)))
+                    < THIN_VOX * h]
+            if any(phases[i].get("overlap") for i in part_idx) or thin:
                 ov_i = [i for i in part_idx if phases[i].get("overlap")]
                 # aimed a little below the loading, which the random placement then tops up (it only adds)
                 off = [i for i in ov_i if not 0.985 <= count[i] / max(target[i], 1) <= 1.005]
-                passes = len(phases[ov_i[0]].get("clump_hist") or [])
+                passes = len(phases[ov_i[0]].get("clump_hist") or []) if ov_i else 0
                 if off and passes < CLUMP_OVERLAP_PASSES and not (should_stop and should_stop()):
                     ph_new = [dict(ph_) for ph_ in phases]
                     for i in ov_i:
@@ -4470,7 +4589,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                     info["overlap_drawn"] = {int(i): float(phases[i].get("clump_vf") or phases[i]["vf"]) for i in ov_i}
                 rsa_parts = {"codes": [], "P": [], "R": [], "centers": [], "phase": []}
                 carry.clear()
-                topped = topup_overlap()
+                topped = topup_overlap(thin)
                 if topped:
                     info["overlap_topup"] = topped
                     for key in parts:

@@ -83,8 +83,11 @@ def analyse(spec, info, labels, table, h_um, want_structure_tensor=True, log=Non
         psi = math.pi ** (1.0 / 3.0) * (6.0 * V) ** (2.0 / 3.0) / A
         ar = np.array([SH.aspect(int(c), P, meta) for c, P in zip(codes, Ps)])
         entry.update({
+            "phase": int(i),
             "number_density_per_mm3": n / (vol_box * 1e-9),
             "eq_diameter_um": {"number": _quantiles(eqd), "volume": _quantiles(eqd, V)},
+            # both diameters of the particles as built, by number and by volume (as the realised sizes give them)
+            "diameters": {"circumscribed": size_stats(2.0 * a, V), "volume_equivalent": size_stats(eqd, V)},
             "sphericity": float(np.mean(psi)),
             "aspect_ratio": float(np.mean(ar)),
             "specific_surface_true_1pm": float(A.sum() / vol_box * 1e6),
@@ -177,6 +180,12 @@ def _ks(xr, xi):
     xr, xi = np.asarray(xr, float), np.asarray(xi, float)
     if len(xr) < 2 or np.ptp(xi) <= 1e-12 * max(abs(float(xi.mean())), 1e-300):
         return {"D": 0.0, "p": 1.0}
+    # both on a grid of 0.1 % of the median: a size that takes a few values only (irregular grains of one size
+    # and 8 shapes - 8 volume-equivalent diameters) came out 0.004 % above the input's from the factor that meets
+    # the target volume, every step of the cumulative distribution just beside the input's, and the test read
+    # it as p 4e-68
+    q = 1e-3 * max(float(np.median(np.abs(xi))), 1e-300)
+    xr, xi = np.round(xr / q) * q, np.round(xi / q) * q
     from scipy.stats import ks_2samp
     r = ks_2samp(xr, xi)
     return {"D": float(r.statistic), "p": float(r.pvalue)}
@@ -259,12 +268,14 @@ def _hist(x, w, edges):
     return pn, pv, np.cumsum(pn), np.cumsum(pv)
 
 
-def size_report(spec_phases, gen_phases, ginfo, n_input=20000):
+def size_report(spec_phases, gen_phases, ginfo, n_input=100000):
     """The sizes the structure holds against those its input draws, per particle phase and per dimension
     (shapes.DIMENSIONS and the volume-equivalent diameter): size_stats of both and their number and volume
     shares in common bins (log bins for lengths, linear for ratios). The input is sampled as the generator
     samples it (shapes.draw_sample, with the structure's own polyhedron shapes), so the two compare the same
-    quantity. 'basis' names the dimension the entered size is (d, or eqd for a volume-equivalent size)."""
+    quantity. 'basis' names the dimension the entered size is (d, or eqd for a volume-equivalent size).
+    100,000 input draws (5.9.0; 20,000 up to 5.8.0): the 20,000 of the fixed seed put the mean of log-normal
+    irregular grains 0.29 % above the distribution's, and every structure read 0.4 % small against them."""
     parts = ginfo.get("particles") or {}
     if not len(parts.get("codes", [])):
         return {}
@@ -479,8 +490,11 @@ def analyse_image(spec, info, labels, table, h_um, log=None):
         eqd = (6.0 * V / math.pi) ** (1.0 / 3.0)
         faces = sum(int(np.count_nonzero(mask != np.roll(mask, -1, axis=ax))) for ax in range(3))
         entry.update({
+            "phase": int(i),
             "number_density_per_mm3": n / (vol_box * 1e-9),
             "eq_diameter_um": {"number": _quantiles(eqd), "volume": _quantiles(eqd, V)},
+            # both diameters of the particles as built, by number and by volume (as the realised sizes give them)
+            "diameters": {"circumscribed": size_stats(2.0 * a, V), "volume_equivalent": size_stats(eqd, V)},
             "specific_surface_voxel_1pm": faces * h_um * h_um / vol_box * 1e6,
             "single_voxel_regions": int(np.count_nonzero(nv == 1)),
             "voxel": {"volume_fraction": float(mask.mean()), "clusters": {"n_clusters": int(n)},

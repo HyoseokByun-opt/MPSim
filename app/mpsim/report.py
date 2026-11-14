@@ -343,7 +343,8 @@ def write(out_dir, r):
         rows.append(["<b>isotropic mean</b>", f"<b>{_fmt(p['iso'])}</b>", "", _fmt(p.get("fv_iso"))])
         xc_fe = p.get("xc_method") == "fe"
         meth = ((p.get("stats") or [{}])[0] or {}).get("method")
-        prim = {"fe": "PuMA FE", "fv": "PuMA FV", "fv-film": "Film FV"}.get(meth, "Periodic FV")
+        prim = {"fe": "PuMA FE", "fv": "PuMA FV", "fv-film": "Film FV", "tet-fe": "Body-fitted tetrahedral FE",
+                "tet-fe-plates": "Body-fitted tetrahedral FE"}.get(meth, "Periodic FV")
         other = "PuMA periodic FE" if xc_fe else "Independent periodic FV"
         P.append(_table(["Component", prim, "95 % CI", other], rows))
         if p.get("fv_iso"):
@@ -774,6 +775,32 @@ def write(out_dir, r):
                          str(gph["voxel"]["clusters"]["n_clusters"])])
         P.append("<h3>Grain and filler analysis</h3>" + _table(["Phase", "Particles", "Number density (1/mm³)", "D50 number / volume (µm)", "Sphericity",
                                                                "Aspect ratio", "Hermans x / y / z", "Nearest neighbour (µm)", "Clark–Evans index", "Clusters"], rows))
+        drows = []
+        for gph in p["phases"].values():
+            for key, lab_ in (("volume_equivalent", "Volume-equivalent diameter"), ("circumscribed", "Circumscribed diameter")):
+                st = (gph.get("diameters") or {}).get(key)
+                if not st or not st.get("count"):
+                    continue
+                drows.append([e(gph["name"]), lab_, _fmt(st["number_mean"]), _fmt(st["std"]), _fmt(st["cv"]),
+                              _fmt([st["d10"], st["d50"], st["d90"]]), _fmt(st["volume_mean"]),
+                              _fmt([st["d10v"], st["d50v"], st["d90v"]])])
+        if drows:
+            P.append("<p>Diameters of the particles as built, by number and by volume (µm):</p>" + _table(
+                ["Phase", "Diameter", "Mean", "Std", "CV", "D10 / D50 / D90", "Mean by volume", "D10 / D50 / D90 by volume"], drows))
+        srows = []
+        for se in (p.get("sizes") or {}).values():
+            for dd in se.get("dimensions") or []:
+                si, sr, ks = dd.get("input") or {}, dd.get("real") or {}, dd.get("ks") or {}
+                if not si:
+                    continue
+                srows.append([e(se.get("name", "")), e(dd.get("label", dd.get("key", ""))), _fmt(si.get("number_mean")),
+                              _fmt(sr.get("number_mean")), _fmt([si.get("d50"), sr.get("d50")]), _fmt([si.get("d50v"), sr.get("d50v")]),
+                              _fmt(ks.get("p"))])
+        if srows:
+            P.append("<p>Sizes realised against the input (the input sampled as the generator samples it; p of the two-sample "
+                     "Kolmogorov–Smirnov test below 0.01: unlikely to be a sample of the input):</p>" + _table(
+                         ["Phase", "Dimension", "Mean, input", "Mean, realised", "D50 input / realised", "D50 by volume input / realised",
+                          "KS p"], srows))
         ml = p.get("matrix_ligament")
         if ml:
             P.append(f"<p>Matrix ligament thickness between particles (local thickness of the matrix): D10 {_fmt(ml['d10_um'])} µm, "
@@ -993,6 +1020,13 @@ def _methods(r):
             m = "NASA PuMA finite volumes (the two faces normal to the gradient held at fixed potentials)"
         elif o.get("cond_method") == "fe" and be != "builtin":
             m = "NASA PuMA periodic Q1 finite elements (MINRES on all cores, relative-residual stop)"
+        elif o.get("cond_method") == "tet":
+            m = ("linear finite elements on a tetrahedral mesh fitted to the particles (conformal decomposition of the "
+                 "lattice of the voxel corners at the particles' exact surfaces; a film of matrix between two particles "
+                 "thinner than a voxel as an interface element of its width), conjugate gradients with "
+                 "smoothed-aggregation algebraic multigrid (PyAMG); properties with interface or contact resistances, "
+                 "anisotropic fillers, coated particles, networks or images are solved by the built-in periodic "
+                 "finite volume")
         else:
             m = ("the built-in periodic finite volume: one value per voxel, harmonic-mean face conductances - PuMA's "
                  "finite-volume operator with periodic instead of fixed faces - solved by conjugate gradients "

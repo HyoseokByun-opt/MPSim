@@ -3453,6 +3453,68 @@
      }
     ]
    }
+  },
+  {
+   "id": "fem_tim_alumina_bn",
+   "name": "FEM · alumina + BN compound on a tetrahedral mesh fitted to the particles",
+   "description": "The conduction solved by finite elements on a tetrahedral mesh fitted to the particles (Simulation → Solver settings → Conduction → Finite elements on a tetrahedral mesh fitted to the particles), with the finite volume on the voxels beside it ('Also solve with the other method'). Alumina spheres (4 µm, log-normal) 45 vol% with BN platelets (3 × 3 × 0.6 µm) 5 vol% in epoxy, 16 µm RVE, 64³ voxels of 0.25 µm; thermal conductivity and permittivity along z (k 30 / 60 / 0.2 W/m·K, library values). Result (about 1 min): the mesh holds 2.89 million tetrahedra; 7,522 lattice edges run from one particle straight into another through a film of resin thinner than a voxel (median 0.11 µm), carried as interface elements. k_z 2.49 W/m·K by the FEM against 4.13 W/m·K by the finite volume; ε_r 6.02 against 6.00. The two differ where the contrast is high and the particles are close: on the voxels two particles conduct into each other wherever two of their voxels touch, on the fitted mesh they are the exact shapes with the resin films between them. Another structure of this recipe drawn on finer and finer grids (guide 7.2): the finite volume 4.34 → 3.22 W/m·K from 32³ to 128³ and still falling, the FEM 1.75 → 1.90. The permittivity, of low contrast, agrees within 1 %. Which value fits a material depends on its contacts: fillers wetted by the resin are nearer the FEM, fillers pressed or sintered into each other nearer the finite volume (or the finite volume with a contact resistance calibrated on a measurement). Method: conformal decomposition finite elements (D. R. Noble, E. P. Newren, J. B. Lechman, Int. J. Numer. Meth. Fluids 63 (2010) 725, doi:10.1002/fld.2095); films as thin-gap conduction (G. K. Batchelor, R. W. O'Brien, Proc. R. Soc. Lond. A 355 (1977) 313, doi:10.1098/rspa.1977.0100); the same values as FEniCSx on the same mesh (self-test).",
+   "form": {
+    "name": "TIM · alumina + BN on a tetrahedral mesh (FEM)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Alumina 4 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 1.0
+      },
+      "fraction": {
+       "value": 45,
+       "basis": "vol"
+      }
+     },
+     {
+      "material_id": "hbn",
+      "name": "BN platelets",
+      "shape": "cuboid",
+      "size": {
+       "d": 3.0,
+       "ly": 3.0,
+       "lz": 0.6,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 5,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 16,
+     "voxel_um": 0.25,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "thermal": true,
+     "dielectric": true
+    },
+    "options": {
+     "directions": "z",
+     "cond_method": "tet",
+     "crosscheck": true
+    }
+   }
   }
  ]
 }

@@ -655,6 +655,9 @@ def post_checks(plan_, gen_info, quality="standard"):
                         if ol.get("without_overlap") else
                         f"; built again {int(ol.get('n_builds') or 1) - 1} time(s) with less overlap to keep within it"
                         if int(ol.get("n_builds") or 1) > 1 else ""))
+        if gen_info.get("overlap_over_share"):
+            note += ("; with less overlap the loading was missed (particles shrunk or left out), so the build above the "
+                     "share is kept: the content entered, with this much overlap")
         checks.append({"id": "overlap", "group": "Generated structure",
                        "label": "Voxel overlap check: voxels in two particles (every particle drawn again)",
                        "value": rel, "target": lim, "unit": "rel", "status": status, "note": note})

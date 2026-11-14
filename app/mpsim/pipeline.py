@@ -48,6 +48,7 @@ from . import mechtest as MT
 from . import visual as V
 from .solvers import complex_cond as CC
 from .solvers import conduction as CD
+from .solvers import tetfem as TF
 from .solvers import elastic as EL
 from .solvers import fans as FA
 from .solvers import viscosity as VI
@@ -245,7 +246,12 @@ def _generator_phases(spec):
 #    then shrank nearly every particle (alumina + BN at 55 vol% reached 31.5)
 # 5: thick ribbons pack as two layers of spheres; the exact-shape repair grows
 #    the particles it shrank back where they fit (v5.2.1)
-STRUCTURE_VERSION = 5
+# 6: the generator audit of 5.9.0: the clump relaxation pushes particles apart from their centres too (irregular
+#    grains at 60 vol% had locked and fallen back to 40 %), a phase of unequal volumes is drawn to its volume (a
+#    fibre's fixed diameter came out 1.6 % small), overlapping and thin phases are topped up, a build with less
+#    overlap that misses the loading is not taken, and the creep and repair hand over to the overlap steps sooner:
+#    no structure of 5.8.0 or before is reused
+STRUCTURE_VERSION = 6
 
 
 def overlap_steps(opts):
@@ -292,6 +298,9 @@ def kept_share_ok(ginfo, labels, h, gen_phases, film, opts):
         except Exception:                                            # noqa: BLE001
             return True, None
     share = 100.0 * float(oc.get("of_particles") or 0.0)
+    if ginfo.get("overlap_over_share") and o is not None:
+        # kept above the share because less overlap missed the loading (5.9.0): a new build would end the same way
+        return True, share
     if o is None:
         return share <= 0.0 or not ginfo.get("overlap_vox"), share
     kl = ginfo.get("overlap_limit") or {}
@@ -2476,7 +2485,9 @@ def cond_backend(spec, backend):
     if spec["rve"].get("film"):
         # PuMA's finite elements are periodic in all three directions; a film
         # needs insulated faces in-plane and plates through the thickness,
-        # which the finite-volume solver carries
+        # which the finite-volume solver and the tetrahedral elements carry
+        if spec["options"].get("cond_method") == "tet":
+            return "tet" + ("+fv" if spec["options"].get("crosscheck") else "")
         return "fv"
     return _cond_backend(spec, backend)
 
@@ -2491,7 +2502,10 @@ def _cond_backend(spec, backend):
     faces. Each problem is solved once; options.crosscheck adds a second solve
     with the other discretisation ("+fe" or "+fv") and reports the difference."""
     o = spec["options"]
-    if backend == "puma":
+    if o.get("cond_method") == "tet":
+        # linear elements on the body-fitted tetrahedral mesh (solvers/tetfem.py), whatever the backend
+        prim = "tet"
+    elif backend == "puma":
         prim = "fe" if o.get("cond_method") == "fe" else "fv"
     elif backend == "puma_fv":
         prim = "puma_fv"
@@ -2503,7 +2517,9 @@ def _cond_backend(spec, backend):
 
 
 def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should_stop,
-                viewer, first, rpair=None, cmask=None, rcpair=None, pre=None, aniso=None):
+                viewer, first, rpair=None, cmask=None, rcpair=None, pre=None, aniso=None, geo=None):
+    """geo: {"ginfo", "gen_phases", "N", "nz", "table"} - what the body-fitted tetrahedral mesh is made of
+    (options.cond_method = "tet"); its "mesh" is built once and kept there for the other properties."""
     info = COND[key]
     iface = rpair is not None or rcpair is not None
     backend = cond_backend(spec, backend)
@@ -2518,6 +2534,16 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
             f"face resistances")
         backend = "fv"
     primary, _, check = backend.partition("+")
+    tet_sys = {}
+    if primary == "tet":
+        why = "the structure's particles are not at hand" if geo is None else TF.supported(spec, geo["ginfo"], geo["table"])
+        if why:
+            log(f"    {info['title']}: the tetrahedral mesh cannot be made ({why}) -> built-in periodic finite volume")
+            primary, check = "fv", ""
+        elif geo.get("mesh") is None:
+            mat_of = {t["phase"]: li for li, t in enumerate(geo["table"]) if t["kind"] == "core"}
+            geo["mesh"] = TF.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"],
+                                        [mat_of.get(i, 0) for i in range(len(geo["gen_phases"]))], nz=geo.get("nz"), log=log)
     dirs = spec["options"]["directions"]
     cap = spec["options"]["contrast_cap"]
     tol = spec["options"]["tol"]
@@ -2530,7 +2556,8 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
         di = "xyz".index(d)
         v_used, policy = CD.contrast_policy(labels, vals, di, cap, cache, film=bool(spec["rve"].get("film")))
         policies[d] = policy
-        how = {"fv": "periodic FV", "fe": "PuMA periodic FE", "puma_fv": "PuMA FV"}[primary]
+        how = {"fv": "periodic FV", "fe": "PuMA periodic FE", "puma_fv": "PuMA FV",
+               "tet": "body-fitted tetrahedral FE"}[primary]
         if check:
             how += " + " + {"fv": "FV", "fe": "PuMA FE"}[check] + " check"
         prog.stage(f"{info['title']} · {d} direction", f"{how} · contrast policy {policy}",
@@ -2565,15 +2592,34 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
             else:
                 def cb_d(it, res, d=d):
                     cb(d, it, res, tol, None)
-                if first and _LIVE["dir"]:
+                if first and _LIVE["dir"] and primary != "tet":
                     cb_d.snapshot = LV.cond_snapshot(LV.Slot(_LIVE["dir"], f"{key}_{d}", f"{COND[key]['title']} {d}"),
                                                      di, bool(spec["rve"].get("film")), LV.LABEL.get(key, "Potential"))
-                r = CD.solve_direction(labels, v_used, di, tol=tol, rpair=rpair, cmask=cmask, rcpair=rcpair,
-                                       callback=cb_d,
-                                       should_stop=should_stop, flux_h=(h_um * 1e-6) if first else None,
-                                       film=bool(spec["rve"].get("film")), aniso=aniso)
-                r["method"] = ("fv-film" if spec["rve"].get("film") else "fv-anisotropic" if aniso is not None
-                               else ("fv-interface" if iface else "fv-periodic"))
+                if primary == "tet":
+                    # the same mesh for every property and direction; the matrix once per set of values
+                    kv = tuple(np.asarray(v_used, float).tolist())
+                    if kv not in tet_sys:
+                        tet_sys.clear()
+                        tet_sys[kv] = TF.assemble(geo["mesh"], v_used)
+                    r = TF.conductivity(geo["mesh"], v_used, di, tol=tol, callback=cb_d, should_stop=should_stop,
+                                        fields=bool(first), system=tet_sys[kv], flux_h=h_um * 1e-6)
+                    if check == "fv":
+                        try:
+                            xc = CD.solve_direction(labels, v_used, di, tol=tol, should_stop=should_stop,
+                                                    film=bool(spec["rve"].get("film")))
+                            r["crosscheck"], r["crosscheck_method"] = xc["k_eff"], "fv"
+                            del xc
+                        except InterruptedError:
+                            raise
+                        except Exception as e:                       # noqa: BLE001
+                            log(f"    (the cross-check FV solve failed: {e})")
+                else:
+                    r = CD.solve_direction(labels, v_used, di, tol=tol, rpair=rpair, cmask=cmask, rcpair=rcpair,
+                                           callback=cb_d,
+                                           should_stop=should_stop, flux_h=(h_um * 1e-6) if first else None,
+                                           film=bool(spec["rve"].get("film")), aniso=aniso)
+                    r["method"] = ("fv-film" if spec["rve"].get("film") else "fv-anisotropic" if aniso is not None
+                                   else ("fv-interface" if iface else "fv-periodic"))
                 if check == "fe":
                     # PuMA's periodic finite elements on the same RVE, as the check
                     try:
@@ -2613,8 +2659,15 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
                 field_stats = st_f
         del pot, flux, r
         prog.end()
-    return {"tensor": T, "energy": energy, "stats": stats, "policies": policies,
-            "percolation": cache.get("wraps"), "field_stats": field_stats}
+    out = {"tensor": T, "energy": energy, "stats": stats, "policies": policies,
+           "percolation": cache.get("wraps"), "field_stats": field_stats}
+    if primary == "tet":
+        m = geo["mesh"]
+        out["tet_mesh"] = {k: (float(m[k]) if isinstance(m[k], float) else int(m[k])) for k in
+                           ("n_nodes", "n_cut", "n_film_edges", "n_film_tets", "n_clamped", "film_gap_um", "seconds")}
+        out["tet_mesh"]["n_tets"] = int(len(m["tets"]))
+        out["tet_mesh"]["n_vertices"] = int(len(m["points"]))
+    return out
 
 
 def _grid(N, nz=None):
@@ -2696,7 +2749,8 @@ def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_rati
         t0 = time.time()
         if ("res:" + key, d) in pre:
             kf = pre[("res:" + key, d)]["k_eff"]
-        elif primary == "fv" or rpair is not None:
+        elif primary in ("fv", "tet") or rpair is not None:
+            # (the tetrahedral elements: the voxel solve on the finer grid stands beside them as a second opinion)
             kf = CD.solve_direction(labels_f, v_used, di, tol=spec["options"]["tol"], rpair=rpair,
                                     should_stop=should_stop, film=film)["k_eff"]
         else:
@@ -2873,6 +2927,8 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
                 rcpair = electrical_contacts(spec, h)
         an = aniso if key == "thermal" else None
         be = "fv" if (rpair is not None or rcpair is not None or an is not None) else cond_backend(spec, backend)
+        if be.partition("+")[0] == "tet":
+            continue          # the tetrahedral mesh is built once in the run's own process (AMG uses its cores)
         film_run = bool(spec["rve"].get("film"))
         cache = {}
         for d in dirs:
@@ -3816,6 +3872,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                      "field_stats": f0.get("field_stats") or {}}
             if f0.get("resolution"):
                 entry["resolution"] = f0["resolution"]
+            if f0.get("tet_mesh"):
+                entry["tet_mesh"] = f0["tet_mesh"]           # the body-fitted mesh the values were solved on
             fv_by = {s["direction"]: s.get("crosscheck") for s in f0["stats"]}
             fv_diag = [fv_by.get(d) for d in "xyz"]
             fv_fin = [v for v in fv_diag if v]
@@ -4360,6 +4418,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "shrunk": ginfo.get("shrunk"),
                  "pack_scale": ginfo.get("pack_scale"),
                  "overlap_topup": ginfo.get("overlap_topup"),
+                 "overlap_over_share": ginfo.get("overlap_over_share"),
                  "sheared": ginfo.get("sheared"),
                  "pressed": ({k: v for k, v in ginfo["pressed"].items() if k not in ("frames", "von_mises", "pressure")}
                              if ginfo.get("pressed") else None),
@@ -4430,6 +4489,28 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         res_r = {}
 
         live("structure")
+        if first and opts.get("loading_short", "stop") == "stop":
+            # a particle phase far from its loading (the volume-fraction check fails) is not solved: up to 5.8.0
+            # the run went on (irregular grains asked at 61.38 vol% were solved at the 40.6 % the random
+            # placement had reached, with a failed check in the list)
+            short_ = [c for c in checks if str(c.get("id", "")).startswith("vf_") and c.get("status") == "fail"]
+            if short_:
+                why = "; ".join(f"{c['label'].split(':')[0]}: {c.get('note', '')}" for c in short_)
+                # the run ends here: its helper processes (figures, solves) with it
+                try:
+                    if live_box["fw"]:
+                        live_box["fw"].close()
+                    if pool_box.get("pool") is not None:
+                        pool_box.pop("pool").close()
+                except Exception:                                    # noqa: BLE001
+                    pass
+                raise RuntimeError(
+                    f"The structure misses the loading entered ({why}), beyond the tolerance of the quality level, so "
+                    f"it is not solved. The structure is kept in the run folder (structure.tif, particles.csv) for a "
+                    f"look. What reaches the loading: progressive overlap with a larger share (Structure - Gap between "
+                    f"particles), a broader size distribution, a finer voxel for particles a few voxels thin, or a "
+                    f"lower loading. Simulation - options - 'A structure that misses its loading: is solved as built' solves "
+                    f"it as it is.")
 
         # ---- pore space: total, open and closed -------------------------
         void_mask = np.isin(labels, void_labels) if void_labels else None
@@ -4485,6 +4566,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                      aniso=aniso_th)
 
         # ---- conduction-type properties ----------------------------------
+        tet_geo = ({"ginfo": ginfo, "gen_phases": gen_phases, "N": N, "nz": Nz, "table": table}
+                   if spec["options"].get("cond_method") == "tet" else None)
         for key in COND:
             if key not in need:
                 continue
@@ -4499,7 +4582,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             out = _cond_solve(key, labels, vals, spec, h, backend, prog, log, event, should_stop,
                               viewer if first else None, first, rpair=rpair,
                               cmask=contact_mask if rcpair is not None else None, rcpair=rcpair, pre=pre_cond,
-                              aniso=aniso_th if key == "thermal" else None)
+                              aniso=aniso_th if key == "thermal" else None, geo=tet_geo)
             res_r[key] = out
             samples.setdefault(key, []).append(np.diag(out["tensor"]))
             if first:

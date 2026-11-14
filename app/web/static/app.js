@@ -107,6 +107,7 @@
     if (["thermal", "electrical", "dielectric", "magnetic", "emi", "moisture"].some((k) => an.has(k))) {
       if (r.backend === "puma_fv") { out.push("conduction NASA PuMA FV"); puma = true; }
       else if (o.cond_method === "fe" && r.backend !== "builtin") { out.push("conduction NASA PuMA FE"); puma = true; }
+      else if (o.cond_method === "tet") out.push("conduction body-fitted tetrahedral FE");
       else out.push("conduction built-in periodic FV");
     }
     if (["cte", "mechtest"].some((k) => an.has(k))) {
@@ -331,7 +332,7 @@
       rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, realisations: { mode: "fixed", target_pct: 2, n_min: 3, n_max: 20 }, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, press_cure: false, press_mold_C: 175, press_control: "rate", press_stress_Pa: 100, press_part_mm: 1, press_time_s: 600, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
-        directions: "z", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: false, reuse_runs: true, backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
+        directions: "z", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", crosscheck: false, resolution_check: false, reuse_runs: true, loading_short: "stop", backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
         emi: { thickness_mm: 1, f_min_hz: 1e6, f_max_hz: 1e10, method: "complex", n_freq: 10, fullwave: true },
         acoustics: { thickness_mm: 20, f_min_hz: 100, f_max_hz: 10000 },
         radiation: { temperature_K: 1000, refractive_index: 1, sources: 200, rays: 500 },
@@ -1042,6 +1043,7 @@
         ${!isNet && !ph.overlap ? `<div><label class="f">Minimum gap <span class="u">× d</span></label><input type="number" step="0.01" data-k="phases.${i}.gap_frac" data-num></div>` : ""}
         ${["spheroid", "cylinder", "cuboid", "superellipsoid"].includes(ph.shape) && !vd ? `<div><label class="f">Stacked platelets <span class="u">layers</span></label><input type="number" min="1" max="100" step="1" data-k="phases.${i}.stack_layers" data-num placeholder="1"></div>` : ""}
       </div>
+      ${ph.shape === "polyhedron" && ph.size_basis !== "volume" ? `<div class="hint">d is the circumscribed diameter: ${(ph.size || {}).poly === "irregular" ? "irregular grains fill 12–25 % of their circumscribed sphere, so their volume-equivalent diameter is about 0.5–0.6 d (d 3 µm: about 1.65 µm)" : "a polyhedron's volume-equivalent diameter is below d (an octahedron 0.68 d, an icosahedron 0.85 d)"}. A powder size from laser diffraction or image analysis is a volume-equivalent diameter: choose "Volume-equivalent diameter" above for it. Grain analysis and the realised sizes report both.</div>` : ""}
       ${!isNet && ph.shape !== "sphere" && ph.size_basis === "volume" ? `<div class="hint">d is the diameter of the sphere of the same volume (as laser diffraction and image analysis report a size): every particle drawn is scaled to the volume of its drawn size, the dimensions without a distribution of their own following d. Grain analysis reports both this size and the shape's own d.</div>` : ""}
       ${!isNet ? distBlock(ph, i, un) + dimDistBlock(ph, i, un) + (ph.shape !== "sphere" || ((ph.dist || {}).type || "mono") !== "mono" ? `<div data-live="dimexp" data-i="${i}">${dimExpHtml(i)}</div>` : "") : ""}
       ${["spheroid", "cylinder", "cuboid", "superellipsoid"].includes(ph.shape) && !vd && (+ph.stack_layers || 1) > 1 ? `<div class="hint">Each particle is a stack of ${+ph.stack_layers} platelets bonded face to face along its own z axis (its thickness: edge c of a box, the axis of a spheroid or disc). Through the thickness the thermal solve puts the ${+ph.stack_layers} layers and ${+ph.stack_layers - 1} plate–plate contacts R<sub>c</sub> in series; in the plane the platelets conduct side by side.</div>` : ""}
@@ -1792,13 +1794,16 @@
         <label class="f">Load directions</label><div class="row">${["z", "x", "y"].map((d) => `<label class="chk inline"><input type="checkbox" data-dir="${d}" ${dirs.includes(d) ? "checked" : ""}> ${d}${d === "z" ? " (through-thickness)" : ""}</label>`).join("")}</div>
         <div class="hint">z only by default: one solve per property. x and y add the in-plane values and the anisotropy; z is solved first, and its fields, arrows and field lines are the ones kept for the 3D and 2D views. EMI uses an in-plane direction (x when only z is set), the direction of the field in a shielding layer.</div>
         <label class="f">Solvers</label><select data-k="options.backend"><option value="puma">Built-in periodic FV and FANS, NASA PuMA for flow and diffusion (default)</option><option value="puma_fv">Conduction with NASA PuMA's FV (fixed end faces, comparison)</option><option value="builtin">Built-in solvers only (without NASA PuMA)</option></select>
-        ${o.backend === "puma" || !o.backend ? `<label class="f">Conduction (k, σ, Dk, μ<sub>r</sub>)</label><select data-k="options.cond_method"><option value="fv">Periodic finite volume (default, more accurate)</option><option value="fe">PuMA periodic finite elements</option></select>
+        ${o.backend === "puma" || !o.backend ? `<label class="f">Conduction (k, σ, Dk, μ<sub>r</sub>)</label><select data-k="options.cond_method"><option value="fv">Periodic finite volume on the voxels (default, fastest)</option><option value="tet">Finite elements on a tetrahedral mesh fitted to the particles (FEM)</option><option value="fe">PuMA periodic finite elements on the voxels</option></select>
+        ${o.cond_method === "tet" ? `<div class="hint"><b>Body-fitted tetrahedral FEM.</b> The lattice of the voxel corners is cut into tetrahedra and every tetrahedron is cut where it crosses a particle's exact surface, so that the interfaces are the particles' own (no voxel staircase); a film of matrix between two particles thinner than a voxel is carried as an interface element of its width. Linear elements, AMG-preconditioned conjugate gradients; on the same mesh FEniCSx gives the same values. It converges with the square of the voxel size where the finite volume converges with the voxel size - a sphere 5 voxels across is as accurate as one of 20 voxels on the finite volume - and takes about 50 times longer per solve and about 3 GB at 128³. Interface and contact resistances, anisotropic fillers, coated particles, networks, images and compressed structures stay with the finite volume (the run says so).</div>` : ""}
         <label class="chk"><span class="switch"><input type="checkbox" data-k="options.crosscheck"><span></span></span> Also solve with the other method and compare</label>
         <div class="hint">Each problem is solved once. On voxel grids the finite-volume result came 2–3× closer to converged reference values than the finite-element one, which conducts through voxels that touch only at an edge or corner (guide 7.2). The comparison doubles the conduction time and shows the discretisation error. Flow uses PuMA's finite elements.</div>` : ""}
         <label class="f">Elasticity and CTE</label><select data-k="options.elastic_method"><option value="fans">Voxel FE, FFT-preconditioned (FANS, default)</option><option value="puma">NASA PuMA FE (MINRES)</option><option value="fft">FFT, Moulinec–Suquet</option></select>
         <div class="hint">FANS solves the same voxel finite elements as PuMA (identical results) with conjugate gradients preconditioned by the exact inverse of a homogeneous reference medium. Its iteration count does not grow with the grid (about 60 for 10<sup>-6</sup>), where PuMA's MINRES needs more iterations the larger the grid.</div>
         <label class="chk"><span class="switch"><input type="checkbox" data-k="options.resolution_check"><span></span></span> Resolution check: solve again on a 1.5× finer grid</label>
         <div class="hint">Off by default. When ticked, the same particles are drawn on a 1.5× finer grid and the conduction-type properties solved once more in the first direction (about 3.4× the cells); the result shows the change and a value extrapolated to fine voxels. Worth ticking when particles touch: a contact's area is set by the voxel size.</div>
+        <label class="f">A structure that misses its loading</label><select data-k="options.loading_short"><option value="stop">Is not solved: the run stops (default)</option><option value="continue">Is solved as built</option></select>
+        <div class="hint">When a particle phase's voxels miss the loading entered by more than three times the tolerance of the quality level (Standard: 6 %), the volume-fraction check fails. By default the run then stops before any solve and says what was reached; the structure stays in the run folder. Up to 5.8.0 such a structure was solved with the failed check in the list.</div>
         <label class="chk"><span class="switch"><input type="checkbox" data-k="options.reuse_runs"><span></span></span> Reuse the structure of a matching run</label>
         <div class="hint">A run keeps the structure it generated. Another run with the same geometry, grid and seed uses it instead of generating it again, and when nothing but the choice of analyses differs it continues that run: the analyses already there are kept and only the new ones are computed.</div>
         <label class="f">Independent solves</label><select data-k="options.parallel_solves"><option value="auto">Side by side on the run's cores (default)</option><option value="off">One after another</option></select>
@@ -2904,7 +2909,8 @@
       <div class="box" style="grid-column:1/-1"><div class="bt">Bounds and mean-field models</div><div class="hint">A value outside the rigorous bounds indicates an analysis error; distance from the models reflects the microstructure.</div>${refsChart(p)}</div>
       ${pol.length ? `<div class="box"><div class="bt">Directional value n·K·n</div>${canvas(id + "_p", 300)}</div>` : ""}
       ${d0 ? `<div class="box"><div class="bt">Energy share by region (${d0} gradient)</div>${canvas(id + "_e", 24 * labels.length + 16)}${statsTbl ? `<div class="bt" style="margin-top:10px">Field statistics by region</div>${statsTbl}` : ""}</div>` : ""}
-      <div class="box" style="grid-column:1/-1"><div class="bt">Solver record</div>${tbl(["Direction", "Method", "Contrast policy", "Iterations", "Residual / target", "Converged", "Time", "Cross-check"], p.stats.map((s) => [s.direction, ({ fe: "PuMA periodic FE", fv: "PuMA FV (fixed faces)", "fv-periodic": "Periodic FV", "fv-interface": "Periodic FV + interface resistances", "fv-film": "Film FV (plates in z, insulated sides)" })[s.method] || "Periodic FV", s.policy, s.iterations ?? "—", `${fmt(s.residual)} / ${fmt(s.target)}`, s.converged === null || s.converged === undefined ? "—" : s.converged ? pill("pass") : pill("fail"), `${fmt(s.seconds)} s`, s.crosscheck ? `${fmt(s.crosscheck)} (${s.crosscheck_method === "fe" ? "PuMA FE" : "FV"})` : "—"]))}</div></div>`;
+      <div class="box" style="grid-column:1/-1"><div class="bt">Solver record</div>${tbl(["Direction", "Method", "Contrast policy", "Iterations", "Residual / target", "Converged", "Time", "Cross-check"], p.stats.map((s) => [s.direction, ({ fe: "PuMA periodic FE", fv: "PuMA FV (fixed faces)", "fv-periodic": "Periodic FV", "fv-interface": "Periodic FV + interface resistances", "fv-film": "Film FV (plates in z, insulated sides)", "tet-fe": "Body-fitted tetrahedral FE (periodic)", "tet-fe-plates": "Body-fitted tetrahedral FE (plates in z)" })[s.method] || "Periodic FV", s.policy, s.iterations ?? "—", `${fmt(s.residual)} / ${fmt(s.target)}`, s.converged === null || s.converged === undefined ? "—" : s.converged ? pill("pass") : pill("fail"), `${fmt(s.seconds)} s`, s.crosscheck ? `${fmt(s.crosscheck)} (${s.crosscheck_method === "fe" ? "PuMA FE" : "FV"})` : "—"]))}
+        ${p.tet_mesh ? `<p class="hint">Body-fitted tetrahedral mesh: ${p.tet_mesh.n_tets.toLocaleString()} tetrahedra on ${p.tet_mesh.n_vertices.toLocaleString()} vertices; ${p.tet_mesh.n_cut.toLocaleString()} lattice edges cut at the particles' exact surfaces. ${p.tet_mesh.n_film_edges.toLocaleString()} of them run from one particle straight into another through a film of matrix thinner than a voxel (median ${fmt(p.tet_mesh.film_gap_um)} µm), carried as interface elements of the film's width - where the voxel solvers see two touching voxels and a contact. A cross-check with the finite volume therefore differs most where particles are close and the contrast is high.</p>` : ""}</div></div>`;
   }
   function secEmi(p) {
     const v = p.validity;
@@ -3542,7 +3548,7 @@
         <select style="width:auto" data-szw="${pi}">${opt("number", "By number", v.w)}${opt("volume", "By volume", v.w)}</select>
         <select style="width:auto" data-szcum="${pi}">${opt("bin", "Per bin", v.cum ? "cum" : "bin")}${opt("cum", "Cumulative", v.cum ? "cum" : "bin")}</select></div>
       ${canvas("szc_" + pi, 240)}
-      <p class="hint">Bars: the particles the structure holds; line: the distribution entered, sampled as the generator samples it (20,000 particles), in the same bins - after its cut at the bounds or at ±2σ, so that its standard deviation is up to about 12 % below the one entered. The two-sample (Kolmogorov–Smirnov) test compares the cumulative number distributions: D is their largest gap, and a p below 0.01 (⚠) says the particles are unlikely to be a sample of the input - with few particles (a small box) the largest may be missing and the realised spread is narrower.</p></div>`;
+      <p class="hint">Bars: the particles the structure holds; line: the distribution entered, sampled as the generator samples it (100,000 particles), in the same bins - after its cut at the bounds or at ±2σ, so that its standard deviation is up to about 12 % below the one entered. The two-sample (Kolmogorov–Smirnov) test compares the cumulative number distributions: D is their largest gap, and a p below 0.01 (⚠) says the particles are unlikely to be a sample of the input - with few particles (a small box) the largest may be missing and the realised spread is narrower.</p></div>`;
   }
   function drawSize(pi, e) {
     const v = state.szView[pi], d = (e.dimensions || []).find((x) => x.key === v.dim), cv = $("#szc_" + pi);
@@ -3552,6 +3558,15 @@
       xlabel: d.label + (d.unit === "um" ? " (µm)" : ""), ylabel: `${w === "volume" ? "Volume" : "Number"} %${v.cum ? ", cumulative" : " per bin"}`,
       labels: [e.regions ? `Connected regions (${e.n_particles})` : `Realised (${e.n_particles} particles)`, d.input ? "Input" : ""] });
   }
+  // both diameters of the particles as built, by number and by volume (5.9.0)
+  function diamTable(D) {
+    if (!D) return "";
+    const rows = [["volume_equivalent", "Volume-equivalent"], ["circumscribed", "Circumscribed"]].filter(([k]) => D[k] && D[k].count).map(([k, lab]) => {
+      const s = D[k];
+      return [lab, `${fmt(s.number_mean)} (${fmt(s.cv)})`, `${fmt(s.d10)} / ${fmt(s.d50)} / ${fmt(s.d90)}`, fmt(s.volume_mean), `${fmt(s.d10v)} / ${fmt(s.d50v)} / ${fmt(s.d90v)}`];
+    });
+    return rows.length ? `<div class="bt" style="margin-top:6px">Diameters (µm) <span class="hint">by number: mean (CV), D10 / D50 / D90; by volume: mean, D10 / D50 / D90</span></div>${tbl(["Diameter", "Mean (CV)", "D10 / D50 / D90", "Mean, vol.", "D10 / D50 / D90, vol."], rows)}` : "";
+  }
   function secGrains(g, sizes) {
     if (g.error) return `<div class="box"><div class="errs">${esc(g.error)}</div></div>`;
     let h = `<div class="rgrid">`;
@@ -3560,7 +3575,8 @@
       if (!p.n_particles) return;
       const hs = p.size_histogram;
       // the sizes against the input replace the histogram where they exist (5.6.6)
-      const se = Object.entries(sz).find(([, e]) => e.name === p.name);
+      // by the phase's number (two phases may carry one name); by name for results before 5.9.0
+      const se = Object.entries(sz).find(([k, e]) => (p.phase !== undefined ? String(p.phase) === k : e.name === p.name));
       if (g.image) {
         // an image: every phase's connected regions (joined across the periodic faces)
         h += `<div class="box"><div class="bt">${esc(p.name)} <span class="hint">connected regions of the image</span></div>
@@ -3573,11 +3589,12 @@
       }
       if (hs && !se) draws.push(() => CH.hist($("#gr_" + li), { x: hs.center_um, y: hs.number, xlabel: "Equivalent diameter (µm)", ylabel: "Fraction", label: "Number-weighted", line: { y: hs.volume, label: "Volume-weighted", color: "#e36209" } }));
       const T = p.orientation_tensor, Ti = p.orientation_tensor_image;
-      h += `<div class="box"><div class="bt">${esc(p.name)} <span class="hint">${esc(p.shape)}</span></div>
-        ${kv([["Particles in the RVE", String(p.n_particles)], ["Number density", withUnit(p.number_density_per_mm3, "1/mm³")], ["D10 / D50 / D90 (number)", `${fmt(p.eq_diameter_um.number.d10)} / ${fmt(p.eq_diameter_um.number.d50)} / ${fmt(p.eq_diameter_um.number.d90)} µm`],
-          ["D50 (volume)", withUnit(p.eq_diameter_um.volume.d50, "µm")], ["Sphericity (Wadell) / aspect ratio", `${fmt(p.sphericity)} / ${fmt(p.aspect_ratio)}`], p.hermans ? ["Hermans order parameter x / y / z", `${fmt(p.hermans.x)} / ${fmt(p.hermans.y)} / ${fmt(p.hermans.z)}`] : null,
+      h += `<div class="box" style="grid-column:1/-1"><div class="bt">${esc(p.name)} <span class="hint">${esc(p.shape)}</span></div>
+        ${kv([["Particles in the RVE", String(p.n_particles)], ["Number density", withUnit(p.number_density_per_mm3, "1/mm³")], p.diameters ? null : ["D10 / D50 / D90 (number)", `${fmt(p.eq_diameter_um.number.d10)} / ${fmt(p.eq_diameter_um.number.d50)} / ${fmt(p.eq_diameter_um.number.d90)} µm`],
+          p.diameters ? null : ["D50 (volume)", withUnit(p.eq_diameter_um.volume.d50, "µm")], ["Sphericity (Wadell) / aspect ratio", `${fmt(p.sphericity)} / ${fmt(p.aspect_ratio)}`], p.hermans ? ["Hermans order parameter x / y / z", `${fmt(p.hermans.x)} / ${fmt(p.hermans.y)} / ${fmt(p.hermans.z)}`] : null,
           p.nearest_neighbour_um ? ["Nearest-neighbour distance (CV)", `${fmt(p.nearest_neighbour_um.mean)} µm (${fmt(p.nearest_neighbour_um.cv)})`] : null, p.surface_gap_um ? ["Mean / minimum surface gap", `${fmt(p.surface_gap_um.mean)} / ${fmt(p.surface_gap_um.min)} µm`] : null,
           ["Clark–Evans index (1 = random, > 1 regular)", fmt(p.clark_evans_index)], ["Clusters / particles per cluster", `${p.voxel.clusters.n_clusters} / ${fmt(p.voxel.particles_per_cluster)}`], ["Percolating x / y / z", ["x", "y", "z"].map((a) => (p.voxel.percolates[a] ? "●" : "○")).join(" ")]])}
+        ${diamTable(p.diameters)}
         ${T ? `<div class="bt" style="margin-top:6px">Orientation tensor ⟨u u⟩ <span class="hint">particle list</span></div>${tbl(["", "x", "y", "z"], ["x", "y", "z"].map((a, i) => [a, ...T[i].map(fmt)]))}` : ""}
         ${Ti ? `<div class="bt" style="margin-top:6px">Orientation tensor <span class="hint">PuMA structure tensor of the voxel image</span></div>${tbl(["", "x", "y", "z"], ["x", "y", "z"].map((a, i) => [a, ...Ti[i].map(fmt)]))}` : ""}
         ${hs && !se ? canvas("gr_" + li, 220) : ""}</div>`;

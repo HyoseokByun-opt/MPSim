@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.8.0-0b62c4" alt="version 5.8.0">
+  <img src="https://img.shields.io/badge/version-5.9.0-0b62c4" alt="version 5.9.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-95%20checks-2da44e" alt="95 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-105%20checks-2da44e" alt="105 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -72,7 +72,12 @@ The main capabilities are listed below.
   Where no overlap is allowed, or not enough, the particles keep the sizes entered and the structure is packed again
   with less content (5.6.7; up to 5.6.6 every particle was drawn smaller - 3 µm alumina with few fines at 62 vol% in a
   10 µm film came out 3.6 % small), and a DOE whose factor is a particle size shows the size each case holds beside
-  the content.
+  the content. A structure that misses its loading by more than the tolerance of its quality level is not solved
+  (5.9.0): the run stops and says what was reached. The generator was audited at 40-70 vol% for every shape, size
+  distributions of CV 0.2-0.5 and blends on 256³-400³ grids (5.9.0): irregular grains at 60 vol% that had locked in
+  the dense packing and fallen back to 40 % reach 59.5 %, platelets that a share of overlap had sent to 43 % reach
+  49.3 % at their sizes, and every case reaches its loading within 2 %, its mean sizes within 2 % of the input (3 % with
+  only 800 particles in the box).
   Every structure sets the sizes it holds against the input, dimension by dimension (means, D10/D50/D90 by number and
   by volume, a two-sample test, a check), while the run goes on; up to 5.6.5 the random placement of non-spherical
   particles dropped the smallest of every round (a log-normal CV of 0.34 came out as 0.15-0.20, the number mean 9-50 %
@@ -119,6 +124,10 @@ The main capabilities are listed below.
   to solve can be replaced by small ones solved again with new arrangements until the 95 % interval of every mean is
   within a target (a statistical RVE after the same paper), and the random seed is a DOE factor.
 - **Thin films.** Periodic in x and y, with the real film thickness in z and every particle inside the film.
+- **Finite elements on a mesh fitted to the particles (5.9.0).** The conduction-type properties can be solved on a
+  tetrahedral mesh that follows the particles' exact surfaces instead of the voxels - no staircase, and a film of matrix
+  between two particles thinner than a voxel carried at its width - with linear elements that give FEniCSx's values to
+  twelve digits on the same mesh. Second order in the voxel size; the grid of the coarse filler is enough for a fine one.
 - **Conduction.** Thermal, electrical, dielectric and magnetic conduction with a periodic finite-volume solver
   (multi-core, FFT-preconditioned; its operator is NASA PuMA's finite-volume operator, with periodic instead of fixed
   faces) and, alternatively, the finite elements of NASA PuMA. Interfacial thermal resistance
@@ -189,7 +198,7 @@ of the user guide describes the workspace in detail; chapter 33 is a tutorial fo
 
 | Group | Analysis | Solver | Main results |
 |---|---|---|---|
-| Conduction | Thermal conductivity | Periodic FV (default), NASA PuMA FE | k tensor, directional k(n), diffusivity, area-specific resistance, bounds and mean-field models |
+| Conduction | Thermal conductivity | Periodic FV (default), body-fitted tetrahedral FE, NASA PuMA FE | k tensor, directional k(n), diffusivity, area-specific resistance, bounds and mean-field models |
 | | Electrical conductivity | same | σ tensor, resistivity, sheet resistance, percolation |
 | Electromagnetics | Permittivity and loss | same | Dk tensor, Df, local field enhancement per region |
 | | Magnetic permeability | same | μr tensor |
@@ -380,8 +389,7 @@ spheres the other. *Domain → Particle arrangement → After compression* short
 y held (a closed mould), on 60³ voxels in four steps of the three-dimensional resin flow (7 minutes on 18 threads).
 
 <p align="center">
-  <img src="docs/images/compression_box.png" alt="The compressed box in 3D: resin A with flattened pores, resin B with the silica spheres" width="46%">
-  <img src="docs/images/compression_vm.png" alt="von Mises stress in the resins at the end of the compression" width="50%">
+  <img src="docs/images/compression_vm.png" alt="von Mises stress in the resins at the end of the compression: resin A with its closing pores at the back, resin B with the silica spheres (grey) in front" width="62%">
 </p>
 
 | Region | Share of the box | Strain z | Strain x | Strain y | von Mises in the resin |
@@ -394,6 +402,63 @@ y held (a closed mould), on 60³ voxels in four steps of the three-dimensional r
   2.1 %. The spheres move with their resin; none ends surrounded by resin A.
 - The stress concentrates in the resin films between the spheres and around the closing pores; the axial stress rises
   from 66 to 147 Pa as the pores flatten. The compressed box conducts 0.331 W/m·K through z.
+
+## Application example: fine particles and close contacts, on a mesh fitted to the particles
+
+A voxel solver sees a particle as the voxels whose centres it holds: its surface is a staircase, and two particles
+conduct into each other wherever two of their voxels touch. *Simulation → Solver settings → Conduction → Finite elements
+on a tetrahedral mesh fitted to the particles (FEM)* solves the thermal and electrical conductivity, the permittivity
+and the permeability on a tetrahedral mesh that follows the particles' exact surfaces instead: the lattice of the voxel
+corners is cut into tetrahedra, every tetrahedron is cut where it crosses a particle (bisection on the exact shape), and a
+film of matrix between two particles that is thinner than a voxel is carried as an interface element of its width
+(conformal decomposition finite elements: D. R. Noble, E. P. Newren, J. B. Lechman, *Int. J. Numer. Meth. Fluids* **63**,
+725 (2010), [doi:10.1002/fld.2095](https://doi.org/10.1002/fld.2095); thin-gap conduction: G. K. Batchelor, R. W. O'Brien,
+*Proc. R. Soc. Lond. A* **355**, 313 (1977), [doi:10.1098/rspa.1977.0100](https://doi.org/10.1098/rspa.1977.0100)). Linear
+elements, conjugate gradients with algebraic multigrid (PyAMG: N. Bell, L. N. Olson, J. Schroder, *J. Open Source Softw.*
+**7**, 4142 (2022), [doi:10.21105/joss.04142](https://doi.org/10.21105/joss.04142)). The finite volume stays the default.
+
+<p align="center">
+  <img src="docs/images/fem_showcase.png" alt="Heat flux in a section of an alumina and BN compound on voxels and on the body-fitted tetrahedral mesh, and the conductivity against the grid for both" width="100%">
+</p>
+
+Alumina spheres (4 µm, log-normal) 45 vol% with BN platelets 5 vol% in epoxy (k 30 / 60 / 0.2 W/m·K), the same particles
+drawn on every grid, k<sub>z</sub> in W/m·K:
+
+| Grid | Finite volume on voxels | FEM on the fitted mesh | Tetrahedra | FEM solve |
+|---|---|---|---|---|
+| 32³ (sphere 8 voxels) | 4.341 | **1.746** | 0.5 M | 3 s |
+| 48³ (sphere 12 voxels) | 4.027 | **1.826** | 1.4 M | 7 s |
+| 64³ (sphere 16 voxels) | 3.872 | **1.828** | 2.9 M | 15 s |
+| 96³ (sphere 24 voxels) | 3.479 | **1.890** | 8.4 M | 39 s |
+| 128³ (sphere 32 voxels) | 3.221 | **1.896** | 18.1 M | 81 s |
+
+Spheres of 4 µm (35 vol%) with spheres of 0.8 µm (15 vol%), k 100 : 1:
+
+| Grid | Finite volume on voxels | FEM on the fitted mesh | Tetrahedra | FEM solve |
+|---|---|---|---|---|
+| 36³ (small sphere 3 voxels) | 9.281 | **5.684** | 0.7 M | 3 s |
+| 48³ (small sphere 4 voxels) | 8.202 | **5.554** | 1.5 M | 7 s |
+| 72³ (small sphere 6 voxels) | 7.265 | **5.400** | 4.2 M | 17 s |
+| 96³ (small sphere 8 voxels) | 6.567 | **5.317** | 8.9 M | 37 s |
+| 144³ (small sphere 12 voxels) | 5.944 | **5.242** | 26.0 M | 123 s |
+
+- **The finite volume of a dense, high-contrast packing depends on the grid** (4.34 → 3.22, still falling): every pair of
+  touching voxels is a contact. The FEM gives the gaps between the exact shapes their width (median 0.11 µm here) and moves
+  by 9 % over the same grids.
+- **A filler five times finer than another** needs no finer grid with the FEM: with the small spheres 3 voxels across it
+  is within 9 % of its value on the finest grid, where the finite volume is 56 % above its own.
+- **The same elements as FEniCS.** FEniCSx runs on Linux; MPSim's elements run wherever MPSim does. On the mesh MPSim
+  writes, DOLFINx 0.11 (I. A. Baratta et al., Zenodo (2023), [doi:10.5281/zenodo.10447666](https://doi.org/10.5281/zenodo.10447666))
+  gives the same conductivity to all twelve digits printed (1.16977753126 on a sphere, a box and a cylinder of three
+  materials; `app/mpsim/solvers/fenicsx_tet.py`), and one sphere per periodic cell converges with the square of the voxel
+  size to Rayleigh's series (*Philos. Mag.* **34**, 481 (1892), [doi:10.1080/14786449208620364](https://doi.org/10.1080/14786449208620364)):
+  1.5342 against 1.5324 with the sphere 43 voxels across, 1.5428 with 11.
+- **Which value is right depends on the material.** The FEM solves the particles as placed - exact shapes with resin films
+  between them; the finite volume solves them as voxels in contact. Fillers wetted by the resin are nearer the first,
+  fillers pressed or sintered into each other nearer the second.
+- Reductions: linear elements; perfect interfaces except for the films (interface and contact resistances, anisotropic
+  fillers, coated particles, networks, images and compressed structures stay with the finite volume, and the run says
+  so); about 50 times the time of the finite volume per solve; 1.4 GB at 96³, about 3 GB at 128³.
 
 ## Application examples: coupled analyses
 
@@ -506,7 +571,8 @@ GPa and α 32.2 ppm/K from the RVE) shrink more than the glass (α 3.8 ppm/K: M.
 GPa, ν 0.22 typical) and pull on it. Axisymmetric finite elements (9-node quadrilaterals, half the via):
 
 <p align="center">
-  <img src="docs/images/via_stress.png" alt="The via's thermal stress in the Result Viewer: the glass's tension against the wall for the paste, an empty and a fully plated via" width="90%">
+  <img src="docs/images/via_stress.png" alt="The via's thermal stress in the Result Viewer: the glass's tension against the wall for the paste, an empty and a fully plated via" width="52%">
+  <img src="docs/images/via_stress_map.png" alt="Largest principal stress near the via's top: the paste core, the Cu wall and the glass" width="44%">
 </p>
 
 | The glass's largest tension (MPa) | Wall 5 µm | 10 µm | 15 µm | 20 µm | 25 µm |
@@ -561,7 +627,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **97 problems with known solutions** (62 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **105 problems with known solutions** (65 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -614,6 +680,9 @@ reference values. A selection:
 | Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
 | Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (without: 61.3 % at the size entered) |
 | Cu spheres that may overlap with SiO₂ spheres that may not (Cu 45 + SiO₂ 10, Cu 40 + SiO₂ 20 vol%) | both loadings reached, Cu overlapping in both routes | 44.82 + 9.96 %, 39.86 + 20.00 % |
+| Irregular grains (3 µm, log-normal) at 60 vol% by the clump relaxation, 256³ | the loading reached, no particle shrunk (5.8.0: locked, 40.6 %) | 59.53 %, sizes within 0.3 % of the input |
+| Platelets 1:1:0.25 at 50 vol% with a share of overlap below what they need | the loading at the sizes entered (5.8.0: 42.95 %, every size 5 % small) | 49.30 %, sizes exact, the share reported |
+| Fibres of a fixed 1 µm diameter, length log-normal, by the clump relaxation | the diameter entered (5.8.0: 0.984 µm) | 1.00004 µm |
 | Progressive overlap in the random placement: log-normal spheroids (c/a 0.5) at 50 vol% whose placement jams 2-3 % short | loading reached without a clump relaxation, with the particles drawn (sizes within three standard errors); overlap counted by drawing every particle again | 49.8-50.0 % in under 1 s with ≤ 2 voxels, 0.2 % shared; 0 shared at 30 vol% |
 | Spheres of different sizes packed largest first: 3 + 0.6 µm at 27 + 18 vol% | loading reached; k of the packing grown at once with ten times the equilibration (within 5 %); no overlap after 200 more two-grid moves | 27.0 + 18.0 vol%, k 1.392 against 1.362; closest pairs at 1.0001 of contact |
 | Particle files: particles.csv and polyhedra.csv redrawn by plain numpy with the README's conventions, eight shapes, bulk and film | the generated structure | identical voxel for voxel |
@@ -788,7 +857,7 @@ app/
     doe.py, optimise.py, calibrate.py, links.py        studies, surrogate models, calibration, linked inputs
     visual.py, report.py viewer data, publication figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (68 materials), presets.json (31 presets)
+    data/                materials.json (68 materials), presets.json (56 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README images (the user guides are attached to the releases)
@@ -826,7 +895,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.8.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.9.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 
