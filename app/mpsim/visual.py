@@ -533,6 +533,16 @@ class ViewWriter:
                     data[cells[:, 0], cells[:, 1], cells[:, 2]].astype("<f4").tofile(os.path.join(self.dir, vf))
                     vs["files"][str(lab)]["fields"][key] = vf
 
+    def add_tet(self, key, mesh, val, label, unit, group, log=False, voxel=None, voxel_title="", mesh_title=""):
+        """A field of the body-fitted tetrahedral mesh (one value per tetrahedron) for a 3D figure on the mesh
+        itself (tetview.py); voxel: the same quantity of a voxel solver, drawn beside it."""
+        from . import tetview as TV
+        TV.save(self.dir, key, mesh, val, voxel=voxel)
+        self.meta.setdefault("tet_figs", [])
+        self.meta["tet_figs"] = [t for t in self.meta["tet_figs"] if t["key"] != key] + [
+            {"key": key, "label": label, "unit": unit, "group": group, "log": bool(log), "compare": voxel is not None,
+             "voxel_title": voxel_title, "mesh_title": mesh_title}]
+
     def add_vector(self, key, vec, label, unit, group, field=None, note=""):
         """A vector field, written as x, y, z per voxel for arrow glyphs.
 

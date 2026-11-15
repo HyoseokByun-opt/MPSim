@@ -48,7 +48,9 @@ from . import mechtest as MT
 from . import visual as V
 from .solvers import complex_cond as CC
 from .solvers import conduction as CD
+from .solvers import tetelast as TE
 from .solvers import tetfem as TF
+from .solvers import tetmesh as TM
 from .solvers import elastic as EL
 from .solvers import fans as FA
 from .solvers import viscosity as VI
@@ -628,6 +630,42 @@ def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop
                                      "vm_Pa": rr["vm_Pa"]}
     s = out["series"]
     eta_c = -s["sigma_zz_Pa"][-1] / rate
+    # the same spheres with films of their real width and frictional contacts (particle dynamics)
+    contact = None
+    if rv.get("press_contact", True):
+        why = None
+        if n_sp < 2 or np.any(np.asarray(sub["codes"]) != 0):
+            why = "the fillers are not all spheres"
+        elif pore.any():
+            why = "the structure has pores"
+        elif len(resins) != 1:
+            why = "there is more than one resin"
+        elif cure is not None:
+            why = "the resin cures during the compression"
+        elif lateral not in ("xy", "x"):
+            why = "both sides are held"
+        if why:
+            log(f"  (contacts and friction are not computed: {why}; the stress above is the resin's flow on the voxels alone)")
+        else:
+            from .solvers import presscontact as PCT
+            do = spec["options"]["viscosity"]["dem"]
+            solid_i = sorted({int(p) for p in sub["phase"]})
+            hks, _ = dem_hamaker(spec, solid_i, do)
+            hk_of = dict(zip(solid_i, hks))
+            event("stage", name=name, detail=f"{detail} · contacts and friction (particle dynamics)", progress=prog.sub(0.999))
+            try:
+                cr = PCT.compress(np.asarray(sub["centers"], float), rad, [N * h] * 3, float(resins[0][1]), rate, comp,
+                                  lateral=lateral, roughness_m=do["roughness_nm"] * 1e-9, hmin_m=do["hmin_nm"] * 1e-9,
+                                  hamaker_J=np.array([hk_of[int(p)] for p in sub["phase"]]), mu_f=do["mu_f"],
+                                  adhesion_J_m2=do["adhesion_mJ_m2"] * 1e-3, should_stop=should_stop, log=log)
+                contact = {k: cr[k] for k in ("compression", "sigma_zz_Pa", "hydro_Pa", "contact_Pa", "contacts_per_particle",
+                                              "eta_compression_Pa_s", "eta_start_Pa_s", "eta_end_Pa_s", "steps", "seconds",
+                                              "mu_f", "roughness_nm", "phi", "n", "trouton", "mu_resin_Pa_s")}
+                contact["max_overlap"] = float(max(cr["max_overlap"]))
+            except InterruptedError:
+                raise
+            except Exception as e:                                   # noqa: BLE001
+                log(f"  (the contact dynamics of the compression failed: {e})")
     info = {"particles": newp, "planes": ginfo["planes"], "poly_meta": ginfo.get("poly_meta"), "film": False,
             "shape": list(shape), "N": shape[0], "h_um": h, "L_um": shape[0] * h, "region_map": region_map,
             "phases": pinfo, "contact_faces": n_contact, "touching_pairs": n_touch,
@@ -647,7 +685,7 @@ def press_structure(spec, plan, gen_labels, ginfo, log, event, prog, should_stop
                                                  "gel": cure.kin[li]["ag"], "gelled": cure.gelled(li)}
                              for li in cure.labels},
                   "time_s": s["time_s"], "T_C": s["T_C"], "rate_1_s": s["rate_1_s"]} if cure is not None else None),
-        "frames": out["frames"], "von_mises": out["von_mises"], "pressure": out["pressure"]}
+        "frames": out["frames"], "von_mises": out["von_mises"], "pressure": out["pressure"], "contact": contact}
     log("  compression done: box " + " × ".join(f"{v:.4g}" for v in info["pressed"]["box_um"]) + " µm "
         f"({' × '.join(str(n) for n in shape)} voxels); axial stress {-s['sigma_zz_Pa'][-1]:.4g} Pa at the end "
         f"(compression viscosity {eta_c:.4g} Pa·s); "
@@ -2516,6 +2554,38 @@ def _cond_backend(spec, backend):
     return prim
 
 
+def _tet_build(geo, spec, h_um, log):
+    """The body-fitted mesh of the run, made once and kept in geo (options.tet_mesh: on the lattice of the voxel
+    corners, or graded by the particles' sizes)."""
+    if geo.get("mesh") is None:
+        o = spec["options"]
+        mat_of = {t["phase"]: li for li, t in enumerate(geo["table"]) if t["kind"] == "core"}
+        mats = [mat_of.get(i, 0) for i in range(len(geo["gen_phases"]))]
+        if o.get("tet_mesh") == "graded":
+            ref = o.get("tet_refine", "auto")
+            geo["mesh"] = TM.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats, nz=geo.get("nz"), log=log,
+                                        res=float(o.get("tet_res", 4)), refine=None if ref in (None, "auto") else int(ref),
+                                        contact=int(o.get("tet_contact", 0)), neck=float(o.get("tet_neck", 0.0)))
+        else:
+            geo["mesh"] = TF.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats, nz=geo.get("nz"), log=log,
+                                        neck=float(o.get("tet_neck", 0.0)))
+    return geo["mesh"]
+
+
+def _tet_info(m):
+    """What a result keeps of the mesh it was solved on."""
+    out = {k: (float(m[k]) if isinstance(m[k], float) else int(m[k])) for k in
+           ("n_nodes", "n_cut", "n_film_edges", "n_film_tets", "n_clamped", "film_gap_um", "seconds")}
+    out["n_tets"] = int(len(m["tets"]))
+    out["n_vertices"] = int(len(m["points"]))
+    out["neck"] = float(m.get("neck", 0.0))
+    out["n_bonded"] = int(m.get("n_bonded", 0))
+    if m.get("graded"):
+        out.update(graded=True, finest_um=float(m["finest_um"]), coarsest_um=float(m["coarsest_um"]),
+                   n_cells=int(m["n_leaves"]), levels=[int(v) for v in m["levels"]])
+    return out
+
+
 def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should_stop,
                 viewer, first, rpair=None, cmask=None, rcpair=None, pre=None, aniso=None, geo=None):
     """geo: {"ginfo", "gen_phases", "N", "nz", "table"} - what the body-fitted tetrahedral mesh is made of
@@ -2540,10 +2610,8 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
         if why:
             log(f"    {info['title']}: the tetrahedral mesh cannot be made ({why}) -> built-in periodic finite volume")
             primary, check = "fv", ""
-        elif geo.get("mesh") is None:
-            mat_of = {t["phase"]: li for li, t in enumerate(geo["table"]) if t["kind"] == "core"}
-            geo["mesh"] = TF.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"],
-                                        [mat_of.get(i, 0) for i in range(len(geo["gen_phases"]))], nz=geo.get("nz"), log=log)
+        else:
+            _tet_build(geo, spec, h_um, log)
     dirs = spec["options"]["directions"]
     cap = spec["options"]["contrast_cap"]
     tol = spec["options"]["tol"]
@@ -2603,11 +2671,14 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
                         tet_sys[kv] = TF.assemble(geo["mesh"], v_used)
                     r = TF.conductivity(geo["mesh"], v_used, di, tol=tol, callback=cb_d, should_stop=should_stop,
                                         fields=bool(first), system=tet_sys[kv], flux_h=h_um * 1e-6)
+                    xq = None
                     if check == "fv":
                         try:
                             xc = CD.solve_direction(labels, v_used, di, tol=tol, should_stop=should_stop,
-                                                    film=bool(spec["rve"].get("film")))
+                                                    film=bool(spec["rve"].get("film")),
+                                                    flux_h=(h_um * 1e-6) if first and d == dirs[0] else None)
                             r["crosscheck"], r["crosscheck_method"] = xc["k_eff"], "fv"
+                            xq = xc.get("q")
                             del xc
                         except InterruptedError:
                             raise
@@ -2632,6 +2703,11 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
                         raise
                     except Exception as e:                           # noqa: BLE001
                         log(f"    (the cross-check PuMA FE solve failed: {e})")
+            qt = r.pop("q_tets", None) if primary == "tet" else None
+            if qt is not None and first and viewer is not None and d == dirs[0]:
+                _tet_figure(key, viewer, geo["mesh"], qt, xq if check == "fv" else None, v_used, d, h_um, labels,
+                            r["column"][di], r.get("crosscheck"))
+            del qt
             T[:, di] = r["column"]
             pot = None
             flux = r.pop("q", None)
@@ -2662,11 +2738,7 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
     out = {"tensor": T, "energy": energy, "stats": stats, "policies": policies,
            "percolation": cache.get("wraps"), "field_stats": field_stats}
     if primary == "tet":
-        m = geo["mesh"]
-        out["tet_mesh"] = {k: (float(m[k]) if isinstance(m[k], float) else int(m[k])) for k in
-                           ("n_nodes", "n_cut", "n_film_edges", "n_film_tets", "n_clamped", "film_gap_um", "seconds")}
-        out["tet_mesh"]["n_tets"] = int(len(m["tets"]))
-        out["tet_mesh"]["n_vertices"] = int(len(m["points"]))
+        out["tet_mesh"] = _tet_info(geo["mesh"])
     return out
 
 
@@ -2804,6 +2876,34 @@ def _vector_layer(viewer, key, vec, mask, d, h_um, label, unit, group, field_key
                          summary=summary, note="Integrated from the solved field; colour is the local magnitude",
                          speed_label=f"{label} magnitude", speed_unit=unit)
     return summary
+
+
+def _tet_figure(key, viewer, mesh, qt, xq, vals, d, h_um, labels, k_fem, k_vox):
+    """The flux of a tetrahedral solve on its own mesh for a 3D figure, the voxel cross-check's beside it."""
+    di = "xyz".index(d)
+    D = d.upper()
+    info = COND[key]
+    grp = info["group"]
+    vals = np.asarray(vals, float)
+    mag = np.sqrt((np.asarray(qt, float) ** 2).sum(-1))
+    vox = None if xq is None else np.sqrt((np.asarray(xq, float) ** 2).sum(-1))
+    log = True
+    if key == "thermal":
+        label, unit = f"Heat flux magnitude |q| ({D} gradient)", "W/m²"
+    elif key == "electrical":
+        label, unit = f"Current density magnitude |J| ({D} gradient)", "A/m²"
+    else:
+        # the local field against the applied one, as in the voxel view
+        L_m = labels.shape[di] * h_um * 1e-6
+        mag = mag / vals[mesh["mat"]] * L_m
+        if vox is not None:
+            vox = vox / vals[labels] * L_m
+        label, unit, log = (f"Local field enhancement {'|E|/E0' if key == 'dielectric' else '|H|/H0'} ({D} field)", "-",
+                            False)
+    u = info["unit"]
+    viewer.add_tet(f"{key}_{d}_mesh", mesh, mag, label, unit, grp, log=log, voxel=vox,
+                   voxel_title=(f"Finite volume on the voxels: {k_vox:.3g} {u}" if k_vox is not None else ""),
+                   mesh_title=f"Finite elements on the mesh fitted to the particles: {k_fem:.3g} {u}")
 
 
 def _cond_fields(key, viewer, labels, table, vals, pot, flux, d, h_um, with_vectors=True):
@@ -3190,7 +3290,7 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
 
 
 def _elastic_solve(labels, table, spec, h_um, backend, prog, log, event, should_stop, viewer, first,
-                   pre_loads=None):
+                   pre_loads=None, geo=None):
     E = S.label_values(table, "E")
     nu = S.label_values(table, "nu")
     al = S.label_values(table, "alpha")
@@ -3200,9 +3300,18 @@ def _elastic_solve(labels, table, spec, h_um, backend, prog, log, event, should_
     # two iterations there (C11 10x too high) once preconditioned.
     tol = 1e-5 if spec["rve"]["quality"] == "fast" else 1e-6
     method = spec["options"].get("elastic_method", "fans")
+    if method == "tet":
+        # linear elements on the body-fitted tetrahedral mesh (solvers/tetelast.py); what it cannot mesh goes to FANS
+        why = "the structure's particles are not at hand" if geo is None else TF.supported(spec, geo["ginfo"], geo["table"])
+        if not why and spec["rve"].get("film"):
+            why = "a film is not periodic through its thickness"
+        if why:
+            log(f"    Elasticity: the tetrahedral mesh cannot be used ({why}) -> voxel finite elements (FANS)")
+            method = "fans"
     prog.stage("Elasticity and thermal expansion",
                {"fans": "voxel FE · FFT-preconditioned CG", "puma": f"{backend} FE · MINRES",
-                "fft": "FFT (Moulinec-Suquet)"}.get(method, method) + " · 7 load cases (6 strains + ΔT)", units=7.0)
+                "fft": "FFT (Moulinec-Suquet)", "tet": "body-fitted tetrahedral FE · multigrid CG on all cores"
+                }.get(method, method) + " · 7 load cases (6 strains + ΔT)", units=7.0)
     names = {"x": "εxx", "y": "εyy", "z": "εzz", "yz": "γyz", "xz": "γxz", "xy": "γxy", "th": "ΔT"}
     order = ["x", "y", "z", "yz", "xz", "xy", "th"]
 
@@ -3210,7 +3319,65 @@ def _elastic_solve(labels, table, spec, h_um, backend, prog, log, event, should_
         k = order.index(tag) if tag in order else 0
         event("solver", name=f"Elastic load {names.get(tag, tag)} ({k+1}/7)", it=it, res=res, target=tgt,
               progress=prog.sub((k + (frac or 0.0)) / 7.0))
-    if method == "fans":
+    if method == "tet":
+        free = spec["options"].get("thermal_bc") == "free"
+        mesh = _tet_build(geo, spec, h_um, log)
+        tnames = {"xx": "εxx", "yy": "εyy", "zz": "εzz", "yz": "γyz", "xz": "γxz", "xy": "γxy", "th": "ΔT"}
+
+        def cbt(it, res):
+            event("solver", name="Elastic loads (7 together, tetrahedral FE)", it=it, res=res, target=tol,
+                  progress=prog.sub(min(0.95, it / 80.0)))
+        rt = TE.homogenize(mesh, E, nu, al, tol=tol, progress=cbt, should_stop=should_stop,
+                           keep_thermal_stress=bool(first), stress_bc="free" if free else "th", log=log)
+        stats = [dict(st, load=tnames[k]) for k, st in rt["stats"].items()]
+        its = [st["iterations"] for st in rt["stats"].values()]
+        log(f"    tetrahedral FE: {rt['n_tets']:,} tetrahedra, {rt['n_dof']:,} unknowns, 7 loads together, "
+            f"{min(its)}-{max(its)} iterations ({rt['seconds']:.1f} s)")
+        fields = None
+        if rt.get("thermal_stress") is not None:
+            ts = rt.pop("thermal_stress")
+            fields = (np.stack([ts[0], ts[1], ts[2]], axis=-1).astype(np.float32),
+                      np.stack([ts[3], ts[4], ts[5]], axis=-1).astype(np.float32))
+            del ts
+        r = {"C": rt["C"], "alpha": rt["alpha"], "sigma_th": rt["sigma_th"], "asymmetry": rt["asymmetry"],
+             "stats": stats, "fields": fields, "void_phases": rt["void_phases"], "E_used": rt["E_used"],
+             "nu_used": rt["nu_used"], "void_ratio": 1e-4, "method": "tet-fe", "tet_mesh": _tet_info(mesh)}
+        sig_t = rt.pop("stress_tets", None)
+        vm_vox = None
+        if spec["options"].get("crosscheck"):
+            # the voxel finite elements beside it (a second opinion on the same structure)
+            try:
+                import numba
+                workers = int(numba.get_num_threads())
+            except Exception:                                        # noqa: BLE001
+                workers = -1
+            rc = FA.homogenize(labels, E, nu, al, tol=tol, workers=workers, should_stop=should_stop,
+                               keep_thermal_stress=bool(first), stress_bc="free" if free else "th")
+            if rc.get("thermal_stress") is not None:
+                ts = rc.pop("thermal_stress")
+                vm_vox = np.sqrt(0.5 * ((ts[0] - ts[1]) ** 2 + (ts[1] - ts[2]) ** 2 + (ts[2] - ts[0]) ** 2)
+                                 + 3 * (ts[3] ** 2 + ts[4] ** 2 + ts[5] ** 2))
+                del ts
+            r["crosscheck"] = {"method": "fans", "E": EL.engineering_constants(rc["C"])["E"],
+                               "alpha": np.asarray(rc["alpha"][:3], float).tolist(),
+                               "C_diag": np.diag(rc["C"]).tolist()}
+            log(f"    voxel FE (FANS) beside it: E = {np.round(r['crosscheck']['E'], 3)} GPa, "
+                f"α = {np.round(r['crosscheck']['alpha'], 3)} ppm/K")
+        if first and viewer is not None and sig_t is not None:
+            dT = spec["options"]["delta_T"]
+            sc = dT * 1e-3                                   # GPa * ppm = kPa per K -> MPa for dT
+            vm_t = np.sqrt(0.5 * ((sig_t[:, 0] - sig_t[:, 1]) ** 2 + (sig_t[:, 1] - sig_t[:, 2]) ** 2
+                                  + (sig_t[:, 2] - sig_t[:, 0]) ** 2)
+                           + 3 * (sig_t[:, 3] ** 2 + sig_t[:, 4] ** 2 + sig_t[:, 5] ** 2)) * sc
+            bc = "free expansion" if free else "constrained"
+            Em = float(np.mean(EL.engineering_constants(rt["C"])["E"]))
+            viewer.add_tet("cte_vm_mesh", mesh, vm_t, f"Thermal stress, von Mises (ΔT = {dT:g} K, {bc})", "MPa",
+                           "Thermo-mechanical", voxel=None if vm_vox is None else vm_vox * sc,
+                           voxel_title=("Voxel finite elements (FANS): E = "
+                                        f"{float(np.mean(r['crosscheck']['E'])):.3g} GPa" if vm_vox is not None else ""),
+                           mesh_title=f"Finite elements on the mesh fitted to the particles: E = {Em:.3g} GPa")
+        del sig_t, vm_vox
+    elif method == "fans":
         free = spec["options"].get("thermal_bc") == "free"
         fnames = {"xx": "εxx", "yy": "εyy", "zz": "εzz", "yz": "γyz", "xz": "γxz", "xy": "γxy", "th": "ΔT",
                   "free": "free expansion"}
@@ -3951,7 +4118,11 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                                                               ["αx", "αy", "αz"], "ppm/K"),
                                                       by_real("Young's modulus", samples["cte_E"], ["Ex", "Ey", "Ez"],
                                                               "GPa")) if b_],
-                     "stress_stats": el.get("stress_stats"), "above_tg": el.get("above_tg")}
+                     "stress_stats": el.get("stress_stats"), "above_tg": el.get("above_tg"),
+                     "method": el.get("method")}
+            for k_ in ("tet_mesh", "crosscheck"):
+                if el.get(k_):
+                    entry[k_] = el[k_]             # the body-fitted mesh, the voxel elements beside it
             solid = [i for i in range(len(table)) if E_l[i] > 0 and comp_vf[i] > 0]
             if len(solid) == 2 and not any(comp_vf[i] > 0 for i in void_labels):
                 i1, i2 = solid
@@ -4567,7 +4738,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
 
         # ---- conduction-type properties ----------------------------------
         tet_geo = ({"ginfo": ginfo, "gen_phases": gen_phases, "N": N, "nz": Nz, "table": table}
-                   if spec["options"].get("cond_method") == "tet" else None)
+                   if "tet" in (spec["options"].get("cond_method"), spec["options"].get("elastic_method")) else None)
         for key in COND:
             if key not in need:
                 continue
@@ -4715,7 +4886,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         # ---- elasticity and thermal expansion ----------------------------
         if "cte" in need:
             el = _elastic_solve(labels, table, spec, h, backend, prog, log, event, should_stop,
-                                viewer if first else None, first, pre_loads=pre_el)
+                                viewer if first else None, first, pre_loads=pre_el, geo=tet_geo)
             consts = EL.engineering_constants(el["C"])
             el["constants"] = consts
             res_r["cte"] = el
@@ -5634,6 +5805,11 @@ def figure_plan(meta):
         plan.append({"name": f"{k}_slice_z.png", "kind": "slice", "group": grp, "title": f["label"] + " — section",
                      "req": {"axis": "z", "index": mid["z"], "field": k, "log": f["log"],
                              "title": f["label"] + " — section"}})
+    # a finite-element field on its own mesh (the voxel solver's beside it when it was solved too)
+    for t in meta.get("tet_figs") or []:
+        title = t["label"] + (" — voxels and the fitted mesh" if t.get("compare") else " — on the fitted mesh")
+        plan.append({"name": f"{t['key']}_3d.png", "kind": "tet", "group": t["group"], "title": title,
+                     "req": dict(t, width=1300, height=1100, title=title)})
     # one path figure per group: a field line or a passing particle says more
     # about the transport than another contour of the same quantity
     seen_paths = set()
@@ -5661,7 +5837,11 @@ def default_figures(out_dir, meta, log, done=None):
             figs[name] = item["title"]
             continue
         try:
-            (V.slice_figure if item["kind"] == "slice" else V.render_scene)(view, item["req"], path)
+            if item["kind"] == "tet":
+                from . import tetview as TV
+                TV.render(view, item["req"], path)
+            else:
+                (V.slice_figure if item["kind"] == "slice" else V.render_scene)(view, item["req"], path)
             figs[name] = item["title"]
         except Exception as e:                                       # noqa: BLE001
             log(f"   (figure {name} failed: {e})")

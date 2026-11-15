@@ -309,6 +309,229 @@ def t_tetfem_pipeline():
             f"voxel FV {fvz:.3f}; ε_r {di['diag'][2]:.3f}; with R_int: {m2}")
 
 
+def _hand_three(L=6.0):
+    """The sphere, the box and the cylinder of the tetrahedral checks."""
+    def rot(ax, ang):
+        c, s_ = math.cos(ang), math.sin(ang)
+        R = np.eye(3)
+        i, j = [(1, 2), (0, 2), (0, 1)][ax]
+        R[i, i], R[i, j], R[j, i], R[j, j] = c, -s_, s_, c
+        return R
+    ph = [_hand_phase("sphere", {"d": 2.4}), _hand_phase("cuboid", {"d": 2.0, "ly": 1.6, "lz": 1.0}),
+          _hand_phase("cylinder", {"d": 1.0, "length": 3.0})]
+    info = _hand_particles(ph, [[1.7, 1.9, 1.8], [4.1, 3.9, 2.2], [2.6, 3.4, 4.4]],
+                           [np.eye(3), rot(2, 0.5) @ rot(0, 0.3), rot(1, 0.9)], [0, 1, 2], L)
+    return ph, info
+
+
+@check("Graded tetrahedral mesh (octree): with one level it is the lattice mesh (same tetrahedra, same conductivity "
+       "to 1e-9); graded, it fills the RVE exactly, every face is shared by two tetrahedra (no hanging node), and the "
+       "conductivity with a quarter of the tetrahedra is within 0.5 % of the lattice mesh of the same finest cell")
+def t_tetmesh():
+    from mpsim.solvers import tetfem as TF
+    from mpsim.solvers import tetmesh as TM
+    L = 6.0
+    ph, info = _hand_three(L)
+    vals = np.array([1.0, 100.0, 30.0, 5.0])
+    lat = TF.build_mesh(16, L / 16, info, ph, [1, 2, 3])
+    one = TM.build_mesh(16, L / 16, info, ph, [1, 2, 3], refine=0, coarsest=0)
+    k_lat = TF.conductivity(lat, vals, 2, tol=1e-11)["k_eff"]
+    k_one = TF.conductivity(one, vals, 2, tol=1e-11)["k_eff"]
+    expect(len(one["tets"]) == len(lat["tets"]) and abs(k_one / k_lat - 1) < 1e-9,
+           f"one level: {len(one['tets'])} tetrahedra, k {k_one:.10f}; lattice {len(lat['tets'])}, {k_lat:.10f}")
+    fine = TF.build_mesh(32, L / 32, info, ph, [1, 2, 3])
+    g = TM.build_mesh(16, L / 16, info, ph, [1, 2, 3], refine=1)
+    pts, tets = g["points"], g["tets"]
+    d = [pts[tets[:, q]] - pts[tets[:, 0]] for q in (1, 2, 3)]
+    for v in d:
+        v -= L * np.round(v / L)
+    vol = np.abs(np.einsum("ij,ij->i", d[0], np.cross(d[1], d[2]))) / 6
+    f = np.sort(np.concatenate([tets[:, [0, 1, 2]], tets[:, [0, 1, 3]], tets[:, [0, 2, 3]], tets[:, [1, 2, 3]]]), axis=1)
+    _, cnt = np.unique(f, axis=0, return_counts=True)
+    expect(abs(vol.sum() / L ** 3 - 1) < 1e-12 and vol.min() > 0 and (cnt == 2).all(),
+           f"volume {vol.sum() / L ** 3:.14f}, faces not shared by two: {int((cnt != 2).sum())}")
+    k_g = TF.conductivity(g, vals, 2, tol=1e-10)["k_eff"]
+    k_f = TF.conductivity(fine, vals, 2, tol=1e-10)["k_eff"]
+    expect(len(g["tets"]) < 0.3 * len(fine["tets"]) and abs(k_g / k_f - 1) < 0.005,
+           f"graded {len(g['tets'])} tetrahedra k {k_g:.5f}; lattice {len(fine['tets'])} k {k_f:.5f}")
+    return (f"one level = lattice ({len(lat['tets']):,} tetrahedra, k {k_one:.8f}); graded {len(g['tets']):,} against "
+            f"{len(fine['tets']):,} tetrahedra: k {k_g:.4f} / {k_f:.4f}, cells per level {g['levels']}")
+
+
+@check("Tetrahedral elasticity: one material gives its own stiffness and expansion (patch test); the same meshes in "
+       "FEniCSx (DOLFINx 0.11, faces held) to 1e-8 for C11, C44 and the thermal stress, lattice and graded; a chain of "
+       "spheres 0.04 µm apart (film as interface elements) within 1.5 % of the mesh that resolves the film")
+def t_tetelast():
+    from mpsim.solvers import tetelast as TE
+    from mpsim.solvers import tetfem as TF
+    from mpsim.solvers import tetmesh as TM
+    L = 6.0
+    ph, info = _hand_three(L)
+    m = TF.build_mesh(12, L / 12, info, ph, [1, 2, 3])
+    r = TE.homogenize(m, [5.0] * 4, [0.3] * 4, [10.0] * 4, tol=1e-10)
+    lam, mu = TE.lame(5.0, 0.3)
+    expect(abs(r["C"][0, 0] - (lam + 2 * mu)) < 1e-8 and abs(r["C"][0, 1] - lam) < 1e-8 and abs(r["C"][3, 3] - mu) < 1e-8
+           and np.abs(r["alpha"][:3] - 10.0).max() < 1e-7, f"patch: C11 {r['C'][0, 0]}, alpha {r['alpha']}")
+    E, nu, al = [3.0, 70.0, 300.0, 110.0], [0.35, 0.17, 0.22, 0.3], [60.0, 0.5, 7.0, 17.0]
+    # solvers/fenicsx_tet.py el_lattice.npz --elastic 3.0,0.35,60.0 70.0,0.17,0.5 300.0,0.22,7.0 110.0,0.3,17.0
+    ref = {"lattice": (5.474604387705, 1.293733355405, -602.6656120615),
+           "graded": (5.46472341367, 1.288768518644, -602.6017370715)}
+    got = {}
+    for tag in ("lattice", "graded"):
+        mm = (TF.build_mesh(16, L / 16, info, ph, [1, 2, 3], periodic=(False, False, False)) if tag == "lattice" else
+              TM.build_mesh(16, L / 16, info, ph, [1, 2, 3], periodic=(False, False, False), refine=1))
+        rr = TE.homogenize(mm, E, nu, al, tol=1e-11)
+        got[tag] = (rr["C_raw"][0, 0], rr["C_raw"][3, 3], rr["sigma_th"][0])
+        err = max(abs(a / b - 1) for a, b in zip(got[tag], ref[tag]))
+        expect(err < 1e-8, f"{tag}: MPSim {got[tag]}, FEniCSx {ref[tag]}")
+    Lc, d = 4.0, 1.96
+    phc = [_hand_phase("sphere", {"d": d})]
+    infc = _hand_particles(phc, [[2.13, 2.13, 1.13], [2.13, 2.13, 3.13]], [np.eye(3)] * 2, [0, 0], Lc)
+    mc = TF.build_mesh(24, Lc / 24, infc, phc, [1])
+    rc = TE.homogenize(mc, [3.0, 70.0], [0.35, 0.2], [60.0, 1.0], tol=1e-8)
+    expect(mc["n_film_edges"] > 0 and abs(rc["C"][2, 2] / 7.4167 - 1) < 0.015, f"chain: C33 {rc['C'][2, 2]:.4f} (7.4167)")
+    return (f"FEniCSx: C11 {got['lattice'][0]:.10f} = {ref['lattice'][0]:.10f} (lattice), {got['graded'][0]:.10f} = "
+            f"{ref['graded'][0]:.10f} (graded); chain C33 {rc['C'][2, 2]:.3f} (film resolved: 7.417)")
+
+
+@check("Bonded contacts on the tetrahedral mesh: without a neck two touching spheres keep their values; with a neck "
+       "of 0.3 the chain is stiffer and conducts more, the same on the lattice and on the graded mesh (stiffness 2 %, conductivity 8 %); spheres a "
+       "bond width apart are not joined")
+def t_tetneck():
+    from mpsim.solvers import tetelast as TE
+    from mpsim.solvers import tetfem as TF
+    from mpsim.solvers import tetmesh as TM
+    L, d = 4.0, 2.0
+    ph = [_hand_phase("sphere", {"d": d})]
+    info = _hand_particles(ph, [[2.13, 2.13, 1.0], [2.13, 2.13, 3.0]], [np.eye(3)] * 2, [0, 0], L)
+    E, nu, al = [3.0, 70.0], [0.35, 0.2], [60.0, 1.0]
+    vals = np.array([1.0, 100.0])
+    out = {}
+    for x in (0.0, 0.3):
+        m = TF.build_mesh(24, L / 24, info, ph, [1], neck=x)
+        g = TM.build_mesh(12, L / 12, info, ph, [1], neck=x, refine=2, res=8)
+        out[x] = (TE.homogenize(m, E, nu, al, tol=1e-8, loads=["zz"])["C_raw"][2, 2], TF.conductivity(m, vals, 2, tol=1e-9)["k_eff"],
+                  TE.homogenize(g, E, nu, al, tol=1e-8, loads=["zz"])["C_raw"][2, 2], TF.conductivity(g, vals, 2, tol=1e-9)["k_eff"],
+                  m["n_bonded"])
+    c0, k0, cg0, kg0, nb0 = out[0.0]
+    c3, k3, cg3, kg3, nb3 = out[0.3]
+    expect(nb0 == 0 and nb3 == 1, f"bonded pairs {nb0}, {nb3}")
+    expect(c3 > 1.05 * c0 and k3 > 1.3 * k0, f"C33 {c0:.3f} -> {c3:.3f}, k {k0:.3f} -> {k3:.3f}")
+    expect(abs(cg3 / c3 - 1) < 0.02 and abs(kg3 / k3 - 1) < 0.08, f"graded C33 {cg3:.3f} (lattice {c3:.3f}), k {kg3:.3f} ({k3:.3f})")
+    # 0.3^2 x R = 0.09 µm is the bond width; spheres 0.2 µm apart keep their film
+    info2 = _hand_particles(ph, [[2.13, 2.13, 0.9], [2.13, 2.13, 3.0]], [np.eye(3)] * 2, [0, 0], L)
+    m2 = TF.build_mesh(24, L / 24, info2, ph, [1], neck=0.3)
+    m20 = TF.build_mesh(24, L / 24, info2, ph, [1])
+    expect(len(m2["tets"]) == len(m20["tets"]) and np.array_equal(m2["mat"], m20["mat"]), "spheres apart were joined")
+    return f"C33 {c0:.3f} -> {c3:.3f} GPa (graded {cg3:.3f}); k {k0:.3f} -> {k3:.3f} (graded {kg3:.3f}); spheres 0.1 µm apart unchanged"
+
+
+@check("Compression with contacts and friction (particle dynamics): two distant spheres give the plain resin's "
+       "stress with Einstein's term to 1e-4; 50 vol% spheres pressed by 30 % keep their volume and stay apart (overlap "
+       "below 3 % of a radius); the stress rises with the friction coefficient and, without friction, ends within 35 % "
+       "of three times the shear viscosity of the same suspension (10.9)")
+def t_presscontact():
+    from mpsim import generate as GEN
+    from mpsim.solvers import presscontact as PC
+    r0 = PC.compress(np.array([[2.0, 2.0, 2.0], [12.0, 11.0, 13.0]]), np.array([0.5, 0.5]), [20.0] * 3, 2.0, 0.5, 0.05,
+                     mu_f=0.0, records=3)
+    ein = 3.0 * 2.0 * 0.5 * (1 + 2.5 * r0["phi"])
+    expect(max(abs(-v / ein - 1) for v in r0["sigma_zz_Pa"]) < 1e-4, f"dilute {r0['sigma_zz_Pa']} against {-ein}")
+    L = 25.0
+    ph = [dict(name="silica", shape="sphere", size_um={"d": 5.0}, dist={"type": "mono"}, vf=0.5,
+               orientation={"mode": "iso", "spread_deg": 0}, overlap=False, gap_frac=0.0)]
+    lab, info = GEN.generate(50, 0.5, ph, seed=1, log=lambda *a: None, contacts="keep", gap_vox=0.0,
+                             overlap_steps={"tries": 2, "max_vox": 3})
+    c = np.asarray(info["particles"]["centers"], float)
+    rad = np.asarray(info["particles"]["P"], float)[:, 0]
+    end = {}
+    for mu_f in (0.0, 0.5):
+        r = PC.compress(c, rad, [L] * 3, 1.0, 10.0, 0.3, mu_f=mu_f, hamaker_J=3.08e-21, records=30)
+        s_ = -np.array(r["sigma_zz_Pa"]) / 30.0
+        end[mu_f] = float(s_[-6:].mean())
+        expect(abs(np.prod(r["box_um"]) / L ** 3 - 1) < 1e-9 and abs(r["box_um"][2] / L - 0.7) < 1e-6, f"box {r['box_um']}")
+        expect(max(r["max_overlap"]) < 0.03, f"overlap {max(r['max_overlap']):.4f}")
+    expect(abs(end[0.0] / 10.9 - 1) < 0.35 and end[0.5] > 1.5 * end[0.0], f"stress / (3 mu rate): {end}")
+    return (f"dilute: {-r0['sigma_zz_Pa'][0]:.5f} Pa = {ein:.5f}; 50 vol%, last fifth of 30 %: {end[0.0]:.1f} x the resin's without "
+            f"friction (shear: 10.9), {end[0.5]:.1f} with friction 0.5")
+
+
+@check("Multigrid on all cores: a block of right-hand sides solved together equals the direct solution (1e-8), with "
+       "one recurrence per column")
+def t_mgsolve():
+    import pyamg
+    from scipy import sparse
+    from scipy.sparse.linalg import spsolve
+    from mpsim.solvers import mgsolve as MG
+    n = 14
+    rng = np.random.default_rng(3)
+    k = np.exp(rng.normal(0, 1.5, (n, n, n)))
+    idx = np.arange(n ** 3).reshape(n, n, n)
+    rows, cols, vals = [], [], []
+    for ax in range(3):
+        a, b = idx.take(range(n - 1), axis=ax).ravel(), idx.take(range(1, n), axis=ax).ravel()
+        w = 2.0 / (1.0 / k.take(range(n - 1), axis=ax).ravel() + 1.0 / k.take(range(1, n), axis=ax).ravel())
+        rows += [a, b, a, b]
+        cols += [a, b, b, a]
+        vals += [w, w, -w, -w]
+    A = sparse.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols)))).tocsr()
+    A = (A + sparse.diags(np.full(n ** 3, 1e-3))).tocsr()
+    Bm = rng.normal(size=(n ** 3, 3))
+    Bm[:, 2] = 0.0                                              # a zero column stays zero
+    M = MG.Multigrid(pyamg.smoothed_aggregation_solver(A, max_coarse=50), degree=3)
+    X, its, res, ok, _ = MG.pcg(None, Bm, M, tol=1e-10)
+    ref = np.column_stack([spsolve(A.tocsc(), Bm[:, c]) for c in range(3)])
+    err = float(np.abs(X - ref).max() / np.abs(ref).max())
+    expect(err < 1e-8 and ok.all() and its[2] == 0 and its[0] > 0, f"error {err:.2e}, iterations {its.tolist()}")
+    return f"3 columns, {its.tolist()} iterations, error {err:.1e}"
+
+
+@check("Tetrahedral elasticity in a run: C, E and α of a filled epoxy on the graded mesh with the voxel elements "
+       "beside it, the thermal stress and the heat flux drawn on the mesh in 3D beside the voxel fields; a film goes "
+       "back to the voxel elements", quick=False)
+def t_tetelast_pipeline():
+    from mpsim import pipeline as PL
+    f = {"name": "tet elastic", "matrix": {"material_id": "epoxy"},
+         "phases": [{"material_id": "al2o3", "name": "Alumina", "shape": "sphere", "size": {"d": 4.0, "unit": "um"},
+                     "dist": {"type": "lognormal", "std": 1.0}, "fraction": {"value": 45, "basis": "vol"}},
+                    {"material_id": "hbn", "name": "BN", "shape": "cuboid", "size": {"d": 3.0, "ly": 3.0, "lz": 0.6, "unit": "um"},
+                     "fraction": {"value": 5, "basis": "vol"}}],
+         "rve": {"auto": False, "L_um": 10, "voxel_um": 0.3125, "auto_enlarge": False, "quality": "standard", "seed": 1},
+         "analyses": {"thermal": True, "cte": True},
+         "options": {"directions": "z", "cond_method": "tet", "elastic_method": "tet", "crosscheck": True,
+                     "tet_mesh": "graded", "tet_refine": 0}}
+    d = tempfile.mkdtemp()
+    lines = []
+    PL.run(f, d, log=lambda *a: lines.append(" ".join(map(str, a))))
+    r = json.load(open(os.path.join(d, "result.json"), encoding="utf-8"))
+    el = r["properties"]["cte"]
+    Em, Ev = float(np.mean(el["constants"]["E"])), float(np.mean(el["crosscheck"]["E"]))
+    expect(el.get("method") == "tet-fe" and el["tet_mesh"].get("graded") and all(s_["converged"] for s_ in el["stats"]),
+           f"elasticity solved by {el.get('method')}")
+    expect(5.0 < Em < Ev and float(np.mean(el["alpha"][:3])) > float(np.mean(el["crosscheck"]["alpha"])),
+           f"E {Em:.2f} (voxel {Ev:.2f}), α {np.mean(el['alpha'][:3]):.2f} (voxel {np.mean(el['crosscheck']['alpha']):.2f})")
+    figs = r.get("figures") or {}
+    for name in ("cte_vm_mesh_3d.png", "thermal_z_mesh_3d.png"):
+        expect(name in figs and os.path.getsize(os.path.join(d, "figures", name)) > 20000, f"no figure {name}")
+    f2 = json.loads(json.dumps(f))
+    f2["phases"] = [{"material_id": "sio2", "name": "Silica", "shape": "sphere", "size": {"d": 2.0, "unit": "um"},
+                     "fraction": {"value": 30, "basis": "vol"}}]
+    f2["rve"].update(film=True, T_um=5.0)
+    f2["analyses"] = {"cte": True}
+    f2["options"] = {"elastic_method": "tet"}
+    d2 = tempfile.mkdtemp()
+    l2 = []
+    try:
+        PL.run(f2, d2, log=lambda *a: l2.append(" ".join(map(str, a))))
+        r2 = json.load(open(os.path.join(d2, "result.json"), encoding="utf-8"))
+        m2 = r2["properties"]["cte"].get("method")
+    except Exception as e:                                            # noqa: BLE001
+        m2 = f"failed: {e}"
+    expect(m2 != "tet-fe" and not str(m2).startswith("failed"), f"a film: {m2}")
+    return (f"E {Em:.2f} GPa on {el['tet_mesh']['n_tets']:,} tetrahedra (voxel FE {Ev:.2f}); α "
+            f"{np.mean(el['alpha'][:3]):.2f} ppm/K (voxel {np.mean(el['crosscheck']['alpha']):.2f}); a film: {m2}")
+
+
 @check("Electrical conduction: convergence for absolute values of σ ≈ 1e-13 (scale invariance)")
 def t_scale():
     PB = _puma()

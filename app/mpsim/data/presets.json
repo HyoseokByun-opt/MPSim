@@ -3515,6 +3515,314 @@
      "crosscheck": true
     }
    }
+  },
+  {
+   "id": "fem_emc_elastic",
+   "name": "FEM · EMC stiffness and CTE on a tetrahedral mesh fitted to the particles",
+   "description": "Elasticity and thermal expansion solved by finite elements on a tetrahedral mesh fitted to the particles (Simulation → Solver settings → Elasticity and CTE → Finite elements on a tetrahedral mesh fitted to the particles), with the voxel finite elements (FANS) beside it ('Also solve with the other method'). Fused silica spheres (4 µm, log-normal) 60 vol% in epoxy, 16 µm RVE, 48³ voxels of 0.33 µm. Result (about 1 min): 1.59 million tetrahedra; 6,170 edges cross a film of resin between two spheres thinner than the mesh (median 0.14 µm), carried as interface elements. E 16.8 GPa and α 14.9 ppm/K by the FEM against E 21.4 GPa and α 11.9 ppm/K by the voxel elements on the same structure. The voxel value is not converged at this grid: two spheres are bonded wherever two of their voxels touch, and that stiff path thins as the grid is refined. The same recipe drawn on finer and finer grids (guide 12.2): voxel elements 25.0 → 22.2 → 20.9 → 19.2 → 18.3 → 17.4 GPa from 32³ to 192³ and still falling, the FEM 16.2 → 15.9 → 15.7 GPa from 32³ to 64³; α 10.1 → 14.6 ppm/K against 15.2 → 15.6. Against a measurement the FEM is the nearer one: glass spheres in epoxy at 23 to 50 vol% (Smith 1976; preset 'Measured benchmark') within −7 to +5 %, the voxel elements of the same grid 15 to 35 % high. Particles bonded over an area take a neck (Bonded contacts, guide 12.2). The Result Viewer shows the thermal stress in 3D on the mesh itself beside the voxel field. Interfaces are bonded (a cured compound at small strain). On the same mesh FEniCSx gives the same stiffness and thermal stress to twelve digits (self-test).",
+   "form": {
+    "name": "EMC · E and CTE on a tetrahedral mesh (FEM)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Fused silica 4 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 1.0
+      },
+      "fraction": {
+       "value": 60,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 16,
+     "voxel_um": 0.333333,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "cte": true
+    },
+    "options": {
+     "elastic_method": "tet",
+     "crosscheck": true
+    }
+   }
+  },
+  {
+   "id": "fem_graded_fibres",
+   "name": "FEM · grains with thin fibres on a graded tetrahedral mesh",
+   "description": "A blend of very different sizes on the graded mesh (Simulation → Solver settings → Tetrahedral mesh → Graded): irregular alumina grains (3 µm) 50 vol% with copper fibres 0.3 µm thick and 3 µm long, 1 vol%, in epoxy; 9 µm RVE, 60³ voxels of 0.15 µm - a fibre is two voxels thick. The graded mesh halves its cells where a particle's surface runs through them until they are a quarter of that particle's smallest dimension: 0.075 µm at the fibres (finer than the voxel), up to 0.6 µm inside the grains and in open resin; 3.70 million tetrahedra (about 1 min with the finite volume beside it). k_z 3.26 W/m·K by the FEM against 4.81 W/m·K by the finite volume on the voxels, which sees a fibre as a two-voxel staircase and conducts wherever two voxels touch. What the graded mesh saves depends on where the fine particles are (guide 7.2): grains with 0.6 vol% fibres 20 times thinner needed 3.6 times fewer tetrahedra than the lattice mesh of the same finest cell and 14 times fewer one level finer - a resolution the lattice mesh did not reach on a 16 GB computer; a dense blend whose fines fill the gaps between the coarse particles everywhere saved 15 to 30 %, since there the surfaces are everywhere.",
+   "form": {
+    "name": "Grains with thin fibres on a graded tetrahedral mesh (FEM)",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Alumina grains 3 µm",
+      "shape": "polyhedron",
+      "size": {
+       "d": 3.0,
+       "poly": "irregular",
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 0.6
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      }
+     },
+     {
+      "material_id": "cu",
+      "name": "Copper fibres 0.3 × 3 µm",
+      "shape": "cylinder",
+      "size": {
+       "d": 0.3,
+       "length": 3.0,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 1,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 9,
+     "voxel_um": 0.15,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "cond_method": "tet",
+     "tet_mesh": "graded",
+     "crosscheck": true
+    }
+   }
+  },
+  {
+   "id": "fem_glass_epoxy_smith",
+   "name": "Measured benchmark · glass spheres 40 vol% in epoxy: FEM and voxel elements against 7.94 GPa",
+   "form": {
+    "name": "Glass spheres 40 vol% in epoxy · Smith 1976",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Epoxy (DGEBA, aged 200 days)",
+     "props": {
+      "k": 0.2,
+      "sigma": 1e-13,
+      "eps_r": 3.9,
+      "tan_d": 0.015,
+      "mu_r": 1.0,
+      "E": 3.01,
+      "nu": 0.394,
+      "alpha": 60.0,
+      "rho": 1.2,
+      "cp": 1100,
+      "D_w": 3e-12,
+      "c_sat": 2.5,
+      "cme": 0.3,
+      "tg": 150,
+      "E_r": 0.03,
+      "alpha2": 180,
+      "cure_E1": 67.91,
+      "cure_logA1": 5.65,
+      "cure_E2": 67.34,
+      "cure_logA2": 6.48,
+      "cure_m": 1.09,
+      "cure_n": 1.06,
+      "cure_dH": 177.0,
+      "gel_alpha": 0.71,
+      "cm_A": -0.18,
+      "cm_B": 4.22
+     }
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Glass spheres 1–30 µm (silane-coated)",
+      "shape": "sphere",
+      "size": {
+       "d": 10.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 4.0
+      },
+      "fraction": {
+       "value": 39.6,
+       "basis": "vol"
+      },
+      "props": {
+       "k": 1.38,
+       "sigma": 1e-15,
+       "eps_r": 3.8,
+       "tan_d": 0.0001,
+       "mu_r": 1.0,
+       "E": 76.0,
+       "nu": 0.23,
+       "alpha": 0.5,
+       "rho": 2.2,
+       "cp": 740
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 60,
+     "voxel_um": 1.25,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "cte": true
+    },
+    "options": {
+     "elastic_method": "tet",
+     "crosscheck": true
+    }
+   },
+   "description": "Which value is right? J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy filled with glass spheres of 1 to 30 µm, coated with an aminosilane, in tension at 24 °C: 7.94 ± 0.12 GPa and 0.354 at a volume fraction of 0.396 (unfilled 3.01 GPa, 0.394; glass 76 GPa, 0.23, as the paper states). This case is that compound - spheres of 10 µm (log-normal), 60 µm RVE, 48³ voxels - solved by the tetrahedral FEM with the voxel elements beside it. Result (about 1 min): E 8.22 GPa by the FEM (+3.5 % against the measurement), 10.68 GPa by the voxel elements on the same grid (+34.6 %). Over the paper's loadings 0.225 / 0.3025 / 0.396 / 0.496 the measurement is 5.08 / 6.01 / 7.94 / 12.09 GPa, the FEM 5.13 / 6.32 / 8.22 / 11.22 (+0.9 / +5.2 / +3.5 / -7.2 %), the voxel elements 5.82 / 7.62 / 10.68 / 16.16 at 48³ (+15 / +27 / +35 / +34 %), 5.36 / 6.79 / 9.09 / 13.14 at 96³ and 5.22 / 6.52 / 8.61 / 12.13 at 144³, still falling towards the FEM's. Spheres wetted by the resin meet at points with resin around them, which is the structure the FEM solves; the voxel elements bond every pair of touching voxels. At 0.496 the FEM is 7 % below the measurement (two seeds and equal spheres within 1 % of each other). Bonded contacts stay at 0 here."
+  },
+  {
+   "id": "fem_alsic_necks",
+   "name": "FEM · AlSiC, SiC 63 vol%: bonded contacts fitted to the measured expansion",
+   "form": {
+    "name": "AlSiC · SiC 63 vol% · bonded contacts",
+    "matrix": {
+     "material_id": "a356"
+    },
+    "phases": [
+     {
+      "material_id": "sic_grit",
+      "name": "SiC 60 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 60,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 47.25,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08
+     },
+     {
+      "material_id": "sic_grit",
+      "name": "SiC 20 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 20,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 15.75,
+       "basis": "vol"
+      },
+      "orientation": {
+       "mode": "iso"
+      },
+      "r_int": 1e-08
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 180,
+     "voxel_um": 3.0,
+     "quality": "standard",
+     "auto_enlarge": false,
+     "seed": 1
+    },
+    "analyses": {
+     "cte": true
+    },
+    "options": {
+     "delta_T": 100,
+     "elastic_method": "tet",
+     "tet_neck": 0.6,
+     "crosscheck": true
+    }
+   },
+   "description": "Particles that are bonded to each other. The baseplate preset (Al-Si7Mg + SiC 63 vol%, bimodal 60 + 20 µm) has a measured expansion of 8.21 ppm/K (Guo et al., J. Univ. Sci. Technol. Beijing 36 (2014) 489-495, doi:10.13374/j.issn1001-053x.2014.04.011). With the spheres as generated - touching at points, aluminium around them - the tetrahedral FEM gives 9.23 ppm/K: for these constituents the Hashin–Shtrikman bounds with Levin's relation allow 8.05 (the SiC a connected skeleton) to 9.51 ppm/K, and the measurement lies at the skeleton end. Simulation → Solver settings → Bonded contacts joins two particles where their surfaces come close - a neck of the radius entered (times the smaller particle's radius) where they touch, smaller where a gap is left: 9.23 / 9.15 / 8.86 / 8.20 ppm/K for 0 / 0.3 / 0.45 / 0.6. This case runs 0.6 on a 180 µm box (about 1 min): α 8.20 ppm/K and E 235 GPa with 782 pairs of particles joined, against 8.85 ppm/K and 222 GPa by the voxel elements, which bond wherever two voxels touch whatever is entered. The neck is fitted to this one measurement, not predicted: it stands for the contacts of an angular grit pressed together at 63 vol%, which spheres do not have. Use it that way - fit it to one measured value of a material and predict its other properties and loadings."
+  },
+  {
+   "id": "press_contact_friction",
+   "name": "Compression · silica 50 vol% with contacts and friction beside the resin flow",
+   "form": {
+    "name": "Compression with contacts and friction · silica 50 vol%",
+    "matrix": {
+     "material_id": "epoxy"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Silica 5 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 5.0,
+       "unit": "um"
+      },
+      "fraction": {
+       "value": 50,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 25,
+     "voxel_um": 0.5,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1,
+     "arrangement": "pressed",
+     "press_compression": 30,
+     "press_rate": 1,
+     "press_lateral": "xy",
+     "press_contact": true
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   },
+   "description": "What a dense compound resists a press with. Silica spheres of 5 µm at 50 vol% in an epoxy, a 25 µm RVE pressed by 30 % along z at 1 1/s with its sides free. The run solves the resin's flow on the voxels step by step (the compressed structure and its fields come from it), and presses the same spheres as rigid bodies by particle dynamics with lubrication films of their real width, contact springs and Coulomb friction (Domain → Particle arrangement → After compression → Contacts and friction; friction coefficient 0.25, roughness 5 nm: the contact inputs of Viscosity → particle dynamics). Result (about 1 min, resin 1 Pa·s at the equivalent shear rate): axial stress 14.4 Pa at the start and 80.2 Pa after 30 % with contacts and friction (26.7 times the plain resin's, 66 % of it carried by contacts, 2.9 contacts per sphere); 162 → 250 Pa by the flow on the voxels, where a film between two spheres is one voxel wide and nothing acts between sliding surfaces (a voxel half the size gave 2.4 times less). The same spheres reach 11.5, 25 and 35 times the plain resin's stress after 30 % for friction coefficients 0, 0.25 and 0.5; the shear viscosity of this suspension by the particle dynamics is 10.9, 23.9 and 35.2 times the resin's. The stress starts low because a generated packing has no contacts yet and builds them as it is pressed. Spheres in one resin without pores or cure, a side free."
   }
  ]
 }

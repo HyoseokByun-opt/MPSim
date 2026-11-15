@@ -510,8 +510,13 @@ FANS_BYTES = 300
 PUMA_ELASTIC_BYTES = 3 * 24 * 8 * 4 + 240
 
 
+TET_ELASTIC_BYTES = 19000     # body-fitted tetrahedral elasticity, lattice mesh of a dense packing (4.9 GB at 64^3)
+
+
 def elastic_bytes(method="fans"):
     """Peak bytes per voxel of one elastic solve of the given method."""
+    if method == "tet":
+        return TET_ELASTIC_BYTES
     return FANS_BYTES if method in ("fans", "fft", None) else PUMA_ELASTIC_BYTES
 
 

@@ -773,6 +773,10 @@ def normalize(form):
         # and thicken towards their gel point; the press closes at the strain
         # rate, or ("stress") no faster than an axial stress allows
         "press_cure": bool(rv.get("press_cure")),
+        # the same spheres also pressed by particle dynamics with lubrication films of their real width and
+        # Coulomb friction (solvers/presscontact.py; the contact inputs of Viscosity - particle dynamics): its
+        # axial stress beside the flow solve's. Spheres in one resin, no pores, no cure, a side free
+        "press_contact": bool(rv.get("press_contact", True)),
         "press_mold_C": _num(rv.get("press_mold_C") if rv.get("press_mold_C") not in (None, "") else 175,
                              "mould temperature", -50, 400),
         "press_control": rv.get("press_control") if rv.get("press_control") in ("rate", "stress") else "rate",
@@ -845,7 +849,22 @@ def normalize(form):
         # of the grid), "puma" PuMA's own solve (MINRES; its isotropic material
         # doubles the shear modulus inside the solve, see solvers/fans.py),
         # "fft" the Moulinec-Suquet spectral scheme
-        "elastic_method": opts.get("elastic_method") if opts.get("elastic_method") in ("fans", "puma", "fft") else "fans",
+        # "tet" (5.10.0): linear elements on the body-fitted tetrahedral mesh (solvers/tetelast.py)
+        "elastic_method": opts.get("elastic_method") if opts.get("elastic_method") in ("fans", "puma", "fft", "tet") else "fans",
+        # the body-fitted mesh of the "tet" methods: "lattice" one node per voxel corner everywhere; "graded" an
+        # octree whose cells follow the particles' sizes (solvers/tetmesh.py) - cells across the smallest dimension
+        # of a particle (tet_res), halvings of the voxel for the finest cell ("auto": as many as the finest
+        # particle needs, three at most), further levels where two particles meet (tet_contact)
+        "tet_mesh": "graded" if opts.get("tet_mesh") == "graded" else "lattice",
+        "tet_res": _num(opts.get("tet_res", 4), "cells across a particle (graded mesh)", 2, 16),
+        "tet_refine": (int(opts["tet_refine"]) if str(opts.get("tet_refine", "auto")).strip() in ("0", "1", "2", "3", "4")
+                       else "auto"),
+        "tet_contact": int(_num(opts.get("tet_contact", 0), "levels at a contact (graded mesh)", 0, 3)),
+        # bonded contacts on the tetrahedral mesh: two particles are joined where their surfaces are closer than
+        # the gap that two touching spheres of their sizes have at tet_neck x the smaller radius from the contact -
+        # a neck of that radius where they touch (0: particles meet at points with matrix around them, a filler
+        # wetted by its resin; 0.1-0.3: sintered or pressed contacts; fitted to a measurement where one exists)
+        "tet_neck": float(_num(opts.get("tet_neck", 0), "neck of a bonded contact / particle radius", 0, 0.9)),
         # elasticity and CTE also with the regions that have a glass transition
         # in their rubbery state (E above Tg, alpha2): the alpha2 of an EMC
         "above_tg": bool(opts.get("above_tg", False)),

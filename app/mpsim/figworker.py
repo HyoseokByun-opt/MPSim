@@ -31,7 +31,11 @@ def _loop(q_in, q_out, threads):
         t0 = time.time()
         try:
             os.makedirs(os.path.dirname(out), exist_ok=True)
-            (V.slice_figure if kind == "slice" else V.render_scene)(view_dir, req, out)
+            if kind == "tet":
+                from . import tetview as TV
+                TV.render(view_dir, req, out)
+            else:
+                (V.slice_figure if kind == "slice" else V.render_scene)(view_dir, req, out)
             q_out.put((name, True, None, time.time() - t0))
         except Exception as e:                                       # noqa: BLE001
             q_out.put((name, False, f"{type(e).__name__}: {e}", time.time() - t0))

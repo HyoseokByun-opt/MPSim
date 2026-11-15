@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.9.0-0b62c4" alt="version 5.9.0">
+  <img src="https://img.shields.io/badge/version-5.10.0-0b62c4" alt="version 5.10.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-105%20checks-2da44e" alt="105 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-111%20checks-2da44e" alt="111 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -124,10 +124,12 @@ The main capabilities are listed below.
   to solve can be replaced by small ones solved again with new arrangements until the 95 % interval of every mean is
   within a target (a statistical RVE after the same paper), and the random seed is a DOE factor.
 - **Thin films.** Periodic in x and y, with the real film thickness in z and every particle inside the film.
-- **Finite elements on a mesh fitted to the particles (5.9.0).** The conduction-type properties can be solved on a
-  tetrahedral mesh that follows the particles' exact surfaces instead of the voxels - no staircase, and a film of matrix
-  between two particles thinner than a voxel carried at its width - with linear elements that give FEniCSx's values to
-  twelve digits on the same mesh. Second order in the voxel size; the grid of the coarse filler is enough for a fine one.
+- **Finite elements on a mesh fitted to the particles (5.9.0, 5.10.0).** The conduction-type properties and, since 5.10.0,
+  the stiffness and thermal expansion can be solved on a tetrahedral mesh that follows the particles' exact surfaces
+  instead of the voxels - no staircase, and a film of matrix between two particles thinner than a voxel carried at its
+  width - with linear elements that give FEniCSx's values to twelve digits on the same mesh. The mesh is the lattice of
+  the voxel corners or an octree graded by the particles' sizes; the multigrid solve runs on all cores; every FEM result
+  is drawn in 3D on the mesh itself, the voxel solver's beside it.
 - **Conduction.** Thermal, electrical, dielectric and magnetic conduction with a periodic finite-volume solver
   (multi-core, FFT-preconditioned; its operator is NASA PuMA's finite-volume operator, with periodic instead of fixed
   faces) and, alternatively, the finite elements of NASA PuMA. Interfacial thermal resistance
@@ -418,8 +420,12 @@ elements, conjugate gradients with algebraic multigrid (PyAMG: N. Bell, L. N. Ol
 **7**, 4142 (2022), [doi:10.21105/joss.04142](https://doi.org/10.21105/joss.04142)). The finite volume stays the default.
 
 <p align="center">
-  <img src="docs/images/fem_showcase.png" alt="Heat flux in a section of an alumina and BN compound on voxels and on the body-fitted tetrahedral mesh, and the conductivity against the grid for both" width="100%">
+  <img src="docs/images/fem3d_heat.png" alt="Heat flux of an alumina and BN compound in 3D: finite volume on the voxels beside finite elements on the tetrahedral mesh fitted to the particles, same camera and colour scale" width="100%">
 </p>
+
+The heat flux of the compound of the first table at 64³, with one camera and one colour scale: on the voxels the particles
+are staircases that conduct wherever their voxels touch (3.87 W/m·K); on the fitted mesh they are the spheres and platelets
+the generator placed, with resin between them (1.83 W/m·K). Every FEM solve adds this figure to its results (5.10.0).
 
 Alumina spheres (4 µm, log-normal) 45 vol% with BN platelets 5 vol% in epoxy (k 30 / 60 / 0.2 W/m·K), the same particles
 drawn on every grid, k<sub>z</sub> in W/m·K:
@@ -447,6 +453,71 @@ Spheres of 4 µm (35 vol%) with spheres of 0.8 µm (15 vol%), k 100 : 1:
   by 9 % over the same grids.
 - **A filler five times finer than another** needs no finer grid with the FEM: with the small spheres 3 voxels across it
   is within 9 % of its value on the finest grid, where the finite volume is 56 % above its own.
+- **Stiffness and thermal expansion on the same mesh (5.10.0).** *Solver settings → Elasticity and CTE → Finite elements
+  on a tetrahedral mesh fitted to the particles*: linear displacement elements, the six strains and the thermal load
+  solved together on all cores, films of matrix between particles as interface elements with the stiffness of a thin layer
+  held between two stiff faces. The same particles on finer and finer grids, mean of three directions:
+
+  | Grid | Silica 60 vol%: voxel elements | Silica 60 vol%: FEM | Alumina 45 + BN 5 vol%: voxel elements | Alumina 45 + BN 5 vol%: FEM |
+  |---|---|---|---|---|
+  | 32³ | 25.0 GPa, 10.1 ppm/K | **16.2 GPa, 15.2 ppm/K** | 45.6 GPa, 12.7 ppm/K | **16.5 GPa, 21.8 ppm/K** |
+  | 64³ | 20.9, 12.3 | **15.7, 15.6** | 32.1, 15.4 | **16.2, 22.0** |
+  | 128³ | 18.3, 13.9 | | 25.0, 17.7 | 16.1, 22.1 (80³) |
+  | 192³ | 17.4, 14.6 | | 22.3, 18.8 | |
+
+  The voxel values fall with every refinement and are not converged at 192³: touching particles are bonded over a patch
+  of voxel faces that shrinks with the grid. On the same mesh FEniCSx gives the FEM's stiffness and thermal stress to
+  twelve digits (C<sub>11</sub> 5.474604387709 against 5.474604387705). Interfaces are bonded; the FEM takes about four
+  times longer than the voxel elements (79 s against 19 s at 64³) and 4.9 GB there.
+
+  **Which value is right: a measured benchmark.** J. C. Smith (*J. Res. Natl. Bur. Stand. A* **80A**, 45 (1976),
+  [doi:10.6028/jres.080A.008](https://doi.org/10.6028/jres.080A.008)) measured an epoxy (3.01 GPa, ν 0.394) filled with
+  silane-coated glass spheres of 1 to 30 µm (76 GPa, ν 0.23) in tension. The same compounds, 48³ grid:
+
+  | Volume fraction | Measured E | FEM | Voxel elements | Voxel elements, 144³ |
+  |---|---|---|---|---|
+  | 0.2251 | 5.08 GPa | **5.13** (+0.9 %) | 5.82 (+15 %) | 5.22 |
+  | 0.3025 | 6.01 | **6.32** (+5.2 %) | 7.62 (+27 %) | 6.52 |
+  | 0.3960 | 7.94 | **8.22** (+3.5 %) | 10.68 (+35 %) | 8.61 |
+  | 0.4960 | 12.09 | **11.22** (−7.2 %) | 16.16 (+34 %) | 12.13 |
+
+  Spheres wetted by their resin meet at points with resin around them - the structure the FEM solves.
+
+  **Bonded contacts (5.10.0).** Particles that were sintered or pressed together are joined over an area. *Solver settings →
+  Bonded contacts: neck radius / particle radius* joins two particles where their surfaces come close: a neck of that radius
+  where they touch, smaller where a gap is left, as material of the particles (conduction and elasticity, lattice and graded
+  mesh). AlSiC with 63 vol% SiC and a measured 8.21 ppm/K (Guo et al., the baseplate preset): 9.23 / 9.15 / 8.86 / 8.20 ppm/K
+  for a neck of 0 / 0.3 / 0.45 / 0.6, inside the Hashin–Shtrikman range of 8.05 (SiC a connected skeleton) to 9.51. The neck
+  is fitted to one measurement and then predicts the material's other properties, as an interface resistance is.
+
+  <p align="center">
+    <img src="docs/images/fem3d_stress.png" alt="Thermal stress of a silica-filled epoxy in 3D: voxel finite elements beside the tetrahedral FEM fitted to the particles" width="100%">
+  </p>
+  <p align="center">
+    <img src="docs/images/elastic_grid.png" alt="Young's modulus and thermal expansion against the grid for voxel elements and the tetrahedral FEM, two compounds" width="80%">
+  </p>
+
+- **A graded mesh for blends of very different sizes (5.10.0).** The lattice mesh carries the resolution of the finest
+  particle through the whole RVE. *Tetrahedral mesh → Graded* builds an octree whose cells are as small as the particle
+  they describe (2:1 balance, no hanging nodes, cut at the exact surfaces like the lattice; its finest cell may be smaller
+  than the voxel). Measured against the lattice mesh of the same finest cell: grains of 3 µm with 0.6 vol% fibres 20 times
+  thinner need 3.6 times fewer tetrahedra, and 14 times fewer one level finer, where the lattice mesh (133 million
+  tetrahedra) is beyond a 16 GB computer; dense blends of spheres 5:1 and 10:1, whose fines fill the gaps everywhere,
+  save 15 and 31 % - the count follows the surface area to be resolved, not the mesher.
+
+  <p align="center">
+    <img src="docs/images/graded_mesh.png" alt="Graded tetrahedral mesh of irregular grains with thin copper fibres, coloured by the heat flux" width="70%">
+  </p>
+
+- **Compression with contacts and friction (5.10.0).** The compression of a dense compound was the resin's flow on the
+  voxels alone: a film between two spheres one voxel wide, nothing between sliding surfaces - its stress fell 2.4 times on a
+  voxel half the size and had no friction. The same spheres are now also pressed by particle dynamics with lubrication films
+  of their real width, contact springs and Coulomb friction (the pair laws of the viscosity analysis in a box shortened
+  along z): silica of 5 µm at 50 vol% reaches 11.5 / 25 / 35 times the plain resin's stress after 30 % for a friction
+  coefficient of 0 / 0.25 / 0.5, where the shear viscosity of the same suspension is 10.9 / 23.9 / 35.2 times the resin's.
+  The red curve in the Compression box; spheres in one resin without pores or cure.
+- **On all cores (5.10.0).** The multigrid cycle of the FEM runs on all cores on a block of right-hand sides: a conduction
+  solve at 64³ takes 7.2 s (15.2 s in 5.9.0; finite volume 0.5 s).
 - **The same elements as FEniCS.** FEniCSx runs on Linux; MPSim's elements run wherever MPSim does. On the mesh MPSim
   writes, DOLFINx 0.11 (I. A. Baratta et al., Zenodo (2023), [doi:10.5281/zenodo.10447666](https://doi.org/10.5281/zenodo.10447666))
   gives the same conductivity to all twelve digits printed (1.16977753126 on a sphere, a box and a cylinder of three
@@ -627,7 +698,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **105 problems with known solutions** (65 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **111 problems with known solutions** (70 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -857,7 +928,7 @@ app/
     doe.py, optimise.py, calibrate.py, links.py        studies, surrogate models, calibration, linked inputs
     visual.py, report.py viewer data, publication figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (68 materials), presets.json (56 presets)
+    data/                materials.json (68 materials), presets.json (61 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README images (the user guides are attached to the releases)
@@ -895,7 +966,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.9.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.10.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

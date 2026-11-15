@@ -283,7 +283,9 @@ def write(out_dir, r):
                 f"({side}) while its resins flowed - three-dimensional creeping flow of every resin on the voxels, the "
                 f"filler spheres rigid, the pores a compressible gas - in {pz['steps']} steps; box "
                 + " × ".join(_fmt(v) for v in pz["box0_um"]) + " → " + " × ".join(_fmt(v) for v in pz["box_um"])
-                + f" µm, axial stress at the end {_fmt(-pz['series']['sigma_zz_Pa'][-1])} Pa.")
+                + f" µm, axial stress at the end {_fmt(-pz['series']['sigma_zz_Pa'][-1])} Pa by the resin's flow on the voxels"
+                + (f"; {_fmt(-pz['contact']['sigma_zz_Pa'][-1])} Pa by particle dynamics with lubrication films of their real width "
+                   f"and frictional contacts (friction coefficient {_fmt(pz['contact']['mu_f'])})" if pz.get("contact") else "") + ".")
         if (pz.get("pore_fraction") or [0])[0] > 0:
             ptxt += f" Pores {_fmt(100 * pz['pore_fraction'][0])} → {_fmt(100 * pz['pore_fraction'][1])} vol%."
         cu = pz.get("cure")
@@ -1042,7 +1044,10 @@ def _methods(r):
         m = {"fans": "FANS - PuMA's periodic Q1 voxel elements solved by conjugate gradients preconditioned with a "
                      "homogeneous reference medium (FFT)",
              "puma": "NASA PuMA periodic Q1 finite elements with a thermal eigenstrain load from PuMA's element matrices",
-             "fft": "the Moulinec-Suquet spectral scheme"}.get(em, em)
+             "fft": "the Moulinec-Suquet spectral scheme",
+             "tet": "linear finite elements on a tetrahedral mesh fitted to the particles' exact surfaces (films of "
+                    "matrix between particles as interface elements), multigrid-preconditioned conjugate gradients"
+             }.get(em, em)
         out.append(f"Elasticity and thermal expansion: {m}; six unit strains and an isotropic thermal load"
                    + ("; the mechanical test from the same stiffness" if "mechtest" in an else "") + ".")
     if "thermomech" in an:
@@ -1106,7 +1111,7 @@ def _methods_short(r):
         out.append("conduction " + ("NASA PuMA FV" if be == "puma_fv" else "NASA PuMA FE"
                                     if o.get("cond_method") == "fe" and be != "builtin" else "built-in periodic FV"))
     if an & {"cte", "mechtest"}:
-        out.append("elasticity " + {"fans": "FANS", "puma": "NASA PuMA FE", "fft": "FFT"}.get(o.get("elastic_method", "fans"), ""))
+        out.append("elasticity " + {"fans": "FANS", "puma": "NASA PuMA FE", "fft": "FFT", "tet": "body-fitted tetrahedral FE"}.get(o.get("elastic_method", "fans"), ""))
     if an & {"permeability", "filtration", "acoustics"}:
         out.append("flow NASA PuMA Stokes FE")
     if "tortuosity" in an:

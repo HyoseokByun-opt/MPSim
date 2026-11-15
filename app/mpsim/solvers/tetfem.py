@@ -23,6 +23,11 @@ shapes instead:
 This is the conformal decomposition finite element method (Noble, Newren, Lechman 2010) on a regular background
 mesh. On the same mesh FEniCSx gives the same numbers (self-test), since both solve the same P1 Galerkin system.
 
+Bonded contacts (5.10.0): with neck > 0, the points within half a bond width of the surfaces of two particles
+belong to the particles (the neck is their material), so that the two are joined as overlapping particles are -
+the neck of a sintered, pressed or reacted contact, of radius neck x the smaller particle's radius where the two
+touch, smaller where a gap is left, none where the gap exceeds the width (neck_pairs).
+
 Reductions: interfaces are perfect except for the films above (an interface or contact resistance entered by the
 user lives on voxel faces and stays with the finite-volume solver); a cut closer than DELTA of an edge to its end
 is moved to DELTA (bounded element shapes); a film thinner than GAP_MIN of the lattice conducts as GAP_MIN.
@@ -56,7 +61,8 @@ _FACES = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], np.int64)
 # the mesh
 # =========================================================================
 @njit(cache=True)
-def _inside(m, x, y, z, codes, centers, R, P, planes, nfaces, Lg, gper):
+def _inside_by(m, x, y, z, codes, centers, R, P, planes, nfaces, Lg, gper, grow):
+    """Whether particle m, drawn `grow` larger all round, holds the point."""
     dx = x - centers[m, 0]
     dy = y - centers[m, 1]
     dz = z - centers[m, 2]
@@ -69,17 +75,31 @@ def _inside(m, x, y, z, codes, centers, R, P, planes, nfaces, Lg, gper):
     lx = R[m, 0, 0] * dx + R[m, 0, 1] * dy + R[m, 0, 2] * dz
     ly = R[m, 1, 0] * dx + R[m, 1, 1] * dy + R[m, 1, 2] * dz
     lz = R[m, 2, 0] * dx + R[m, 2, 1] * dy + R[m, 2, 2] * dz
-    return SH.inside_local(codes[m], lx, ly, lz, P[m], planes, nfaces, 0.0)
+    return SH.inside_local(codes[m], lx, ly, lz, P[m], planes, nfaces, -grow)
 
 
 @njit(cache=True)
-def _exit(m, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper):
+def _inside(m, x, y, z, codes, centers, R, P, planes, nfaces, Lg, gper, nk):
+    """Whether the point belongs to particle m: inside its shape, or in one of its bonded contacts - within half
+    the pair's bond width of both surfaces (nk: for every particle its partners and those half widths)."""
+    if _inside_by(m, x, y, z, codes, centers, R, P, planes, nfaces, Lg, gper, 0.0):
+        return True
+    nptr, nidx, nhalf = nk
+    for q in range(nptr[m], nptr[m + 1]):
+        if (_inside_by(m, x, y, z, codes, centers, R, P, planes, nfaces, Lg, gper, nhalf[q])
+                and _inside_by(nidx[q], x, y, z, codes, centers, R, P, planes, nfaces, Lg, gper, nhalf[q])):
+            return True
+    return False
+
+
+@njit(cache=True)
+def _exit(m, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper, nk):
     """Where the segment a -> b leaves particle m (a inside): the share of the way, by bisection."""
     lo, hi = 0.0, 1.0
     for _ in range(18):
         t = 0.5 * (lo + hi)
         if _inside(m, ax + t * (bx - ax), ay + t * (by - ay), az + t * (bz - az), codes, centers, R, P, planes,
-                   nfaces, Lg, gper):
+                   nfaces, Lg, gper, nk):
             lo = t
         else:
             hi = t
@@ -87,7 +107,7 @@ def _exit(m, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, g
 
 
 @njit(cache=True)
-def _crossings(idx, n, per, h, owner, codes, centers, R, P, planes, nfaces, Lg, gper, delta, pts, tcut, gedge, film):
+def _crossings(idx, n, per, h, owner, codes, centers, R, P, planes, nfaces, Lg, gper, delta, pts, tcut, gedge, film, nk):
     """Where every cut edge crosses the particle surfaces. An edge from one particle to another leaves the first
     at t1 and enters the second at t2: its vertex sits half way; with t2 > t1 a film of matrix lies between
     (film[e] = 1, gedge[e] its width along the edge), else the two overlap (film[e] = 0, a direct contact)."""
@@ -112,12 +132,12 @@ def _crossings(idx, n, per, h, owner, codes, centers, R, P, planes, nfaces, Lg, 
         film[e] = 0
         gedge[e] = 0.0
         if oa > 0 and ob == 0:
-            t = _exit(oa - 1, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper)
+            t = _exit(oa - 1, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
         elif oa == 0 and ob > 0:
-            t = 1.0 - _exit(ob - 1, bx, by, bz, ax, ay, az, codes, centers, R, P, planes, nfaces, Lg, gper)
+            t = 1.0 - _exit(ob - 1, bx, by, bz, ax, ay, az, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
         else:
-            t1 = _exit(oa - 1, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper)
-            t2 = 1.0 - _exit(ob - 1, bx, by, bz, ax, ay, az, codes, centers, R, P, planes, nfaces, Lg, gper)
+            t1 = _exit(oa - 1, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
+            t2 = 1.0 - _exit(ob - 1, bx, by, bz, ax, ay, az, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
             t = 0.5 * (t1 + t2)
             if t2 > t1:
                 film[e] = 1
@@ -163,7 +183,7 @@ def _prism(fill, tets, mat, cell, nt, v, r, m, ci):
 
 
 @njit(cache=True)
-def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin, wside):
+def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin, wside, wn):
     """A triangle of a particle's cut surface: to each of its vertices that lie on a film, a third of its area
     over half the film's width normal to it (e: the cut edge, s: the side of the edge the particle is on, d:
     the edge's direction)."""
@@ -186,10 +206,210 @@ def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin,
         if g < gmin:
             g = gmin
         wside[e, sd] += 2.0 * (area / 3.0) / g
+        if wn.shape[0] > 1:
+            sg = 1.0 if nx * d[0] + ny * d[1] + nz * d[2] >= 0.0 else -1.0
+            wgt = sg * 2.0 * (area / 3.0) / g / nrm
+            wn[e, sd, 0] += wgt * nx
+            wn[e, sd, 1] += wgt * ny
+            wn[e, sd, 2] += wgt * nz
 
 
 @njit(cache=True)
-def _decompose(n, per, lab, owner, ecut, nn, h, tcut, gedge, film, gmin, fill, tets, mat, cell, wside):
+def _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, film, gmin, wside, wn, sid, mid, rk, cx,
+             dr, pr, rr, xs, ys, pid, prk, pln):
+    """One background tetrahedron whose corners (v, at X, unwrapped) lie in different particles o (0: the matrix),
+    divided by particle. ed[m, q] (m < q): the cut edge between corners m and q, measured from m, or -1. Returns
+    (tetrahedra so far, particles in it)."""
+    npoly = 0
+    ngroup = 0
+    nmat = 0
+    for m in range(4):
+        for q in range(m + 1, 4):
+            if o[m] != o[q]:
+                e = ed[m, q]
+                rk[m, q] = nn + e
+                if film[e] == 1:
+                    sid[m, q] = nn + 3 * e
+                    mid[m, q] = nn + 3 * e + 1
+                    sid[q, m] = nn + 3 * e + 2
+                else:
+                    sid[m, q] = nn + 3 * e
+                    mid[m, q] = nn + 3 * e
+                    sid[q, m] = nn + 3 * e
+                t = tcut[e]
+                for a in range(3):
+                    cx[m, q, a] = X[m, a] + t * (X[q, a] - X[m, a])
+                    dr[m, q, a] = X[q, a] - X[m, a]
+            else:
+                rk[m, q] = -1
+                sid[m, q] = -1
+                mid[m, q] = -1
+                sid[q, m] = -1
+            ed[q, m] = ed[m, q]
+            rk[q, m] = rk[m, q]
+            mid[q, m] = mid[m, q]
+            for a in range(3):
+                cx[q, m, a] = cx[m, q, a]
+                dr[q, m, a] = dr[m, q, a]
+    for m in range(4):
+        if o[m] == 0:
+            nmat += 1
+            continue
+        first = True
+        for q in range(m):
+            if o[q] == o[m]:
+                first = False
+        if not first:
+            continue
+        ngroup += 1
+        kx, ky = 0, 0
+        for q in range(4):
+            if o[q] == o[m]:
+                xs[kx] = q
+                kx += 1
+            else:
+                ys[ky] = q
+                ky += 1
+        if kx == 1:
+            x = xs[0]
+            y0, y1, y2 = ys[0], ys[1], ys[2]
+            nt = _emit(fill, tets, mat, cell, nt, v[x], sid[x, y0], sid[x, y1], sid[x, y2], lb[x], ci)
+            pid[npoly, 0], prk[npoly, 0] = mid[x, y0], rk[x, y0]
+            pid[npoly, 1], prk[npoly, 1] = mid[x, y1], rk[x, y1]
+            pid[npoly, 2], prk[npoly, 2] = mid[x, y2], rk[x, y2]
+            pln[npoly] = 3
+            if fill:
+                _tri_film(cx[x, y0], cx[x, y1], cx[x, y2], ed[x, y0], ed[x, y1], ed[x, y2],
+                          0 if x < y0 else 1, 0 if x < y1 else 1, 0 if x < y2 else 1,
+                          dr[x, y0], dr[x, y1], dr[x, y2], gedge, film, gmin, wside, wn)
+        elif kx == 2:
+            x1, x2, y1, y2 = xs[0], xs[1], ys[0], ys[1]
+            pr[0], pr[1], pr[2] = v[x1], sid[x1, y1], sid[x1, y2]
+            pr[3], pr[4], pr[5] = v[x2], sid[x2, y1], sid[x2, y2]
+            rr[0], rr[1], rr[2] = v[x1], rk[x1, y1], rk[x1, y2]
+            rr[3], rr[4], rr[5] = v[x2], rk[x2, y1], rk[x2, y2]
+            nt = _prism(fill, tets, mat, cell, nt, pr, rr, lb[x1], ci)
+            # the cut surface, around: (x1,y1) (x1,y2) (x2,y2) (x2,y1)
+            pid[npoly, 0], prk[npoly, 0] = mid[x1, y1], rk[x1, y1]
+            pid[npoly, 1], prk[npoly, 1] = mid[x1, y2], rk[x1, y2]
+            pid[npoly, 2], prk[npoly, 2] = mid[x2, y2], rk[x2, y2]
+            pid[npoly, 3], prk[npoly, 3] = mid[x2, y1], rk[x2, y1]
+            pln[npoly] = 4
+            if fill:
+                s11 = 0 if x1 < y1 else 1
+                s12 = 0 if x1 < y2 else 1
+                s22 = 0 if x2 < y2 else 1
+                s21 = 0 if x2 < y1 else 1
+                if min(rk[x1, y1], rk[x2, y2]) < min(rk[x1, y2], rk[x2, y1]):
+                    _tri_film(cx[x1, y1], cx[x1, y2], cx[x2, y2], ed[x1, y1], ed[x1, y2], ed[x2, y2],
+                              s11, s12, s22, dr[x1, y1], dr[x1, y2], dr[x2, y2], gedge, film, gmin,
+                              wside, wn)
+                    _tri_film(cx[x1, y1], cx[x2, y2], cx[x2, y1], ed[x1, y1], ed[x2, y2], ed[x2, y1],
+                              s11, s22, s21, dr[x1, y1], dr[x2, y2], dr[x2, y1], gedge, film, gmin,
+                              wside, wn)
+                else:
+                    _tri_film(cx[x1, y2], cx[x2, y2], cx[x2, y1], ed[x1, y2], ed[x2, y2], ed[x2, y1],
+                              s12, s22, s21, dr[x1, y2], dr[x2, y2], dr[x2, y1], gedge, film, gmin,
+                              wside, wn)
+                    _tri_film(cx[x1, y2], cx[x2, y1], cx[x1, y1], ed[x1, y2], ed[x2, y1], ed[x1, y1],
+                              s12, s21, s11, dr[x1, y2], dr[x2, y1], dr[x1, y1], gedge, film, gmin,
+                              wside, wn)
+        else:
+            x1, x2, x3, y = xs[0], xs[1], xs[2], ys[0]
+            pr[0], pr[1], pr[2] = sid[x1, y], sid[x2, y], sid[x3, y]
+            pr[3], pr[4], pr[5] = v[x1], v[x2], v[x3]
+            rr[0], rr[1], rr[2] = rk[x1, y], rk[x2, y], rk[x3, y]
+            rr[3], rr[4], rr[5] = v[x1], v[x2], v[x3]
+            nt = _prism(fill, tets, mat, cell, nt, pr, rr, lb[x1], ci)
+            pid[npoly, 0], prk[npoly, 0] = mid[x1, y], rk[x1, y]
+            pid[npoly, 1], prk[npoly, 1] = mid[x2, y], rk[x2, y]
+            pid[npoly, 2], prk[npoly, 2] = mid[x3, y], rk[x3, y]
+            pln[npoly] = 3
+            if fill:
+                _tri_film(cx[x1, y], cx[x2, y], cx[x3, y], ed[x1, y], ed[x2, y], ed[x3, y],
+                          0 if x1 < y else 1, 0 if x2 < y else 1, 0 if x3 < y else 1,
+                          dr[x1, y], dr[x2, y], dr[x3, y], gedge, film, gmin, wside, wn)
+        npoly += 1
+    if nmat == 0 and ngroup < 3:
+        return nt, ngroup
+    # the matrix that is left: its hub
+    hub = -1
+    if nmat > 0:
+        for m in range(4):
+            if o[m] == 0 and (hub < 0 or v[m] < hub):
+                hub = v[m]
+    else:
+        hr = -1
+        for m in range(4):
+            for q in range(m + 1, 4):
+                if rk[m, q] >= 0 and (hr < 0 or rk[m, q] < hr):
+                    hr = rk[m, q]
+                    hub = mid[m, q]
+    # what the matrix keeps of the four faces
+    for f in range(4):
+        a, b, c = _FACES[f, 0], _FACES[f, 1], _FACES[f, 2]
+        fm = (1 if o[a] == 0 else 0) + (1 if o[b] == 0 else 0) + (1 if o[c] == 0 else 0)
+        if fm == 3:
+            pid[npoly, 0], pid[npoly, 1], pid[npoly, 2] = v[a], v[b], v[c]
+            prk[npoly, 0], prk[npoly, 1], prk[npoly, 2] = v[a], v[b], v[c]
+            pln[npoly] = 3
+            npoly += 1
+        elif fm == 2:
+            if o[a] != 0:
+                x, m1, m2 = a, b, c
+            elif o[b] != 0:
+                x, m1, m2 = b, a, c
+            else:
+                x, m1, m2 = c, a, b
+            pid[npoly, 0], prk[npoly, 0] = v[m1], v[m1]
+            pid[npoly, 1], prk[npoly, 1] = v[m2], v[m2]
+            pid[npoly, 2], prk[npoly, 2] = mid[x, m2], rk[x, m2]
+            pid[npoly, 3], prk[npoly, 3] = mid[x, m1], rk[x, m1]
+            pln[npoly] = 4
+            npoly += 1
+        elif fm == 1:
+            if o[a] == 0:
+                m1, x1, x2 = a, b, c
+            elif o[b] == 0:
+                m1, x1, x2 = b, a, c
+            else:
+                m1, x1, x2 = c, a, b
+            pid[npoly, 0], prk[npoly, 0] = v[m1], v[m1]
+            pid[npoly, 1], prk[npoly, 1] = mid[x1, m1], rk[x1, m1]
+            if o[x1] == o[x2]:
+                pid[npoly, 2], prk[npoly, 2] = mid[x2, m1], rk[x2, m1]
+                pln[npoly] = 3
+            else:
+                pid[npoly, 2], prk[npoly, 2] = mid[x1, x2], rk[x1, x2]
+                pid[npoly, 3], prk[npoly, 3] = mid[x2, m1], rk[x2, m1]
+                pln[npoly] = 4
+            npoly += 1
+        elif o[a] != o[b] and o[a] != o[c] and o[b] != o[c]:
+            pid[npoly, 0], prk[npoly, 0] = mid[a, b], rk[a, b]
+            pid[npoly, 1], prk[npoly, 1] = mid[b, c], rk[b, c]
+            pid[npoly, 2], prk[npoly, 2] = mid[a, c], rk[a, c]
+            pln[npoly] = 3
+            npoly += 1
+    for q in range(npoly):
+        skip = False
+        for a in range(pln[q]):
+            if pid[q, a] == hub:
+                skip = True
+        if skip:
+            continue
+        if pln[q] == 3:
+            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 0], pid[q, 1], pid[q, 2], 0, ci)
+        elif min(prk[q, 0], prk[q, 2]) < min(prk[q, 1], prk[q, 3]):
+            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 0], pid[q, 1], pid[q, 2], 0, ci)
+            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 0], pid[q, 2], pid[q, 3], 0, ci)
+        else:
+            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 1], pid[q, 2], pid[q, 3], 0, ci)
+            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 1], pid[q, 3], pid[q, 0], 0, ci)
+    return nt, ngroup
+
+
+@njit(cache=True)
+def _decompose(n, per, lab, owner, ecut, nn, h, tcut, gedge, film, gmin, fill, tets, mat, cell, wside, wn):
     """The tetrahedra of the cut lattice (fill False: only counted). Returns (tetrahedra, lattice tetrahedra
     that hold two or more particles)."""
     n0, n1, n2 = n[0], n[1], n[2]
@@ -246,192 +466,14 @@ def _decompose(n, per, lab, owner, ecut, nn, h, tcut, gedge, film, gmin, fill, t
                             if o[m] != o[q]:
                                 et = _ETYPE[(off[q, 0] - off[m, 0]) * 4 + (off[q, 1] - off[m, 1]) * 2
                                             + (off[q, 2] - off[m, 2])]
-                                e = ecut[v[m] * 7 + et]
-                                ed[m, q] = e
-                                rk[m, q] = nn + e
-                                if film[e] == 1:
-                                    sid[m, q] = nn + 3 * e
-                                    mid[m, q] = nn + 3 * e + 1
-                                    sid[q, m] = nn + 3 * e + 2
-                                else:
-                                    sid[m, q] = nn + 3 * e
-                                    mid[m, q] = nn + 3 * e
-                                    sid[q, m] = nn + 3 * e
-                                t = tcut[e]
-                                for a in range(3):
-                                    cx[m, q, a] = X[m, a] + t * (X[q, a] - X[m, a])
-                                    dr[m, q, a] = X[q, a] - X[m, a]
+                                ed[m, q] = ecut[v[m] * 7 + et]
                             else:
                                 ed[m, q] = -1
-                                rk[m, q] = -1
-                                sid[m, q] = -1
-                                mid[m, q] = -1
-                                sid[q, m] = -1
                             ed[q, m] = ed[m, q]
-                            rk[q, m] = rk[m, q]
-                            mid[q, m] = mid[m, q]
-                            for a in range(3):
-                                cx[q, m, a] = cx[m, q, a]
-                                dr[q, m, a] = dr[m, q, a]
-                    npoly = 0
-                    ngroup = 0
-                    nmat = 0
-                    for m in range(4):
-                        if o[m] == 0:
-                            nmat += 1
-                            continue
-                        first = True
-                        for q in range(m):
-                            if o[q] == o[m]:
-                                first = False
-                        if not first:
-                            continue
-                        ngroup += 1
-                        kx, ky = 0, 0
-                        for q in range(4):
-                            if o[q] == o[m]:
-                                xs[kx] = q
-                                kx += 1
-                            else:
-                                ys[ky] = q
-                                ky += 1
-                        if kx == 1:
-                            x = xs[0]
-                            y0, y1, y2 = ys[0], ys[1], ys[2]
-                            nt = _emit(fill, tets, mat, cell, nt, v[x], sid[x, y0], sid[x, y1], sid[x, y2], lb[x], ci)
-                            pid[npoly, 0], prk[npoly, 0] = mid[x, y0], rk[x, y0]
-                            pid[npoly, 1], prk[npoly, 1] = mid[x, y1], rk[x, y1]
-                            pid[npoly, 2], prk[npoly, 2] = mid[x, y2], rk[x, y2]
-                            pln[npoly] = 3
-                            if fill:
-                                _tri_film(cx[x, y0], cx[x, y1], cx[x, y2], ed[x, y0], ed[x, y1], ed[x, y2],
-                                          0 if x < y0 else 1, 0 if x < y1 else 1, 0 if x < y2 else 1,
-                                          dr[x, y0], dr[x, y1], dr[x, y2], gedge, film, gmin, wside)
-                        elif kx == 2:
-                            x1, x2, y1, y2 = xs[0], xs[1], ys[0], ys[1]
-                            pr[0], pr[1], pr[2] = v[x1], sid[x1, y1], sid[x1, y2]
-                            pr[3], pr[4], pr[5] = v[x2], sid[x2, y1], sid[x2, y2]
-                            rr[0], rr[1], rr[2] = v[x1], rk[x1, y1], rk[x1, y2]
-                            rr[3], rr[4], rr[5] = v[x2], rk[x2, y1], rk[x2, y2]
-                            nt = _prism(fill, tets, mat, cell, nt, pr, rr, lb[x1], ci)
-                            # the cut surface, around: (x1,y1) (x1,y2) (x2,y2) (x2,y1)
-                            pid[npoly, 0], prk[npoly, 0] = mid[x1, y1], rk[x1, y1]
-                            pid[npoly, 1], prk[npoly, 1] = mid[x1, y2], rk[x1, y2]
-                            pid[npoly, 2], prk[npoly, 2] = mid[x2, y2], rk[x2, y2]
-                            pid[npoly, 3], prk[npoly, 3] = mid[x2, y1], rk[x2, y1]
-                            pln[npoly] = 4
-                            if fill:
-                                s11 = 0 if x1 < y1 else 1
-                                s12 = 0 if x1 < y2 else 1
-                                s22 = 0 if x2 < y2 else 1
-                                s21 = 0 if x2 < y1 else 1
-                                if min(rk[x1, y1], rk[x2, y2]) < min(rk[x1, y2], rk[x2, y1]):
-                                    _tri_film(cx[x1, y1], cx[x1, y2], cx[x2, y2], ed[x1, y1], ed[x1, y2], ed[x2, y2],
-                                              s11, s12, s22, dr[x1, y1], dr[x1, y2], dr[x2, y2], gedge, film, gmin,
-                                              wside)
-                                    _tri_film(cx[x1, y1], cx[x2, y2], cx[x2, y1], ed[x1, y1], ed[x2, y2], ed[x2, y1],
-                                              s11, s22, s21, dr[x1, y1], dr[x2, y2], dr[x2, y1], gedge, film, gmin,
-                                              wside)
-                                else:
-                                    _tri_film(cx[x1, y2], cx[x2, y2], cx[x2, y1], ed[x1, y2], ed[x2, y2], ed[x2, y1],
-                                              s12, s22, s21, dr[x1, y2], dr[x2, y2], dr[x2, y1], gedge, film, gmin,
-                                              wside)
-                                    _tri_film(cx[x1, y2], cx[x2, y1], cx[x1, y1], ed[x1, y2], ed[x2, y1], ed[x1, y1],
-                                              s12, s21, s11, dr[x1, y2], dr[x2, y1], dr[x1, y1], gedge, film, gmin,
-                                              wside)
-                        else:
-                            x1, x2, x3, y = xs[0], xs[1], xs[2], ys[0]
-                            pr[0], pr[1], pr[2] = sid[x1, y], sid[x2, y], sid[x3, y]
-                            pr[3], pr[4], pr[5] = v[x1], v[x2], v[x3]
-                            rr[0], rr[1], rr[2] = rk[x1, y], rk[x2, y], rk[x3, y]
-                            rr[3], rr[4], rr[5] = v[x1], v[x2], v[x3]
-                            nt = _prism(fill, tets, mat, cell, nt, pr, rr, lb[x1], ci)
-                            pid[npoly, 0], prk[npoly, 0] = mid[x1, y], rk[x1, y]
-                            pid[npoly, 1], prk[npoly, 1] = mid[x2, y], rk[x2, y]
-                            pid[npoly, 2], prk[npoly, 2] = mid[x3, y], rk[x3, y]
-                            pln[npoly] = 3
-                            if fill:
-                                _tri_film(cx[x1, y], cx[x2, y], cx[x3, y], ed[x1, y], ed[x2, y], ed[x3, y],
-                                          0 if x1 < y else 1, 0 if x2 < y else 1, 0 if x3 < y else 1,
-                                          dr[x1, y], dr[x2, y], dr[x3, y], gedge, film, gmin, wside)
-                        npoly += 1
-                    if ngroup >= 2:
+                    nt, ng = _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, film, gmin, wside,
+                                      wn, sid, mid, rk, cx, dr, pr, rr, xs, ys, pid, prk, pln)
+                    if ng >= 2:
                         nfilm += 1
-                    if nmat == 0 and ngroup < 3:
-                        continue
-                    # the matrix that is left: its hub
-                    hub = -1
-                    if nmat > 0:
-                        for m in range(4):
-                            if o[m] == 0 and (hub < 0 or v[m] < hub):
-                                hub = v[m]
-                    else:
-                        hr = -1
-                        for m in range(4):
-                            for q in range(m + 1, 4):
-                                if rk[m, q] >= 0 and (hr < 0 or rk[m, q] < hr):
-                                    hr = rk[m, q]
-                                    hub = mid[m, q]
-                    # what the matrix keeps of the four faces
-                    for f in range(4):
-                        a, b, c = _FACES[f, 0], _FACES[f, 1], _FACES[f, 2]
-                        fm = (1 if o[a] == 0 else 0) + (1 if o[b] == 0 else 0) + (1 if o[c] == 0 else 0)
-                        if fm == 3:
-                            pid[npoly, 0], pid[npoly, 1], pid[npoly, 2] = v[a], v[b], v[c]
-                            prk[npoly, 0], prk[npoly, 1], prk[npoly, 2] = v[a], v[b], v[c]
-                            pln[npoly] = 3
-                            npoly += 1
-                        elif fm == 2:
-                            if o[a] != 0:
-                                x, m1, m2 = a, b, c
-                            elif o[b] != 0:
-                                x, m1, m2 = b, a, c
-                            else:
-                                x, m1, m2 = c, a, b
-                            pid[npoly, 0], prk[npoly, 0] = v[m1], v[m1]
-                            pid[npoly, 1], prk[npoly, 1] = v[m2], v[m2]
-                            pid[npoly, 2], prk[npoly, 2] = mid[x, m2], rk[x, m2]
-                            pid[npoly, 3], prk[npoly, 3] = mid[x, m1], rk[x, m1]
-                            pln[npoly] = 4
-                            npoly += 1
-                        elif fm == 1:
-                            if o[a] == 0:
-                                m1, x1, x2 = a, b, c
-                            elif o[b] == 0:
-                                m1, x1, x2 = b, a, c
-                            else:
-                                m1, x1, x2 = c, a, b
-                            pid[npoly, 0], prk[npoly, 0] = v[m1], v[m1]
-                            pid[npoly, 1], prk[npoly, 1] = mid[x1, m1], rk[x1, m1]
-                            if o[x1] == o[x2]:
-                                pid[npoly, 2], prk[npoly, 2] = mid[x2, m1], rk[x2, m1]
-                                pln[npoly] = 3
-                            else:
-                                pid[npoly, 2], prk[npoly, 2] = mid[x1, x2], rk[x1, x2]
-                                pid[npoly, 3], prk[npoly, 3] = mid[x2, m1], rk[x2, m1]
-                                pln[npoly] = 4
-                            npoly += 1
-                        elif o[a] != o[b] and o[a] != o[c] and o[b] != o[c]:
-                            pid[npoly, 0], prk[npoly, 0] = mid[a, b], rk[a, b]
-                            pid[npoly, 1], prk[npoly, 1] = mid[b, c], rk[b, c]
-                            pid[npoly, 2], prk[npoly, 2] = mid[a, c], rk[a, c]
-                            pln[npoly] = 3
-                            npoly += 1
-                    for q in range(npoly):
-                        skip = False
-                        for a in range(pln[q]):
-                            if pid[q, a] == hub:
-                                skip = True
-                        if skip:
-                            continue
-                        if pln[q] == 3:
-                            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 0], pid[q, 1], pid[q, 2], 0, ci)
-                        elif min(prk[q, 0], prk[q, 2]) < min(prk[q, 1], prk[q, 3]):
-                            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 0], pid[q, 1], pid[q, 2], 0, ci)
-                            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 0], pid[q, 2], pid[q, 3], 0, ci)
-                        else:
-                            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 1], pid[q, 2], pid[q, 3], 0, ci)
-                            nt = _emit(fill, tets, mat, cell, nt, hub, pid[q, 1], pid[q, 3], pid[q, 0], 0, ci)
     return nt, nfilm
 
 
@@ -453,7 +495,90 @@ def supported(spec, ginfo, table):
     return None
 
 
-def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, delta=DELTA, log=None):
+NO_NECKS = None
+
+
+def neck_pairs(ginfo, neck, Lg, gper):
+    """The bonded contacts of a structure: for every particle its partners and half the pair's bond width, as
+    (pointers, partners, half widths), and the largest half width. Two particles are bonded where their surfaces
+    are closer than the gap two touching spheres of their sizes have a distance neck x r_s from the contact,
+    neck^2 r_s (r_s + r_b) / (2 r_b) (r: half the smallest dimension of a particle, s the smaller, b the larger) -
+    a neck of radius neck x r_s where the two touch, smaller where a gap is left, none beyond that width.
+    The pairs listed are those whose bounding spheres come that close; the test of a point is exact."""
+    parts = ginfo["particles"]
+    n = len(parts["codes"])
+    if neck <= 0.0 or n < 2:
+        return (np.zeros(n + 1, np.int64), np.zeros(1, np.int64), np.zeros(1)), 0.0
+    from scipy.spatial import cKDTree
+    meta = ginfo.get("poly_meta")
+    rmin = np.array([0.5 * SH.min_dim(int(c), P, meta) for c, P in zip(parts["codes"], parts["P"])], float)
+    rc = np.array([SH.circumradius(int(c), P) for c, P in zip(parts["codes"], parts["P"])], float)
+    box = np.array([Lg[a] if gper[a] else 1e9 * max(Lg) for a in range(3)])
+    c = np.mod(parts["centers"], box) if all(gper) else np.column_stack([np.mod(parts["centers"][:, a], box[a]) if gper[a]
+                                                                      else parts["centers"][:, a] for a in range(3)])
+    tree = cKDTree(c, boxsize=box)
+    order = np.argsort(-rc)
+    rank = np.empty(n, np.int64)
+    rank[order] = np.arange(n)
+    ii, jj, hh = [], [], []
+    for i in order:
+        wmax = neck * neck * rmin[i]                      # no pair with a smaller partner is wider than this
+        for j in tree.query_ball_point(c[i], 2.0 * rc[i] + wmax):
+            if rank[j] <= rank[i]:
+                continue
+            rs, rb = (rmin[j], rmin[i]) if rmin[j] <= rmin[i] else (rmin[i], rmin[j])
+            w = neck * neck * rs * (rs + rb) / (2.0 * rb)
+            d = c[j] - c[i]
+            d -= box * np.round(d / box)
+            if float(np.sqrt((d * d).sum())) <= rc[i] + rc[j] + w:
+                ii += [i, j]
+                jj += [j, i]
+                hh += [0.5 * w, 0.5 * w]
+    if not ii:
+        return (np.zeros(n + 1, np.int64), np.zeros(1, np.int64), np.zeros(1)), 0.0
+    ii, jj, hh = np.array(ii, np.int64), np.array(jj, np.int64), np.array(hh, float)
+    o = np.argsort(ii, kind="stable")
+    nptr = np.zeros(n + 1, np.int64)
+    np.add.at(nptr, ii + 1, 1)
+    return (np.cumsum(nptr), jj[o], hh[o]), float(hh.max())
+
+
+@njit(cache=True)
+def _neck_owners(owner, h, per, codes, centers, R, P, planes, nfaces, Lg, gper, nk, grow):
+    """The lattice nodes in a bonded contact, given to the particle of lower number of the pair (owner: 3D, the
+    particle number + 1 at every node, 0 in the matrix). Returns the nodes changed."""
+    nptr, nidx, nhalf = nk
+    n0, n1, n2 = owner.shape
+    changed = 0
+    for m in range(codes.shape[0]):
+        if nptr[m + 1] == nptr[m]:
+            continue
+        hx, hy, hz = SH.local_half_extents(codes[m], P[m], planes, nfaces)
+        ex = abs(R[m, 0, 0]) * hx + abs(R[m, 1, 0]) * hy + abs(R[m, 2, 0]) * hz + grow
+        ey = abs(R[m, 0, 1]) * hx + abs(R[m, 1, 1]) * hy + abs(R[m, 2, 1]) * hz + grow
+        ez = abs(R[m, 0, 2]) * hx + abs(R[m, 1, 2]) * hy + abs(R[m, 2, 2]) * hz + grow
+        for i in range(int(math.floor((centers[m, 0] - ex) / h)), int(math.ceil((centers[m, 0] + ex) / h)) + 1):
+            ii = i % n0 if per[0] else i
+            if ii < 0 or ii >= n0:
+                continue
+            for j in range(int(math.floor((centers[m, 1] - ey) / h)), int(math.ceil((centers[m, 1] + ey) / h)) + 1):
+                jj = j % n1 if per[1] else j
+                if jj < 0 or jj >= n1:
+                    continue
+                for k in range(int(math.floor((centers[m, 2] - ez) / h)), int(math.ceil((centers[m, 2] + ez) / h)) + 1):
+                    kk = k % n2 if per[2] else k
+                    if kk < 0 or kk >= n2:
+                        continue
+                    o = owner[ii, jj, kk]
+                    if o != 0 and o <= m + 1:
+                        continue
+                    if _inside(m, i * h, j * h, k * h, codes, centers, R, P, planes, nfaces, Lg, gper, nk):
+                        owner[ii, jj, kk] = m + 1
+                        changed += 1
+    return changed
+
+
+def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, delta=DELTA, log=None, neck=0.0):
     """The body-fitted mesh of a generated structure on the lattice of its voxel corners.
 
     N, h, nz: the voxel grid (nz: a film's voxels in z). mat_of_phase[i]: the material label of generator phase
@@ -473,6 +598,16 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
             pad[ax] = (0, 1)
             owner = np.pad(owner, pad, mode="wrap")
     n = np.array(owner.shape, np.int64)
+    parts = ginfo["particles"]
+    planes, nfaces = ginfo["planes"]
+    Lg = np.array([N * h, N * h, nzv * h], float)
+    nk, grow = neck_pairs(ginfo, float(neck), Lg, gper)
+    n_neck_nodes = 0
+    if grow > 0.0:
+        owner = np.ascontiguousarray(owner)
+        n_neck_nodes = _neck_owners(owner, float(h), per, parts["codes"].astype(np.int64),
+                                    np.ascontiguousarray(parts["centers"], float), np.ascontiguousarray(parts["R"], float),
+                                    np.ascontiguousarray(parts["P"], float), planes, nfaces, Lg, gper, nk, grow)
     lut = np.zeros(len(phase_of), np.int64)
     for q, ph in enumerate(phase_of):
         if ph >= 0:
@@ -497,9 +632,6 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
     ne = int(len(idx))
     ecut = np.full(nn * 7, -1, np.int32)
     ecut[idx] = np.arange(ne, dtype=np.int32)
-    parts = ginfo["particles"]
-    planes, nfaces = ginfo["planes"]
-    Lg = np.array([N * h, N * h, nzv * h], float)
     cpt = np.zeros((max(ne, 1), 3))
     tcut = np.zeros(max(ne, 1))
     gedge = np.zeros(max(ne, 1))
@@ -510,15 +642,16 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
         _crossings(idx, n, per, float(h), own, parts["codes"].astype(np.int64),
                    np.ascontiguousarray(parts["centers"], float), np.ascontiguousarray(parts["R"], float),
                    np.ascontiguousarray(parts["P"], float), planes, nfaces, Lg, gper, float(delta), cpt, tcut, gedge,
-                   film_e)
+                   film_e, nk)
     gmin = float(GAP_MIN * h)
     wside = np.zeros((max(ne, 1), 2))
+    wn = np.zeros((max(ne, 2), 2, 3))
     nt, nfilm = _decompose(n, per, lab, own, ecut, nn, float(h), tcut, gedge, film_e, gmin, False,
-                           np.zeros((1, 4), np.int64), np.zeros(1, np.uint8), np.zeros(1, np.int32), wside)
+                           np.zeros((1, 4), np.int64), np.zeros(1, np.uint8), np.zeros(1, np.int32), wside, wn)
     tets = np.empty((nt, 4), np.int64)
     mat = np.empty(nt, np.uint8)
     cell = np.empty(nt, np.int32)
-    _decompose(n, per, lab, own, ecut, nn, float(h), tcut, gedge, film_e, gmin, True, tets, mat, cell, wside)
+    _decompose(n, per, lab, own, ecut, nn, float(h), tcut, gedge, film_e, gmin, True, tets, mat, cell, wside, wn)
     # the vertices in use, renumbered: the lattice nodes first, then up to three per cut edge
     used = np.zeros(nn + 3 * ne, np.bool_)
     used[:nn] = True
@@ -534,6 +667,7 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
         fe = fe[used[nn + 3 * fe] & used[nn + 3 * fe + 2]]
     springs = np.zeros((2 * len(fe), 2), np.int64)
     sw = np.zeros(2 * len(fe))
+    sn = np.zeros((2 * len(fe), 3))
     if len(fe):
         # a film vertex no matrix element uses is still the node the two springs meet at
         lone = ~used[nn + 3 * fe + 1]
@@ -544,17 +678,21 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
         springs[0::2, 0], springs[0::2, 1] = new[nn + 3 * fe], midv
         springs[1::2, 0], springs[1::2, 1] = new[nn + 3 * fe + 2], midv
         sw[0::2], sw[1::2] = wside[fe, 0], wside[fe, 1]
+        sn[0::2], sn[1::2] = wn[fe, 0], wn[fe, 1]
     cells = np.array([n[a] if per[a] else n[a] - 1 for a in range(3)], np.int64)
     L = cells * float(h)
     clamped = int(np.count_nonzero((tcut[:ne] <= delta * (1 + 1e-9)) | (tcut[:ne] >= 1 - delta * (1 + 1e-9)))) if ne else 0
     mesh = {"points": points, "tets": tets, "mat": mat, "cell": cell, "n": n, "cells": cells, "per": per, "L": L,
             "h": float(h), "n_nodes": nn, "n_cut": ne, "n_film_edges": int(len(fe)), "n_film_tets": int(nfilm),
-            "springs": springs, "spring_w": sw, "n_clamped": clamped, "seconds": time.time() - t0,
+            "springs": springs, "spring_w": sw, "spring_n": sn, "n_clamped": clamped, "seconds": time.time() - t0,
+            "neck": float(neck), "n_bonded": int(len(nk[1]) // 2) if grow > 0.0 else 0, "n_neck_nodes": int(n_neck_nodes),
             "film_gap_um": (float(np.median(gedge[fe])) if len(fe) else 0.0)}
     if log:
         log(f"    tetrahedral mesh: {nt:,} tetrahedra on {len(points):,} vertices ({ne:,} edges cut at the particles' "
             f"surfaces; {len(fe):,} of them cross a film of matrix between two particles thinner than the lattice - "
-            f"median {mesh['film_gap_um']:.3g} µm - carried as interface elements) ({mesh['seconds']:.1f} s)")
+            f"median {mesh['film_gap_um']:.3g} µm - carried as interface elements"
+            + (f"; bonded contacts with a neck of {neck:g} x the particle radius: {mesh['n_bonded']:,} pairs of "
+               f"particles are close enough to be joined" if neck > 0 else "") + f") ({mesh['seconds']:.1f} s)")
     return mesh
 
 
@@ -649,8 +787,33 @@ def _post(tets, points, kt, mat, u, per, L, G, cell, qcell, E, V):
     return qs
 
 
+@njit(cache=True)
+def _tet_fields(tets, points, kt, u, per, L, G, val):
+    """Per tetrahedron: k grad(T) (3) and T at its centre, T = G.x + u."""
+    e = np.empty((3, 3))
+    g = np.empty((4, 3))
+    for t in range(tets.shape[0]):
+        vol = _grads(tets, t, points, per, L, e, g)
+        gx, gy, gz = G[0], G[1], G[2]
+        um = 0.0
+        if vol > 0.0:
+            for m in range(4):
+                w = u[tets[t, m]]
+                gx += w * g[m, 0]
+                gy += w * g[m, 1]
+                gz += w * g[m, 2]
+        for m in range(4):
+            um += 0.25 * u[tets[t, m]]
+        v0 = tets[t, 0]
+        xc = 0.0
+        for a in range(3):
+            xc += G[a] * (points[v0, a] + 0.25 * (e[0, a] + e[1, a] + e[2, a]))
+        val[t, 0], val[t, 1], val[t, 2], val[t, 3] = kt[t] * gx, kt[t] * gy, kt[t] * gz, um + xc
+
+
 def assemble(mesh, vals):
-    """The stiffness matrix (CSR), the load of a unit gradient along each axis, and the mesh volume."""
+    """The stiffness matrix (CSR), the load of a unit gradient along each axis, the mesh volume, and a dict the
+    solver keeps its multigrid in (one set-up for all directions)."""
     tets, points = mesh["tets"], mesh["points"]
     nv = len(points)
     kt = np.asarray(vals, float)[mesh["mat"]]
@@ -672,12 +835,30 @@ def assemble(mesh, vals):
         a, b = sp[:, 0], sp[:, 1]
         K = K + sparse.coo_matrix((np.concatenate([c, c, -c, -c]),
                                    (np.concatenate([a, b, a, b]), np.concatenate([a, b, b, a]))), shape=(nv, nv)).tocsr()
-    return K, F, vol
+    return K, F, vol, {}
 
 
-def _pcg(A, b, tol, maxiter, callback=None, should_stop=None, x0=None):
-    """Conjugate gradients with smoothed-aggregation AMG (PyAMG); Jacobi where PyAMG is missing."""
+def _pcg(A, b, tol, maxiter, callback=None, should_stop=None, x0=None, cache=None, key="mg"):
+    """Conjugate gradients with smoothed-aggregation AMG: PyAMG's hierarchy, cycled on all cores (mgsolve.py);
+    PyAMG's own cycle where that is not available, Jacobi where PyAMG is missing. cache: a dict that keeps the
+    hierarchy for the next right-hand side."""
     from scipy.sparse.linalg import LinearOperator, cg
+    cache = {} if cache is None else cache
+    try:
+        import pyamg
+        if key not in cache:
+            from . import mgsolve as MG
+            ml = pyamg.smoothed_aggregation_solver(A, max_coarse=400, keep=False)
+            cache[key] = (MG.Multigrid(ml, degree=3), MG)
+            del ml
+        M, MG = cache[key]
+        X, its, res, ok, _ = MG.pcg(None, b.reshape(-1, 1), M, tol=tol, maxiter=maxiter, callback=callback,
+                                    should_stop=should_stop, X0=None if x0 is None else x0.reshape(-1, 1))
+        return X[:, 0].copy(), int(its[0]), float(res[0]), bool(ok[0]), "AMG, all cores"
+    except InterruptedError:
+        raise
+    except Exception:                                                # noqa: BLE001
+        pass
     how = "AMG"
     try:
         import pyamg
@@ -715,13 +896,15 @@ def conductivity(mesh, vals, direction, tol=1e-8, maxiter=3000, callback=None, s
     residual, converged, seconds, and with fields the potential ("u", absolute, on the voxels) and the flux "q"."""
     t0 = time.time()
     d = int(direction)
-    K, F, vol = system if system is not None else assemble(mesh, vals)
+    sysm = system if system is not None else assemble(mesh, vals)
+    K, F, vol = sysm[0], sysm[1], sysm[2]
+    cache = sysm[3] if len(sysm) > 3 else {}
     points, per, L = mesh["points"], mesh["per"], mesh["L"]
     nv = len(points)
     G = np.zeros(3)
     if per[d]:
         G[d] = 1.0
-        u, it, res, ok, how = _pcg(K, F[:, d].copy(), tol, maxiter, callback, should_stop)
+        u, it, res, ok, how = _pcg(K, F[:, d].copy(), tol, maxiter, callback, should_stop, cache=cache)
         u -= u.mean()
     else:
         x = points[:, d]
@@ -729,9 +912,12 @@ def conductivity(mesh, vals, direction, tol=1e-8, maxiter=3000, callback=None, s
         fixed = (x < eps) | (x > L[d] - eps)
         Tb = np.where(fixed, x, 0.0)
         free = np.flatnonzero(~fixed)
-        Kff = K[free][:, free].tocsr()
+        if ("Kff", d) not in cache:
+            cache[("Kff", d)] = K[free][:, free].tocsr()
+        Kff = cache[("Kff", d)]
         rhs = -(K[free] @ Tb)
-        uf, it, res, ok, how = _pcg(Kff, rhs, tol, maxiter, callback, should_stop, x0=x[free].copy())
+        uf, it, res, ok, how = _pcg(Kff, rhs, tol, maxiter, callback, should_stop, x0=x[free].copy(), cache=cache,
+                                    key=("mg", d))
         u = Tb.copy()
         u[free] = uf
     kt = np.asarray(vals, float)[mesh["mat"]]
@@ -755,6 +941,21 @@ def conductivity(mesh, vals, direction, tol=1e-8, maxiter=3000, callback=None, s
            "seconds": time.time() - t0, "method": "tet-fe" + ("" if per[d] else "-plates"), "preconditioner": how,
            "vf_mesh": (V / max(V.sum(), 1e-300)).tolist(), "n_tets": int(len(mesh["tets"])), "n_dof": int(nv)}
     if fields:
+        # the flux in every tetrahedron, as the mesh holds it (tetview draws it on the RVE's faces)
+        val = np.empty((len(mesh["tets"]), 4))
+        _tet_fields(mesh["tets"], points, kt, u, per, L, G, val)
+        out["q_tets"] = (-val[:, :3] / (mesh["cells"][d] * (float(flux_h) if flux_h else mesh["h"] * 1e-6))).astype(np.float32)
+    if fields and mesh.get("graded"):
+        from . import tetelast as TE
+        cells = mesh["cells"]
+        grid = np.zeros((ncell, 4))
+        hit = np.zeros(ncell, np.int8)
+        TE.raster(mesh["tets"], points, per, L, float(mesh["h"]), cells, val, grid, hit)
+        fh = float(flux_h) if flux_h else mesh["h"] * 1e-6
+        out["u"] = (grid[:, 3] / L[d]).reshape(tuple(cells))
+        out["absolute_potential"] = True
+        out["q"] = (-grid[:, :3] / (cells[d] * fh)).reshape(tuple(cells) + (3,))
+    elif fields:
         n = mesh["n"]
         cells = mesh["cells"]
         nn = mesh["n_nodes"]
