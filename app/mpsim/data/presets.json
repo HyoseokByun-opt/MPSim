@@ -1510,6 +1510,10 @@
      "delta_T": 100,
      "thickness_mm": 1.0
     }
+   },
+   "benchmark": {
+    "kind": "calibrated",
+    "ref": "Wang et al. 2025"
    }
   },
   {
@@ -1579,6 +1583,10 @@
      "delta_T": 100,
      "thickness_mm": 3.0
     }
+   },
+   "benchmark": {
+    "kind": "measured",
+    "ref": "Guo et al. 2014"
    }
   },
   {
@@ -1629,6 +1637,10 @@
      "delta_T": 100,
      "thickness_mm": 0.127
     }
+   },
+   "benchmark": {
+    "kind": "measured",
+    "ref": "Murali et al. 2009"
    }
   },
   {
@@ -1680,6 +1692,10 @@
      "directions": "zx",
      "thickness_mm": 1.6
     }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "parallel paths"
    }
   },
   {
@@ -1733,6 +1749,10 @@
      "delta_T": 100,
      "thickness_mm": 0.3
     }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "parallel paths"
    }
   },
   {
@@ -1781,6 +1801,10 @@
      "directions": "z",
      "thickness_mm": 0.08
     }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Maxwell bound"
    }
   },
   {
@@ -1829,6 +1853,10 @@
      "directions": "z",
      "thickness_mm": 0.05
     }
+   },
+   "benchmark": {
+    "kind": "measured",
+    "ref": "Sugawa et al. 2013"
    }
   },
   {
@@ -2612,6 +2640,10 @@
      "model_unc": 5,
      "refine_rounds": 3
     }
+   },
+   "benchmark": {
+    "kind": "calibrated",
+    "ref": "Kawarai & Inoue 2018"
    }
   },
   {
@@ -2789,6 +2821,10 @@
       "fill_sigma": 0
      }
     }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Lamé"
    }
   },
   {
@@ -3067,6 +3103,10 @@
      "model_unc": 5,
      "refine_rounds": 3
     }
+   },
+   "benchmark": {
+    "kind": "calibrated",
+    "ref": "Kawarai & Inoue 2018"
    }
   },
   {
@@ -3152,6 +3192,10 @@
      "model_unc": 5,
      "refine_rounds": 3
     }
+   },
+   "benchmark": {
+    "kind": "calibrated",
+    "ref": "Kawarai & Inoue 2018"
    }
   },
   {
@@ -3707,7 +3751,11 @@
      "crosscheck": true
     }
    },
-   "description": "Which value is right? J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy filled with glass spheres of 1 to 30 µm, coated with an aminosilane, in tension at 24 °C: 7.94 ± 0.12 GPa and 0.354 at a volume fraction of 0.396 (unfilled 3.01 GPa, 0.394; glass 76 GPa, 0.23, as the paper states). This case is that compound - spheres of 10 µm (log-normal), 60 µm RVE, 48³ voxels - solved by the tetrahedral FEM with the voxel elements beside it. Result (about 1 min): E 8.22 GPa by the FEM (+3.5 % against the measurement), 10.68 GPa by the voxel elements on the same grid (+34.6 %). Over the paper's loadings 0.225 / 0.3025 / 0.396 / 0.496 the measurement is 5.08 / 6.01 / 7.94 / 12.09 GPa, the FEM 5.13 / 6.32 / 8.22 / 11.22 (+0.9 / +5.2 / +3.5 / -7.2 %), the voxel elements 5.82 / 7.62 / 10.68 / 16.16 at 48³ (+15 / +27 / +35 / +34 %), 5.36 / 6.79 / 9.09 / 13.14 at 96³ and 5.22 / 6.52 / 8.61 / 12.13 at 144³, still falling towards the FEM's. Spheres wetted by the resin meet at points with resin around them, which is the structure the FEM solves; the voxel elements bond every pair of touching voxels. At 0.496 the FEM is 7 % below the measurement (two seeds and equal spheres within 1 % of each other). Bonded contacts stay at 0 here."
+   "description": "Which value is right? J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy filled with glass spheres of 1 to 30 µm, coated with an aminosilane, in tension at 24 °C: 7.94 ± 0.12 GPa and 0.354 at a volume fraction of 0.396 (unfilled 3.01 GPa, 0.394; glass 76 GPa, 0.23, as the paper states). This case is that compound - spheres of 10 µm (log-normal), 60 µm RVE, 48³ voxels - solved by the tetrahedral FEM with the voxel elements beside it. Result (about 1 min): E 8.22 GPa by the FEM (+3.5 % against the measurement), 10.68 GPa by the voxel elements on the same grid (+34.6 %). Over the paper's loadings 0.225 / 0.3025 / 0.396 / 0.496 the measurement is 5.08 / 6.01 / 7.94 / 12.09 GPa, the FEM 5.13 / 6.32 / 8.22 / 11.22 (+0.9 / +5.2 / +3.5 / -7.2 %), the voxel elements 5.82 / 7.62 / 10.68 / 16.16 at 48³ (+15 / +27 / +35 / +34 %), 5.36 / 6.79 / 9.09 / 13.14 at 96³ and 5.22 / 6.52 / 8.61 / 12.13 at 144³, still falling towards the FEM's. Spheres wetted by the resin meet at points with resin around them, which is the structure the FEM solves; the voxel elements bond every pair of touching voxels. At 0.496 the FEM is 7 % below the measurement (two seeds and equal spheres within 1 % of each other). Bonded contacts stay at 0 here.",
+   "benchmark": {
+    "kind": "measured",
+    "ref": "Smith 1976"
+   }
   },
   {
    "id": "fem_alsic_necks",
@@ -3777,7 +3825,11 @@
      "crosscheck": true
     }
    },
-   "description": "Particles that are bonded to each other. The baseplate preset (Al-Si7Mg + SiC 63 vol%, bimodal 60 + 20 µm) has a measured expansion of 8.21 ppm/K (Guo et al., J. Univ. Sci. Technol. Beijing 36 (2014) 489-495, doi:10.13374/j.issn1001-053x.2014.04.011). With the spheres as generated - touching at points, aluminium around them - the tetrahedral FEM gives 9.23 ppm/K: for these constituents the Hashin–Shtrikman bounds with Levin's relation allow 8.05 (the SiC a connected skeleton) to 9.51 ppm/K, and the measurement lies at the skeleton end. Simulation → Solver settings → Bonded contacts joins two particles where their surfaces come close - a neck of the radius entered (times the smaller particle's radius) where they touch, smaller where a gap is left: 9.23 / 9.15 / 8.86 / 8.20 ppm/K for 0 / 0.3 / 0.45 / 0.6. This case runs 0.6 on a 180 µm box (about 1 min): α 8.20 ppm/K and E 235 GPa with 782 pairs of particles joined, against 8.85 ppm/K and 222 GPa by the voxel elements, which bond wherever two voxels touch whatever is entered. The neck is fitted to this one measurement, not predicted: it stands for the contacts of an angular grit pressed together at 63 vol%, which spheres do not have. Use it that way - fit it to one measured value of a material and predict its other properties and loadings."
+   "description": "Particles that are bonded to each other. The baseplate preset (Al-Si7Mg + SiC 63 vol%, bimodal 60 + 20 µm) has a measured expansion of 8.21 ppm/K (Guo et al., J. Univ. Sci. Technol. Beijing 36 (2014) 489-495, doi:10.13374/j.issn1001-053x.2014.04.011). With the spheres as generated - touching at points, aluminium around them - the tetrahedral FEM gives 9.23 ppm/K: for these constituents the Hashin–Shtrikman bounds with Levin's relation allow 8.05 (the SiC a connected skeleton) to 9.51 ppm/K, and the measurement lies at the skeleton end. Simulation → Solver settings → Bonded contacts joins two particles where their surfaces come close - a neck of the radius entered (times the smaller particle's radius) where they touch, smaller where a gap is left: 9.23 / 9.15 / 8.86 / 8.20 ppm/K for 0 / 0.3 / 0.45 / 0.6. This case runs 0.6 on a 180 µm box (about 1 min): α 8.20 ppm/K and E 235 GPa with 782 pairs of particles joined, against 8.85 ppm/K and 222 GPa by the voxel elements, which bond wherever two voxels touch whatever is entered. The neck is fitted to this one measurement, not predicted: it stands for the contacts of an angular grit pressed together at 63 vol%, which spheres do not have. Use it that way - fit it to one measured value of a material and predict its other properties and loadings.",
+   "benchmark": {
+    "kind": "calibrated",
+    "ref": "Guo et al. 2014"
+   }
   },
   {
    "id": "press_contact_friction",
@@ -3823,6 +3875,843 @@
     }
    },
    "description": "What a dense compound resists a press with. Silica spheres of 5 µm at 50 vol% in an epoxy, a 25 µm RVE pressed by 30 % along z at 1 1/s with its sides free. The run solves the resin's flow on the voxels step by step (the compressed structure and its fields come from it), and presses the same spheres as rigid bodies by particle dynamics with lubrication films of their real width, contact springs and Coulomb friction (Domain → Particle arrangement → After compression → Contacts and friction; friction coefficient 0.25, roughness 5 nm: the contact inputs of Viscosity → particle dynamics). Result (about 1 min, resin 1 Pa·s at the equivalent shear rate): axial stress 14.4 Pa at the start and 80.2 Pa after 30 % with contacts and friction (26.7 times the plain resin's, 66 % of it carried by contacts, 2.9 contacts per sphere); 162 → 250 Pa by the flow on the voxels, where a film between two spheres is one voxel wide and nothing acts between sliding surfaces (a voxel half the size gave 2.4 times less). The same spheres reach 11.5, 25 and 35 times the plain resin's stress after 30 % for friction coefficients 0, 0.25 and 0.5; the shear viscosity of this suspension by the particle dynamics is 10.9, 23.9 and 35.2 times the resin's. The stress starts low because a generated packing has no contacts yet and builds them as it is pressed. Spheres in one resin without pores or cure, a side free."
+  },
+  {
+   "id": "bench_rayleigh_sc",
+   "name": "Benchmark · Rayleigh's simple cubic array of spheres (conduction)",
+   "form": {
+    "name": "Benchmark · Rayleigh's simple cubic array of spheres",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Matrix",
+     "props": {
+      "k": 1.0,
+      "sigma": 1e-13,
+      "eps_r": 3.9,
+      "tan_d": 0.015,
+      "mu_r": 1.0,
+      "E": 3.0,
+      "nu": 0.35,
+      "alpha": 60.0,
+      "rho": 1.2,
+      "cp": 1100,
+      "D_w": 3e-12,
+      "c_sat": 2.5,
+      "cme": 0.3,
+      "tg": 150,
+      "E_r": 0.03,
+      "alpha2": 180,
+      "cure_E1": 67.91,
+      "cure_logA1": 5.65,
+      "cure_E2": 67.34,
+      "cure_logA2": 6.48,
+      "cure_m": 1.09,
+      "cure_n": 1.06,
+      "cure_dH": 177.0,
+      "gel_alpha": 0.71,
+      "cm_A": -0.18,
+      "cm_B": 4.22
+     }
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Sphere",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 15.51404,
+       "basis": "vol"
+      },
+      "props": {
+       "k": 100.0,
+       "sigma": 1e-12,
+       "eps_r": 9.8,
+       "tan_d": 0.0001,
+       "mu_r": 1.0,
+       "E": 380.0,
+       "nu": 0.22,
+       "alpha": 7.0,
+       "rho": 3.95,
+       "cp": 775
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 6.0,
+     "voxel_um": 0.125,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1,
+     "periodic_array": true
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z",
+     "cond_method": "tet",
+     "crosscheck": true
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Rayleigh 1892"
+   },
+   "description": "A literature solution reproduced. One sphere in a periodic cube is a simple cubic array of spheres, the problem Lord Rayleigh solved (Philos. Mag. 34 (1892) 481, doi:10.1080/14786449208620364): spheres of 4 µm in cells of 6 µm (15.5 vol%), 100 times as conducting as the matrix. Rayleigh's series with the coefficient of its φ^(10/3) term as later corrected, 0.525, gives k/k_m = 1.5324; with Rayleigh's printed 1.65, 1.5338. Result (seconds, 48³): 1.5347 by the FEM on the mesh fitted to the sphere (+0.15 %), 1.5394 by the finite volume on voxels (+0.46 %). The FEM converges with the square of the voxel size (self-test: 1.5655, 1.5428, 1.5361, 1.5342 with the sphere 5, 11, 21, 32 voxels across). Domain → Periodic array is on: the box is one cell of the array, so the RVE-size and particle-count criteria of a random RVE are shown as not applicable."
+  },
+  {
+   "id": "bench_hasselman_johnson",
+   "name": "Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance",
+   "form": {
+    "name": "Benchmark · Hasselman–Johnson: spheres with an interfacial resistance",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Matrix",
+     "props": {
+      "k": 1.0,
+      "sigma": 1e-13,
+      "eps_r": 3.9,
+      "tan_d": 0.015,
+      "mu_r": 1.0,
+      "E": 3.0,
+      "nu": 0.35,
+      "alpha": 60.0,
+      "rho": 1.2,
+      "cp": 1100,
+      "D_w": 3e-12,
+      "c_sat": 2.5,
+      "cme": 0.3,
+      "tg": 150,
+      "E_r": 0.03,
+      "alpha2": 180,
+      "cure_E1": 67.91,
+      "cure_logA1": 5.65,
+      "cure_E2": 67.34,
+      "cure_logA2": 6.48,
+      "cure_m": 1.09,
+      "cure_n": 1.06,
+      "cure_dH": 177.0,
+      "gel_alpha": 0.71,
+      "cm_A": -0.18,
+      "cm_B": 4.22
+     }
+    },
+    "phases": [
+     {
+      "material_id": "al2o3",
+      "name": "Sphere",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 5.00212,
+       "basis": "vol"
+      },
+      "props": {
+       "k": 20.0,
+       "sigma": 1e-12,
+       "eps_r": 9.8,
+       "tan_d": 0.0001,
+       "mu_r": 1.0,
+       "E": 380.0,
+       "nu": 0.22,
+       "alpha": 7.0,
+       "rho": 3.95,
+       "cp": 775
+      },
+      "r_int": 1e-06
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 8.75,
+     "voxel_um": 0.125,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1,
+     "periodic_array": true
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Hasselman & Johnson 1987"
+   },
+   "doe": {
+    "name": "Hasselman–Johnson · interfacial resistance",
+    "design": "full",
+    "edge": "fixed",
+    "parameters": [
+     {
+      "path": "phases.0.r_int",
+      "label": "Interfacial resistance",
+      "unit": "m²K/W",
+      "values": [
+       0,
+       1e-06,
+       2e-06
+      ]
+     }
+    ]
+   },
+   "description": "A literature solution reproduced. Spheres of 4 µm, 20 times as conducting as the matrix, at 5 vol% (one sphere per periodic cell), with an interfacial thermal resistance R on their surface. D. P. H. Hasselman and L. F. Johnson (J. Compos. Mater. 21 (1987) 508, doi:10.1177/002199838702100602) give the conductivity of dilute spheres with an interface of conductance 1/R through α = R k_m / a (a the radius). The preset is a DOE over R = 0, 1e-6 and 2e-6 m²K/W (α 0, 0.5, 1); it opens in the DOE tab. Result (seconds per case, 70³): α 0: 1.1363 against 1.1355 (+0.07 %); α 0.5: 1.0311 against 1.0325 (-0.14 %); α 1: 0.9960 against 0.9976 (-0.16 %). At α = 1 the sphere is nearly invisible, k ≈ k_m. The resistance sits on the voxel faces of the sphere, scaled by the ratio of the sphere's area to that of its staircase. Domain → Periodic array is on."
+  },
+  {
+   "id": "bench_maxwell_garnett",
+   "name": "Benchmark · Maxwell Garnett: permittivity of dilute spheres",
+   "form": {
+    "name": "Benchmark · Maxwell Garnett: dilute dielectric spheres",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Matrix",
+     "props": {
+      "k": 0.2,
+      "sigma": 1e-13,
+      "eps_r": 3.0,
+      "tan_d": 0.0,
+      "mu_r": 1.0,
+      "E": 3.0,
+      "nu": 0.35,
+      "alpha": 60.0,
+      "rho": 1.2,
+      "cp": 1100,
+      "D_w": 3e-12,
+      "c_sat": 2.5,
+      "cme": 0.3,
+      "tg": 150,
+      "E_r": 0.03,
+      "alpha2": 180,
+      "cure_E1": 67.91,
+      "cure_logA1": 5.65,
+      "cure_E2": 67.34,
+      "cure_logA2": 6.48,
+      "cure_m": 1.09,
+      "cure_n": 1.06,
+      "cure_dH": 177.0,
+      "gel_alpha": 0.71,
+      "cm_A": -0.18,
+      "cm_B": 4.22
+     }
+    },
+    "phases": [
+     {
+      "material_id": "batio3",
+      "name": "Sphere",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 5.00212,
+       "basis": "vol"
+      },
+      "props": {
+       "k": 2.6,
+       "sigma": 1e-10,
+       "eps_r": 100.0,
+       "tan_d": 0.0,
+       "mu_r": 1.0,
+       "E": 110.0,
+       "nu": 0.3,
+       "alpha": 10.0,
+       "rho": 6.02,
+       "cp": 434
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 8.75,
+     "voxel_um": 0.125,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1,
+     "periodic_array": true
+    },
+    "analyses": {
+     "dielectric": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Maxwell Garnett 1904"
+   },
+   "description": "A literature solution reproduced. Spheres of permittivity 100 (a BaTiO3-like filler) in a matrix of 3 at 5 vol%, one sphere per periodic cell. J. C. Maxwell Garnett (Philos. Trans. R. Soc. Lond. A 203 (1904) 385, doi:10.1098/rsta.1904.0024) gives the permittivity of dilute spheres: 3.4320 at the drawn content. Result (seconds, 70³): 3.4355 (+0.10 %). At 5 vol% the array and the dilute limit differ by less than this. Domain → Periodic array is on."
+  },
+  {
+   "id": "bench_einstein_viscosity",
+   "name": "Benchmark · Einstein: viscosity of a dilute rigid sphere",
+   "form": {
+    "name": "Benchmark · Einstein: a dilute rigid sphere in a viscous resin",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Matrix",
+     "props": {
+      "k": 0.2,
+      "sigma": 1e-13,
+      "eps_r": 3.9,
+      "tan_d": 0.015,
+      "mu_r": 1.0,
+      "E": 3.0,
+      "nu": 0.35,
+      "alpha": 60.0,
+      "rho": 1.2,
+      "cp": 1100,
+      "D_w": 3e-12,
+      "c_sat": 2.5,
+      "cme": 0.3,
+      "tg": 150,
+      "E_r": 0.03,
+      "alpha2": 180,
+      "cure_E1": 67.91,
+      "cure_logA1": 5.65,
+      "cure_E2": 67.34,
+      "cure_logA2": 6.48,
+      "cure_m": 1.09,
+      "cure_n": 1.06,
+      "cure_dH": 177.0,
+      "gel_alpha": 0.71,
+      "cm_A": -0.18,
+      "cm_B": 4.22
+     }
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Sphere",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 1.93925,
+       "basis": "vol"
+      },
+      "props": {
+       "k": 1.38,
+       "sigma": 1e-15,
+       "eps_r": 3.8,
+       "tan_d": 0.0001,
+       "mu_r": 1.0,
+       "E": 72.0,
+       "nu": 0.17,
+       "alpha": 0.5,
+       "rho": 2.2,
+       "cp": 740
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 12.0,
+     "voxel_um": 0.1,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1,
+     "periodic_array": true
+    },
+    "analyses": {
+     "viscosity": true
+    },
+    "options": {
+     "directions": "z",
+     "viscosity": {
+      "model": {
+       "type": "newtonian",
+       "mu": 1.0
+      },
+      "dem": {
+       "on": false
+      }
+     }
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Einstein 1906/1911"
+   },
+   "description": "A literature solution reproduced. One rigid sphere of 4 µm in a periodic cube of 12 µm (1.9 vol%) in a Newtonian resin, sheared: the voxel flow solve of the viscosity analysis (particle dynamics off). A. Einstein (Ann. Phys. 324 (1906) 289, doi:10.1002/andp.19063240204, with the correction of Ann. Phys. 339 (1911) 591, doi:10.1002/andp.19113390313) gives 1 + 2.5 φ for dilute rigid spheres: 1.0485. Result (about 1 min, 120³, the sphere 40 voxels across): 1.0501, an intrinsic viscosity [η] = 2.59 (+3.44 %): the voxelised sphere and its periodic images add a few per cent at this content. Domain → Periodic array is on."
+  },
+  {
+   "id": "bench_trouton",
+   "name": "Benchmark · Trouton: compression of a resin alone",
+   "form": {
+    "name": "Benchmark · Trouton: compression of a resin alone",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Resin"
+    },
+    "phases": [],
+    "rve": {
+     "auto": false,
+     "L_um": 10,
+     "voxel_um": 0.5,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1,
+     "arrangement": "pressed",
+     "press_compression": 10,
+     "press_rate": 1,
+     "press_lateral": "xy"
+    },
+    "analyses": {
+     "thermal": true
+    },
+    "options": {
+     "directions": "z"
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Trouton 1906"
+   },
+   "description": "A literature solution reproduced. A box of resin without filler pressed by 10 % along z at 1 1/s, its sides free: the flow solve of the compression (Domain → Particle arrangement → After compression). F. T. Trouton (Proc. R. Soc. Lond. A 77 (1906) 426, doi:10.1098/rspa.1906.0038) showed that a viscous liquid resists uniaxial extension or compression with three times its shear viscosity: σ_zz = −3 η ε̇ = -3 Pa for η = 1 Pa·s. Result (seconds): -3 Pa at every step. With one side held (plane strain) the factor is 4 (self-test)."
+  },
+  {
+   "id": "bench_laminate",
+   "name": "Benchmark · two layers: series and parallel (exact)",
+   "form": {
+    "name": "Benchmark · two layers: series and parallel",
+    "source": "image",
+    "image": {
+     "example": "bench_laminate.tif",
+     "voxel": 1,
+     "unit": "um",
+     "classes": [
+      {
+       "key": 0,
+       "role": "matrix",
+       "material_id": "epoxy",
+       "name": "Epoxy layer"
+      },
+      {
+       "key": 1,
+       "role": "phase",
+       "material_id": "al2o3",
+       "name": "Alumina layer"
+      }
+     ]
+    },
+    "rve": {
+     "quality": "standard",
+     "periodic_array": true
+    },
+    "analyses": {
+     "thermal": true,
+     "dielectric": true
+    },
+    "options": {
+     "directions": "zx"
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "series / parallel"
+   },
+   "description": "An exact solution reproduced, from an image (Structure → Load TIFF; the image ships with MPSim): a cube of 32³ voxels of 1 µm, the lower half epoxy (k 0.2 W/m·K, ε_r 3.9), the upper half alumina (k 30, ε_r 9.8). Across the layers the two conduct in series, k = 2/(1/k1 + 1/k2) = 0.39735 W/m·K; along them in parallel, (k1 + k2)/2 = 15.1; the same for the permittivity, 5.57956 and 6.85. Result (seconds): k_z 0.39735, k_x 15.1; ε_z 5.57956, ε_x 6.85 - the exact values. These are the Wiener bounds, which every run checks its result against. Domain → Periodic array is on."
+  },
+  {
+   "id": "bench_poiseuille_channel",
+   "name": "Benchmark · Poiseuille: a straight cylindrical pore (flow, tortuosity, acoustic lengths)",
+   "form": {
+    "name": "Benchmark · Poiseuille: a straight cylindrical pore",
+    "source": "image",
+    "image": {
+     "example": "bench_channel.tif",
+     "voxel": 1,
+     "unit": "um",
+     "classes": [
+      {
+       "key": 0,
+       "role": "matrix",
+       "material_id": "al2o3",
+       "name": "Solid"
+      },
+      {
+       "key": 1,
+       "role": "phase",
+       "material_id": "air",
+       "name": "Pore"
+      }
+     ]
+    },
+    "rve": {
+     "quality": "standard",
+     "periodic_array": true
+    },
+    "analyses": {
+     "permeability": true,
+     "tortuosity": true,
+     "acoustics": true
+    },
+    "options": {
+     "directions": "x"
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Poiseuille; Johnson, Koplik & Dashen 1987"
+   },
+   "description": "Exact solutions reproduced, from an image (it ships with MPSim): a straight cylindrical pore of radius 16 µm along x through a solid, in a cell of 32 × 80 × 80 voxels of 1 µm (porosity 12.7 %). Laminar flow through a straight tube (Hagen–Poiseuille) gives the permeability K = φ r²/8 = 4.060e-12 m² for the flow along the pore; the pore is straight, so the tortuosity is 1; and the viscous and thermal characteristic lengths of D. L. Johnson, J. Koplik and R. Dashen (J. Fluid Mech. 176 (1987) 379, doi:10.1017/S0022112087000727) both equal the radius for straight pores. Result (seconds): K 3.914e-12 m² (-3.60 %: the circle drawn on voxels is a staircase, which adds drag), τ 1.0000, Λ 15.85 µm and Λ′ 15.85 µm. Domain → Periodic array is on."
+  },
+  {
+   "id": "bench_moisture_maxwell",
+   "name": "Benchmark · Maxwell: moisture diffusion around impermeable spheres",
+   "form": {
+    "name": "Benchmark · Maxwell: moisture around impermeable spheres",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Matrix",
+     "props": {
+      "k": 0.2,
+      "sigma": 1e-13,
+      "eps_r": 3.9,
+      "tan_d": 0.015,
+      "mu_r": 1.0,
+      "E": 3.0,
+      "nu": 0.35,
+      "alpha": 60.0,
+      "rho": 1.2,
+      "cp": 1100,
+      "D_w": 3e-12,
+      "c_sat": 2.5,
+      "cme": 0.3,
+      "tg": 150,
+      "E_r": 0.03,
+      "alpha2": 180,
+      "cure_E1": 67.91,
+      "cure_logA1": 5.65,
+      "cure_E2": 67.34,
+      "cure_logA2": 6.48,
+      "cure_m": 1.09,
+      "cure_n": 1.06,
+      "cure_dH": 177.0,
+      "gel_alpha": 0.71,
+      "cm_A": -0.18,
+      "cm_B": 4.22
+     }
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Sphere",
+      "shape": "sphere",
+      "size": {
+       "d": 4.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 5.00212,
+       "basis": "vol"
+      },
+      "props": {
+       "k": 1.38,
+       "sigma": 1e-15,
+       "eps_r": 3.8,
+       "tan_d": 0.0001,
+       "mu_r": 1.0,
+       "E": 72.0,
+       "nu": 0.17,
+       "alpha": 0.5,
+       "rho": 2.2,
+       "cp": 740
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 8.75,
+     "voxel_um": 0.125,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1,
+     "periodic_array": true
+    },
+    "analyses": {
+     "moisture": true
+    },
+    "options": {
+     "directions": "z",
+     "moisture": {
+      "thickness_mm": 0.5,
+      "hours": 168,
+      "sides": "both"
+     }
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Maxwell 1873"
+   },
+   "description": "A literature solution reproduced. Silica spheres of 4 µm, which take up no water, at 5 vol% in epoxy (one sphere per periodic cell): the moisture analysis. For impermeable spheres J. C. Maxwell's solution (A Treatise on Electricity and Magnetism, Vol. 1, Clarendon Press, Oxford, 1873, §314; a book without DOI) gives the diffusivity of the compound per concentration in the resin, D*/D_m = 2/(2 + φ) = 0.9756. Result (seconds, 70³): 0.9726 (-0.31 %). The uptake curve of the plate is Crank's series solution, which the self-test checks to 2e-3 (half saturation at 0.04919 L²/D). Domain → Periodic array is on."
+  },
+  {
+   "id": "bench_smith_doe",
+   "name": "Benchmark · DOE · glass spheres in epoxy at Smith's four loadings: FEM and voxel elements against the measurement",
+   "form": {
+    "name": "Glass spheres in epoxy · Smith 1976, four loadings",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Epoxy (DGEBA, aged 200 days)",
+     "props": {
+      "k": 0.2,
+      "sigma": 1e-13,
+      "eps_r": 3.9,
+      "tan_d": 0.015,
+      "mu_r": 1.0,
+      "E": 3.01,
+      "nu": 0.394,
+      "alpha": 60.0,
+      "rho": 1.2,
+      "cp": 1100,
+      "D_w": 3e-12,
+      "c_sat": 2.5,
+      "cme": 0.3,
+      "tg": 150,
+      "E_r": 0.03,
+      "alpha2": 180,
+      "cure_E1": 67.91,
+      "cure_logA1": 5.65,
+      "cure_E2": 67.34,
+      "cure_logA2": 6.48,
+      "cure_m": 1.09,
+      "cure_n": 1.06,
+      "cure_dH": 177.0,
+      "gel_alpha": 0.71,
+      "cm_A": -0.18,
+      "cm_B": 4.22
+     }
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Glass spheres 1–30 µm (silane-coated)",
+      "shape": "sphere",
+      "size": {
+       "d": 10.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "lognormal",
+       "std": 4.0
+      },
+      "fraction": {
+       "value": 39.6,
+       "basis": "vol"
+      },
+      "props": {
+       "k": 1.38,
+       "sigma": 1e-15,
+       "eps_r": 3.8,
+       "tan_d": 0.0001,
+       "mu_r": 1.0,
+       "E": 76.0,
+       "nu": 0.23,
+       "alpha": 0.5,
+       "rho": 2.2,
+       "cp": 740
+      }
+     }
+    ],
+    "rve": {
+     "auto": false,
+     "L_um": 60,
+     "voxel_um": 1.25,
+     "auto_enlarge": false,
+     "quality": "standard",
+     "seed": 1
+    },
+    "analyses": {
+     "cte": true
+    },
+    "options": {
+     "elastic_method": "tet",
+     "crosscheck": true
+    }
+   },
+   "benchmark": {
+    "kind": "measured",
+    "ref": "Smith 1976"
+   },
+   "doe": {
+    "name": "Smith 1976 · glass spheres in epoxy",
+    "design": "full",
+    "edge": "fixed",
+    "parameters": [
+     {
+      "path": "phases.0.fraction.value",
+      "label": "Glass spheres",
+      "unit": "%",
+      "values": [
+       22.51,
+       30.25,
+       39.6,
+       49.6
+      ]
+     }
+    ]
+   },
+   "description": "Which value is right, against a published measurement. J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy (3.01 GPa, ν 0.394) filled with glass spheres of 1 to 30 µm coated with an aminosilane (76 GPa, ν 0.23), in tension at 24 °C, 200 days after casting. This DOE runs the paper's four loadings with the tetrahedral FEM and the voxel elements on the same particles (spheres of 10 µm, log-normal; 60 µm RVE, 48³). Result (about 1 min per case): 22.51 vol%: measured 5.08 ± 0.08 GPa, FEM 5.14 (+1.09 %), voxel elements 5.83 (+14.71 %); 30.25 vol%: measured 6.01 ± 0.21 GPa, FEM 6.32 (+5.20 %), voxel elements 7.62 (+26.75 %); 39.6 vol%: measured 7.94 ± 0.12 GPa, FEM 8.22 (+3.54 %), voxel elements 10.68 (+34.57 %); 49.6 vol%: measured 12.09 ± 0.09 GPa, FEM 11.22 (-7.18 %), voxel elements 16.16 (+33.68 %). Poisson's ratio: measured 0.384 / 0.375 / 0.354 / 0.330, FEM 0.364 / 0.352 / 0.334 / 0.314. The voxel elements bond every pair of touching voxels; on finer grids they fall towards the FEM (at 39.6 vol%: 10.68 / 9.09 / 8.61 GPa at 48³ / 96³ / 144³). Two criteria fail by design at this grid: the spheres are 4.7 voxels across and the box 3 times the largest sphere - what the comparison is about; a second packing moved the FEM by 1 %, equal spheres by 1 %, a 64³ mesh by 2 %."
+  },
+  {
+   "id": "bench_dem_kd",
+   "name": "Benchmark · particle dynamics against Krieger–Dougherty (frictionless spheres, 50 vol%)",
+   "form": {
+    "name": "Benchmark · particle dynamics against Krieger–Dougherty (frictionless spheres, 50 vol%)",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Newtonian liquid"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Spheres 10 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 10.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 50.0,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "viscosity": true
+    },
+    "options": {
+     "directions": "z",
+     "viscosity": {
+      "model": {
+       "type": "newtonian",
+       "mu": 1.0
+      },
+      "gd_ref": 10,
+      "gd_min": 1,
+      "gd_max": 100,
+      "dem": {
+       "on": true,
+       "n": 500,
+       "strain": 10,
+       "mu_f": 0.0,
+       "roughness_nm": 5.0,
+       "hmin_nm": 1.0,
+       "hamaker_J": 1e-25,
+       "adhesion_mJ_m2": 0.0,
+       "rates": 0
+      }
+     }
+    }
+   },
+   "benchmark": {
+    "kind": "analytical",
+    "ref": "Krieger & Dougherty 1959"
+   },
+   "description": "A published model reproduced by the particle dynamics of the viscosity analysis. 500 spheres of 10 µm (the particle dynamics draws them with a CV of 0.1: equal spheres order into sliding layers) at 50 vol% in a Newtonian liquid of 1 Pa·s, sheared at 10 1/s to a strain of 10 (the mean over the second half): lubrication between close surfaces with a roughness of 5 nm, contact springs, no attraction. Without friction the spheres jam at random close packing, and I. M. Krieger and T. J. Dougherty (Trans. Soc. Rheol. 3 (1959) 137, doi:10.1122/1.548848) with φm 0.64 and [η] 2.5 gives 11.38. Result (about 4 min): 11.77 ± 0.61 (+3.46 %). At 40 and 55 vol% the same runs gave 5.70 and 18.55 against 4.80 and 23.07: the frictionless suspension follows the law at 50 vol% and departs from it as it approaches jamming, where Krieger-Dougherty is an empirical fit rather than a solution."
+  },
+  {
+   "id": "bench_dem_boyer",
+   "name": "Benchmark · particle dynamics against Boyer et al.'s measured law (friction 0.25, 50 vol%)",
+   "form": {
+    "name": "Benchmark · particle dynamics against Boyer et al.'s measured law (friction 0.25, 50 vol%)",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Newtonian liquid"
+    },
+    "phases": [
+     {
+      "material_id": "sio2",
+      "name": "Spheres 10 µm",
+      "shape": "sphere",
+      "size": {
+       "d": 10.0,
+       "unit": "um"
+      },
+      "dist": {
+       "type": "mono"
+      },
+      "fraction": {
+       "value": 50.0,
+       "basis": "vol"
+      }
+     }
+    ],
+    "rve": {
+     "auto": true,
+     "quality": "standard"
+    },
+    "analyses": {
+     "viscosity": true
+    },
+    "options": {
+     "directions": "z",
+     "viscosity": {
+      "model": {
+       "type": "newtonian",
+       "mu": 1.0
+      },
+      "gd_ref": 10,
+      "gd_min": 1,
+      "gd_max": 100,
+      "dem": {
+       "on": true,
+       "n": 500,
+       "strain": 10,
+       "mu_f": 0.25,
+       "roughness_nm": 5.0,
+       "hmin_nm": 1.0,
+       "hamaker_J": 1e-25,
+       "adhesion_mJ_m2": 0.0,
+       "rates": 0
+      }
+     }
+    }
+   },
+   "benchmark": {
+    "kind": "measured",
+    "ref": "Boyer et al. 2011"
+   },
+   "description": "Against a published measurement. 500 spheres of 10 µm (the particle dynamics draws them with a CV of 0.1: equal spheres order into sliding layers) at 50 vol% in a Newtonian liquid of 1 Pa·s, sheared at 10 1/s to a strain of 10 (the mean over the second half): lubrication between close surfaces with a roughness of 5 nm, contact springs, no attraction. Friction coefficient 0.25 (the default). F. Boyer, É. Guazzelli and O. Pouliquen (Phys. Rev. Lett. 107 (2011) 188301, doi:10.1103/PhysRevLett.107.188301) measured non-Brownian spheres in a viscous liquid under imposed pressure and gave the shear viscosity as eq. (8), with μ1 0.32, μ2 0.7, I0 0.005 and φm 0.585: 31.9 at 50 vol%. Result (about 5 min): 22.9 ± 1.2 (-28.29 %). At 40 / 55 vol% the law gives 7.39 / 145, the particle dynamics 6.09 / 104 with friction 0.25 and 6.45 / 409 with 0.5 (30.3 at 50 vol%): no single coefficient follows the law over the three loadings. Earlier versions gave this law as 20.7 at 50 vol% and chose 0.25 with it - an evaluation without the (μ2 − μ1) part of the contact term."
   }
  ]
 }

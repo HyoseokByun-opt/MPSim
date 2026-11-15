@@ -456,6 +456,50 @@ def t_presscontact():
             f"friction (shear: 10.9), {end[0.5]:.1f} with friction 0.5")
 
 
+@check("Benchmark presets: every preset validates and plans; each benchmark names its kind and reference; the images of the "
+       "benchmarks load; a periodic array shows its RVE criteria as not applicable; the one-sphere benchmarks reproduce Rayleigh "
+       "(FEM, 0.5 %), Maxwell Garnett (0.5 %) and Trouton (exact) through the pipeline")
+def t_benchmark_presets():
+    from mpsim import pipeline as PL
+    from mpsim import rve as R
+    from mpsim import spec as S
+    d = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mpsim", "data", "presets.json"), encoding="utf-8"))
+    bench = [p for p in d["presets"] if p.get("benchmark")]
+    for p in d["presets"]:
+        sp = S.normalize(json.loads(json.dumps(p["form"])))
+        expect(sp is not None, f"{p['id']} does not validate")
+    expect(len(bench) >= 20 and all(b["benchmark"].get("kind") in ("measured", "analytical", "calibrated") and b["benchmark"].get("ref")
+                                    for b in bench), f"{len(bench)} benchmarks")
+    by = {p["id"]: p for p in d["presets"]}
+    sp = S.normalize(json.loads(json.dumps(by["bench_rayleigh_sc"]["form"])))
+    plan = R.plan(PL._plan_phases(sp), dict(sp["rve"], contacts=sp["options"]["contacts"], particle_gap_vox=0,
+                                            elastic_method=sp["options"]["elastic_method"]), {"thermal"}, {})
+    st = {c["id"].split("_")[0]: c["status"] for c in plan["checks"]}
+    expect(st.get("size") == "info" and st.get("count") == "info", f"periodic array: {st}")
+    out = {}
+    for pid in ("bench_rayleigh_sc", "bench_maxwell_garnett", "bench_trouton", "bench_laminate"):
+        dd = tempfile.mkdtemp()
+        PL.run(json.loads(json.dumps(by[pid]["form"])), dd, log=lambda *a: None)
+        r = json.load(open(os.path.join(dd, "result.json"), encoding="utf-8"))
+        expect(r["check_counts"]["fail"] == 0 and r["check_counts"]["warn"] == 0, f"{pid}: {r['check_counts']}")
+        out[pid] = r
+    phi = math.pi * 4 ** 3 / 6 / 6 ** 3
+    ray = 1 + 3 * phi / (102 / 99 - phi - 0.525 * (99 / (100 + 4 / 3)) * phi ** (10 / 3))
+    k = out["bench_rayleigh_sc"]["properties"]["thermal"]["diag"][2]
+    e = out["bench_maxwell_garnett"]["properties"]["dielectric"]["diag"][2]
+    f_ = out["bench_maxwell_garnett"]["realisations"][0]["vf_labels"][1]
+    be = 97.0 / 106.0
+    mg = 3.0 * (1 + 2 * f_ * be) / (1 - f_ * be)
+    s_ = out["bench_trouton"]["realisations"][0]["pressed"]["series"]["sigma_zz_Pa"][-1]
+    lam = out["bench_laminate"]["properties"]["thermal"]["diag"]
+    expect(abs(k / ray - 1) < 0.005, f"Rayleigh {ray:.4f}, FEM {k:.4f}")
+    expect(abs(e / mg - 1) < 0.005, f"Maxwell Garnett {mg:.4f}, {e:.4f}")
+    expect(abs(s_ / -3.0 - 1) < 1e-6, f"Trouton -3 Pa, {s_}")
+    expect(abs(lam[2] / (2 / (1 / 0.2 + 1 / 30.0)) - 1) < 1e-9 and abs(lam[0] / 15.1 - 1) < 1e-9, f"laminate {lam}")
+    return (f"{len(d['presets'])} presets validate, {len(bench)} benchmarks; Rayleigh {k:.4f} ({ray:.4f}), Maxwell Garnett {e:.4f} ({mg:.4f}), "
+            f"Trouton {s_:.4f} Pa, laminate {lam[2]:.5f} / {lam[0]:.4g}")
+
+
 @check("Multigrid on all cores: a block of right-hand sides solved together equals the direct solution (1e-8), with "
        "one recurrence per column")
 def t_mgsolve():

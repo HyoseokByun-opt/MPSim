@@ -737,6 +737,9 @@ def normalize(form):
         "N": int(_num(rv.get("N"), "grid size", 8, 2048, allow_none=True) or 0) or None if not rv.get("auto", True) else None,
         # an RVE entered by hand is used as entered unless enlarging it is asked for
         "auto_enlarge": bool(rv.get("auto_enlarge", False)),
+        # one cell of a periodic array (an analytical benchmark: Rayleigh's spheres, a laminate, a channel): the
+        # size, count and octant checks of a random RVE are shown as not applicable
+        "periodic_array": bool(rv.get("periodic_array", False)),
         "n_seeds": int(_num(rv.get("n_seeds", 0) or 0, "number of realisations", 0, 10)),
         # realisations until the mean settles (a statistical RVE): smaller
         # volumes, as many realisations as the 95 % confidence interval of
@@ -975,10 +978,13 @@ def normalize(form):
             # moving, turning and colliding in the sheared resin - the best
             # estimate for spheres where the voxel flow solve cannot resolve
             # the films between them, and the source of the particle-size
-            # effect (roughness and van der Waals are lengths). Friction 0.25
-            # reproduces the measured law of non-Brownian spheres (Boyer et al.
-            # 2011: 20.7 at 50 vol%, 103 at 55 vol%; mu_f 0.2 gave 19.6 / 70,
-            # 0.3 20.3 / 165); 0 reproduces Krieger-Dougherty with phi_m 0.64.
+            # effect (roughness and van der Waals are lengths). 0 reproduces
+            # Krieger-Dougherty with phi_m 0.64 (11.8 against 11.4 at 50 vol%).
+            # The measured law of non-Brownian spheres (Boyer et al. 2011, eq. 8:
+            # 7.39 / 31.9 / 145 at 40 / 50 / 55 vol%) is followed by no single
+            # coefficient: 0.25 gives 6.1 / 22.9 / 104, 0.5 6.4 / 30.3 / 409
+            # (earlier versions compared with 20.7 / 103, the law without its
+            # (mu2 - mu1) term). Fit it to a measured viscosity where there is one.
             "dem": {"on": bool(dem.get("on", True)),
                     "n": int(_num(dem.get("n", 500), "number of particles", 50, 10_000_000)),
                     "strain": _num(dem.get("strain", 10.0), "sheared strain", 1.0, 100.0),

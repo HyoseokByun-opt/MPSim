@@ -69,13 +69,21 @@ def kill_tree(pid):
             top = psutil.Process(pid)
         except psutil.NoSuchProcess:
             return
-        procs = top.children(recursive=True) + [top]
+        try:
+            procs = top.children(recursive=True) + [top]
+        except psutil.NoSuchProcess:
+            # it ended between the two calls (a run that finished as it was stopped): its children, if any, end with it
+            # or were reaped by its pool; nothing is left to kill
+            return
         for p in procs:
             try:
                 p.kill()
             except psutil.Error:
                 pass
-        psutil.wait_procs(procs, timeout=5)
+        try:
+            psutil.wait_procs(procs, timeout=5)
+        except psutil.Error:
+            pass
         return
     except ImportError:
         pass

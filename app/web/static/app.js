@@ -90,7 +90,7 @@
     cte: "Elastic/CTE", mechtest: "Mech. test", permeability: "Permeability", filtration: "Filtration", tortuosity: "Diffusion", acoustics: "Acoustics",
     radiation: "Radiation", morphology: "Pore sizes", percolation: "Percolation", porosimetry: "Porosimetry",
     pore_network: "Pore network", grains: "Grains", viscosity: "Viscosity", moisture: "Moisture", thermomech: "Warpage", joule: "Joule", via: "Via" };
-  const ST = { pass: "Passed", warn: "Warning", fail: "Failed" };
+  const ST = { pass: "Passed", warn: "Warning", fail: "Failed", info: "Not applicable" };
   const STATE = { queued: "Queued", running: "Running", done: "Completed", failed: "Failed", stopped: "Stopped" };
   const QUALITY_HINT = {
     fast: "6 voxels across the smallest feature, RVE ≥ 4 × the largest particle, ≥ 20 particles. Suitable for trend screening.",
@@ -765,15 +765,22 @@
   function leftHome() {
     const steps = [["material", "Material", "Matrix material and properties"], ["structure", "Structure", "Fillers, fibres and pores"], ["domain", "Domain", "Voxel size, RVE size and criteria"],
       ["analysis", "Structure analysis", "Porosity, porosimetry, pore network, grains"], ["simulation", "Simulation", "Conduction, mechanics, flow, acoustics, radiation"], ["run", "Run", "Results appear in the viewer and the Result Viewer"]];
-    const presets = state.presets.map((p) => {
+    // the presets that reproduce a published measurement or a published solution sit in a section of their own
+    const BK = { measured: "Benchmark · published measurement", analytical: "Benchmark · published solution", calibrated: "Benchmark · fitted to a measurement" };
+    const card = (p) => {
       const chips = Object.entries(p.form.analyses || {}).filter(([, v]) => v).map(([k]) => AN[k] ? `<span class="chip" style="--ic:${AN[k].color}">${I(AN[k].icon)}${AN[k].title}</span>` : "").join("");
-      return `<div class="preset" data-preset="${p.id}"><div class="pn">${esc(p.name)}</div><div class="pd">${esc(p.description)}</div><div class="chips">${p.doe ? `<span class="chip" style="--ic:#8250df">${I("preset")}DOE study</span>` : ""}${p.cal ? `<span class="chip" style="--ic:#8250df">${I("calibrate")}Calibration</span>` : ""}${chips}</div></div>`;
-    }).join("");
+      const bk = p.benchmark ? `<span class="chip" style="--ic:#1a7f37">${I("checks")}${esc(BK[p.benchmark.kind] || "Benchmark")}${p.benchmark.ref ? ` · ${esc(p.benchmark.ref)}` : ""}</span>` : "";
+      return `<div class="preset" data-preset="${p.id}"><div class="pn">${esc(p.name)}</div><div class="pd">${esc(p.description)}</div><div class="chips">${bk}${p.doe ? `<span class="chip" style="--ic:#8250df">${I("preset")}DOE study</span>` : ""}${p.cal ? `<span class="chip" style="--ic:#8250df">${I("calibrate")}Calibration</span>` : ""}${chips}</div></div>`;
+    };
+    const presets = state.presets.filter((p) => !p.benchmark).map(card).join("");
+    const order = { measured: 0, calibrated: 1, analytical: 2 };
+    const bench = state.presets.filter((p) => p.benchmark).sort((x, y) => (order[x.benchmark.kind] ?? 3) - (order[y.benchmark.kind] ?? 3)).map(card).join("");
     return `<div class="sec"><div class="sh">${I("home")}Workflow</div><div class="sb"><ol class="flow">${steps.map(([k, t, s], i) => `<li data-go="${k}"><b>${i + 1}</b><span>${t}<small>${s}</small></span></li>`).join("")}</ol>
         <div class="hint">Conduction, permittivity and permeability are solved with the built-in periodic finite volume (PuMA's finite-volume operator with periodic faces; NASA PuMA's finite elements on request), elasticity with FANS (PuMA's voxel elements, FFT-preconditioned), flow and diffusion with NASA PuMA; structure analyses use PoreSpy and OpenPNM, EMI scikit-rf and openEMS, figures PyVista. The report lists the method and version behind each number.</div></div></div>
       ${workAreaHTML()}
       ${machineHTML()}
-      <div class="sec" id="presetSec"><div class="sh">${I("preset")}Presets<small>typical semiconductor material problems</small></div><div class="sb">${presets}</div></div>`;
+      <div class="sec" id="presetSec"><div class="sh">${I("preset")}Presets<small>typical semiconductor material problems</small></div><div class="sb">${presets}</div></div>
+      ${bench ? `<div class="sec" id="benchSec"><div class="sh">${I("checks")}Benchmarks against the literature<small>published measurements and published solutions, each reproduced by a preset (guide, appendix B.7)</small></div><div class="sb">${bench}</div></div>` : ""}`;
   }
 
   /* Where the work goes. A run is written into the open work folder, so a study
@@ -1307,9 +1314,9 @@
   function domChecksHtml() {
     const pl = state.plan && state.plan.plan;
     if (!pl) return '<div class="hint">Computing…</div>';
-    const cc = { pass: 0, warn: 0, fail: 0 }; pl.checks.forEach((c) => cc[c.status]++);
+    const cc = { pass: 0, warn: 0, fail: 0, info: 0 }; pl.checks.forEach((c) => cc[c.status]++);
     return `<div class="row wrap">${pill("pass")} ${cc.pass} ${pill("warn")} ${cc.warn} ${pill("fail")} ${cc.fail}<div class="grow"></div><button class="btn sm" data-act="checks">${I("checks")}Show all checks</button></div>
-        ${pl.checks.filter((c) => c.status !== "pass").map((c) => `<div class="hint" style="margin-top:4px">${pill(c.status)} ${esc(c.label)}: ${fmt(c.value)} (criterion ${Array.isArray(c.target) ? c.target.map(fmt).join("–") : fmt(c.target)})</div>`).join("")}`;
+        ${pl.checks.filter((c) => c.status !== "pass" && c.status !== "info").map((c) => `<div class="hint" style="margin-top:4px">${pill(c.status)} ${esc(c.label)}: ${fmt(c.value)} (criterion ${Array.isArray(c.target) ? c.target.map(fmt).join("–") : fmt(c.target)})</div>`).join("")}`;
   }
   function filmGridHtml() {
     const f = state.form, pl = state.plan && state.plan.plan;
@@ -1591,6 +1598,8 @@
             <div class="hint" style="margin-top:4px" data-live="gridtxt">${gridTxtHtml()}</div>
           <div class="hint">The grid size follows from the two: edge length ÷ voxel size, rounded to an even number of voxels. A grid-size variable remains in the DOE tab for convergence studies.</div>` : ""}
         <label class="chk"><input type="checkbox" data-k="rve.auto_enlarge"> Enlarge the RVE when the criteria are not met</label>
+        <label class="chk"><input type="checkbox" data-k="rve.periodic_array"> Periodic array: the box is one cell of an ordered array (a benchmark)</label>
+        ${f.rve.periodic_array ? `<div class="hint">The RVE is solved as one cell of a periodic array - one sphere per cell is Rayleigh's simple cubic array - so the size, particle-count and octant criteria of a random RVE are shown as not applicable. For a random material leave it off.</div>` : ""}
         <div class="hint">Off by default: the RVE is used as entered, and the criteria below report whether it meets them.</div>
         <label class="f">Realisations</label>
         <select data-k="rve.realisations.mode"><option value="fixed">A fixed number</option><option value="settle">Until the mean settles (statistical RVE)</option></select>
@@ -1936,7 +1945,7 @@
       }
     });
   }
-  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|rve\.press_cure|rve\.press_control|rve\.press_lateral|rve\.realisations\.mode|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|overlap_steps\.on|overlap_steps\.share|rve\.quality|fraction\.value|size\.d|section\.(?:from|to))$/;
+  const RERENDER = /(\.shape|\.stack_layers|\.overlap|shell\.enabled|size\.unit|dist\.type|fraction\.basis|orientation\.mode|rve\.auto|rve\.L_unit|rve\.h_unit|rve\.T_unit|rve\.film|rve\.press_cure|rve\.periodic_array|rve\.press_control|rve\.press_lateral|rve\.realisations\.mode|porosimetry\.fluid|\.props\.E|\.name|particle_gap_vox|overlap_steps\.on|overlap_steps\.share|rve\.quality|fraction\.value|size\.d|section\.(?:from|to))$/;
   function onField(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
@@ -2066,7 +2075,7 @@
     $("#sbGrid").style.color = state.planErrors.length ? "var(--red)" : warn ? "var(--orange, #bc4c00)" : "";
     if (!pl) { $("#rveChecks").innerHTML = ""; $("#chkBadge").innerHTML = ""; return; }
     $("#rveChecks").innerHTML = checksRows(pl.checks);
-    const bad = pl.checks.filter((c) => c.status !== "pass").length;
+    const bad = pl.checks.filter((c) => c.status !== "pass" && c.status !== "info").length;
     $("#chkBadge").innerHTML = bad ? `<span class="pill warn">${bad}</span>` : `<span class="pill pass">${pl.checks.length}</span>`;
   }
   function checksRows(checks) {
@@ -3198,7 +3207,7 @@
       <div class="g2">${num("options.viscosity.dem.rates", "Further shear rates (flow curve)", "", "1")}<div></div></div>
       <div class="hint">The attraction weighs against the viscous force as 1/(μγ̇): with van der Waals or adhesion a compound flows more easily the faster it is sheared. The particles are sheared again at this many rates, log-spaced over the flow curve's range, and the curve follows them (0: only the reference rate; skipped where the attraction is negligible).</div>
       <label class="f">Computed on</label><select data-k="options.viscosity.dem.backend"><option value="auto">Automatic: the NVIDIA GPU (CUDA) first, all CPU cores when there is none or a GPU run fails</option><option value="cuda">NVIDIA GPU (CUDA), the CPU if it fails</option><option value="cpu">CPU only</option></select>
-      <div class="hint">Every filler particle moves, turns and collides in the sheared resin: lubrication between close surfaces, contacts with friction, and the van der Waals attraction of the filler across the resin (Hamaker constant from the refractive indices of the library, or entered). Roughness and the closest approach are lengths, so a fine filler meets them at a larger share of its size than a coarse one — this is where the particle-size effect comes from. Friction 0.25 reproduces the measured law of non-Brownian spheres (Boyer et al. 2011: μr 20.7 at 50 vol% and 103 at 55 vol%), friction 0 the frictionless Krieger–Dougherty curve. It is the best estimate above about 35 vol% or where particles touch.</div>
+      <div class="hint">Every filler particle moves, turns and collides in the sheared resin: lubrication between close surfaces, contacts with friction, and the van der Waals attraction of the filler across the resin (Hamaker constant from the refractive indices of the library, or entered). Roughness and the closest approach are lengths, so a fine filler meets them at a larger share of its size than a coarse one — this is where the particle-size effect comes from. Friction 0 gives the frictionless Krieger–Dougherty curve (11.8 against 11.4 at 50 vol%). The measured law of non-Brownian spheres (Boyer et al. 2011, eq. 8: 7.39 / 31.9 / 145 at 40 / 50 / 55 vol%) is followed by no single friction coefficient: 0.25 (default) gives 6.1 / 22.9 / 104, 0.5 gives 6.4 / 30.3 / 409 - fit it to a measured viscosity where there is one (guide 13.3, B.7). It is the best estimate above about 35 vol% or where particles touch.</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.rve_with_dem"><span></span></span> Also solve the resin flow on the RVE where the particle dynamics gives the answer</label>
       <div class="hint">Off (default): for particles above 35 vol%, or touching, the particle dynamics gives the viscosity and the voxel flow solve is skipped — it cannot resolve the resin films between such particles, and its value would not be used; with viscosity as the only analysis no voxel RVE is generated at all. On: it is solved for its 3D resin flow (local shear rate, streamlines), on the CPU cores at the same time as the particle dynamics on an NVIDIA GPU; without a GPU, one after the other.</div>
       <div class="subh">Capillary underfill (parallel plates)</div>

@@ -298,7 +298,7 @@ table.grid tr:hover td{background:#fafbfc}
 table.grid tr.sum td{font-weight:700;background:var(--sub)}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:6px}
 .pill{display:inline-block;padding:0 7px;border-radius:9px;font-size:10.8px;font-weight:700;line-height:17px}
-.pill.pass{background:#dafbe1;color:var(--green)}.pill.warn{background:#fff8c5;color:var(--amber)}.pill.fail{background:#ffebe9;color:var(--red)}
+.pill.pass{background:#dafbe1;color:var(--green)}.pill.warn{background:#fff8c5;color:var(--amber)}.pill.fail{background:#ffebe9;color:var(--red)}.pill.info{background:#eaeef2;color:#57606a}
 
 /* tiles */
 .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin:6px 0}

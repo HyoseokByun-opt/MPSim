@@ -334,6 +334,11 @@ def plan(phases, rve=None, props=None, limits=None):
                            "label": f"{nm}: expected number of particles", "value": n_est,
                            "target": q["count"], "unit": "", "status": _status(n_est, q["count"], 0.4),
                            "note": ""})
+    if rve.get("periodic_array"):
+        for c in checks:
+            if str(c.get("id", "")).startswith(("size_", "len_", "count_")):
+                c["status"] = "info"
+                c["note"] = (c.get("note") or "") + (" · " if c.get("note") else "") + 'One cell of a periodic array (Domain - Periodic array): the array is the problem the benchmark solves, so the criteria of a random RVE do not apply.'
     checks.append({"id": "budget", "group": "Problem size", "label": "Grid size",
                    "value": N, "target": (None if budget == math.inf else budget),
                    "unit": "voxels per edge",
@@ -458,7 +463,7 @@ def plan(phases, rve=None, props=None, limits=None):
                   if (rve.get("realisations") or {}).get("mode") == "settle" else int(rve.get("n_seeds") or q["seeds"])),
         "settle": (dict(rve["realisations"]) if (rve.get("realisations") or {}).get("mode") == "settle" else None),
         "vf_tol": q["vf_tol"],
-        "features": feats, "checks": checks, "notes": notes,
+        "features": feats, "checks": checks, "notes": notes, "periodic_array": bool(rve.get("periodic_array")),
         # None rather than math.inf: Infinity is not valid JSON and would reach
         # the browser as a parse error
         "capped": capped, "budget": (None if budget == math.inf else int(budget)),
@@ -569,8 +574,10 @@ def post_checks(plan_, gen_info, quality="standard"):
         expected = 1.0 / math.sqrt(max(n / 8.0, 1.0))
         checks.append({"id": f"oct_{i}", "group": "Generated structure", "label": f"{p['name']}: homogeneity over octants (CoV)",
                        "value": cov, "target": max(0.15, 2.0 * expected * math.sqrt(max(1 - tgt, 0.05))),
-                       "unit": "", "status": "pass" if cov <= max(0.15, 2.0 * expected) else "warn",
-                       "note": "Coefficient of variation of the volume fraction over the eight octants of the RVE"})
+                       "unit": "", "status": ("info" if plan_.get("periodic_array") else
+                                              "pass" if cov <= max(0.15, 2.0 * expected) else "warn"),
+                       "note": "Coefficient of variation of the volume fraction over the eight octants of the RVE"
+                               + (" · " + 'One cell of a periodic array (Domain - Periodic array): the array is the problem the benchmark solves, so the criteria of a random RVE do not apply.' if plan_.get("periodic_array") else "")})
     dsp = gen_info.get("dispersion")
     if dsp:
         if dsp["mode"] == "clusters":

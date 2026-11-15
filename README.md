@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.10.0-0b62c4" alt="version 5.10.0">
+  <img src="https://img.shields.io/badge/version-5.10.1-0b62c4" alt="version 5.10.1">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-111%20checks-2da44e" alt="111 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-112%20checks-2da44e" alt="112 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -698,7 +698,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **111 problems with known solutions** (70 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **112 problems with known solutions** (71 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -762,25 +762,65 @@ reference values. A selection:
 | Statistical RVE: realisations until the 95 % interval is within the target | stops at the target or the most allowed; whole-number DOE seeds | passed |
 | Every step of a compression kept in 3D, also for a reused structure | labels and stress of each step's whole box | passed |
 
-Two presets also verify the solver against an exact solution. Copper vias that pass straight through a laminate conduct
-heat as parallel paths, k_z = f·k_Cu + (1 − f)·k_laminate for a copper area fraction f. The presets *PCB thermal vias*
-and *Glass core substrate · Cu TGVs* give 9.2851 and 36.0295 W/m·K, which agree with this value to the fourth decimal;
-in version 5.2.3 this check revealed that thin films ignored the anisotropy of their laminate.
+**Benchmarks against the literature.** Every comparison with a published measurement or a published solution is a preset (Home → *Benchmarks against the literature*) with a tutorial in the user guide (chapter 33; the full list with every source is its appendix B.7). Each number is that of the preset run as loaded with this version.
 
-**Comparison with published measurements.** Four presets reproduce materials whose properties have been measured and
-published. Each preset was run as loaded; the preset descriptions discuss the remaining differences.
+*Predictions against published measurements*
 
-| Preset | Reference | Reported | Computed |
-|---|---|---|---|
-| Heat spreader · Cu + diamond 50 vol% (400 µm) | Wang et al., *Materials* 2025 [1] | 640 W/m·K | 646 W/m·K, with 12.5 MW/m²K at the interface |
-| Power-module baseplate · AlSiC 63 vol% | Guo et al., *J. USTB* 2014 [2] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.85 ppm/K |
-| mmWave substrate · PTFE + silica 60 wt% | Murali et al., *Compos. Part A* 2009 [3] | Dk 2.9 | Dk 3.01 |
-| Power inductor · epoxy + carbonyl iron 54 vol% | Sugawa et al., *IEEE Trans. Magn.* 2013 [4] | μr 7.5 (printed) | μr 5.98 (spheres) |
+| Preset | Quantity | Ref. | Measured | MPSim |
+|---|---|---|---|---|
+| Benchmark · DOE · glass spheres in epoxy at Smith's four loadings; Measured benchmark · glass spheres 40 vol% in epoxy | Young's modulus of epoxy with glass spheres, 22.5 / 30.3 / 39.6 / 49.6 vol% | [1] | 5.08 / 6.01 / 7.94 / 12.09 GPa | FEM 5.14 / 6.32 / 8.22 / 11.22 (+1.1 %, +5.2 %, +3.5 %, -7.2 %); voxel elements 5.83 / 7.62 / 10.68 / 16.16 (+14.7 %, +26.7 %, +34.6 %, +33.7 %); 48³ |
+| Benchmark · particle dynamics against Boyer et al.'s measured law (friction 0.25, 50 vol%) | Shear viscosity of non-Brownian spheres / the liquid's, 40 / 50 / 55 vol% | [2] | 7.4 / 31.9 / 145.0 | friction 0.25 (default): 6.1 / 22.9 / 104.2; friction 0.5: 6.4 / 30.3 / 408.9 |
+| Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC) | Conductivity and expansion of SiC 63 vol% in Al-Si7Mg | [3] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.85 ppm/K (+6 %, +8 %; voxel solvers, interface 1e-8 m²K/W); FEM 9.23 ppm/K (+12 %) |
+| mmWave substrate · PTFE + fused silica 60 wt% | Permittivity of PTFE with 60 wt% silica | [5] | Dk 2.9 | Dk 3.01 (+3.8 %) |
+| Package-level power inductor · epoxy + carbonyl iron 54 vol% | Permeability of a printed carbonyl-iron core | [6] | μr 7.5 | μr 5.98 (−20 %; spheres, where the printed core's particles touch and align; see the preset) |
 
-1. Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, *Materials* **18** (16), 3882 (2025). [doi:10.3390/ma18163882](https://doi.org/10.3390/ma18163882) — 400 µm diamond, 50 vol%: 640 W/m·K.
-2. M. Guo, J. Liu, C. Jia, S. Guo, Y. Li, H. Zhou, “Microstructure and properties of SiCp/Al electronic packaging materials fabricated by pseudo-semi-solid thixoforming”, *Journal of University of Science and Technology Beijing* **36** (4), 489–495 (2014). [doi:10.13374/j.issn1001-053x.2014.04.011](https://doi.org/10.13374/j.issn1001-053x.2014.04.011) — as tabulated in L. Lai et al., *Micromachines* **14** (8), 1491 (2023), Table 2, [doi:10.3390/mi14081491](https://doi.org/10.3390/mi14081491).
-3. K. P. Murali, S. Rajesh, O. Prakash, A. R. Kulkarni, R. Ratheesh, “Preparation and properties of silica filled PTFE flexible laminates for microwave circuit applications”, *Composites Part A* **40** (8), 1179–1185 (2009). [doi:10.1016/j.compositesa.2009.05.007](https://doi.org/10.1016/j.compositesa.2009.05.007) — 60 wt% micron silica, X band.
-4. Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, *IEEE Transactions on Magnetics* **49** (7), 4172–4175 (2013). [doi:10.1109/TMAG.2013.2250925](https://doi.org/10.1109/TMAG.2013.2250925) — screen-printed 54 vol% core.
+Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the default friction 0.25 with it; that evaluation kept only μ1 of the contact term of their eq. (8). Against the law as printed no single friction coefficient follows it over the three loadings (guide 13.3); the default is still 0.25 - fit it to a measured viscosity where there is one.
+
+*A parameter fitted to a published measurement* (the measurement fixes an unknown, which then predicts the other properties)
+
+| Preset | Quantity | Ref. | Measured | MPSim |
+|---|---|---|---|---|
+| Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement) | Conductivity of Cu + diamond 50 vol% | [4] | 640 W/m·K | the paper's interface conductance 36–56 MW/m²K gives 749–777 W/m·K (+17 to +21 %); 12.5 MW/m²K reproduces the measurement (646) |
+| FEM · AlSiC, SiC 63 vol%: bonded contacts fitted to the measured expansion | Expansion of AlSiC with bonded contacts between the SiC | [3] | 8.21 ppm/K | 9.23 / 9.15 / 8.86 / 8.20 ppm/K for a neck of 0 / 0.3 / 0.45 / 0.6: a neck of 0.6 reproduces the measurement |
+| Calibration · Cu via paste 85 wt% (40 vol%), and on 12 diameters | Resistivity of a Cu paste cured at ≥ 130 °C and at 80–100 °C | [7] | 5×10⁻⁵ and 8×10⁻⁴ Ω·cm | R_c,e ≤ 2.2×10⁻¹⁴ Ω·m² (the necked network alone conducts 2.46 MS/m) and 1.08×10⁻¹² Ω·m² (192³) |
+
+*Published and exact solutions* (the presets with one particle per box are one cell of a periodic array: Domain → Periodic array)
+
+| Preset | Quantity | Ref. | Solution | MPSim |
+|---|---|---|---|---|
+| Benchmark · Rayleigh's simple cubic array of spheres (conduction) | Conductivity of a simple cubic array of spheres (15.5 vol%, 100 : 1) | [8] | 1.5324 (Rayleigh's printed coefficient 1.65: 1.5337) | FEM 1.5347 (+0.15 %); FV 1.5394 (+0.46 %) |
+| Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance (DOE) | Conductivity of dilute spheres with an interfacial resistance (5 vol%, 20 : 1) | [9] | 1.1355 / 1.0325 / 0.9976 (α 0 / 0.5 / 1) | 1.1363 / 1.0311 / 0.9960 (max 0.16 %) |
+| Benchmark · Maxwell Garnett: permittivity of dilute spheres | Permittivity of dilute spheres (5 vol%, ε 100 in 3) | [10] | 3.4320 | 3.4355 (+0.10 %) |
+| Benchmark · Einstein: viscosity of a dilute rigid sphere | Viscosity of a dilute rigid sphere (1.9 vol%) | [11] | 1.0485 ([η] 2.5) | 1.0501 ([η] 2.59, +3.44 %) |
+| Benchmark · particle dynamics against Krieger–Dougherty (frictionless spheres, 50 vol%) | Viscosity of frictionless spheres, 40 / 50 / 55 vol% | [12] | 4.80 / 11.38 / 23.07 (φ_m 0.64) | 5.70 / 11.77 / 18.55 |
+| Benchmark · Trouton: compression of a resin alone | Compression of a resin alone, sides free (axial stress) | [13] | 3ηε̇ = 3 Pa | 3 Pa (exact) |
+| Benchmark · two layers: series and parallel (exact) | Two equal layers, across and along (k, ε_r) | exact | k 0.39735 / 15.1; ε 5.57956 / 6.85 | k 0.39735 / 15.1; ε 5.57956 / 6.85 (exact) |
+| Benchmark · Poiseuille: a straight cylindrical pore (flow, tortuosity, acoustic lengths) | Straight cylindrical pore, r 16 µm: permeability, tortuosity, Λ, Λ′ | [14] | K φr²/8 = 4.060e-12 m²; τ 1; Λ = Λ′ = 16 µm | K 3.914e-12 (-3.60 %); τ 1.0000; Λ 15.85, Λ′ 15.85 µm |
+| Benchmark · Maxwell: moisture diffusion around impermeable spheres | Moisture diffusivity around impermeable spheres (5 vol%) | [15] | D*/D_m = 2/(2+φ) = 0.9756 | 0.9726 (-0.31 %) |
+| PCB thermal vias · FR-4 with Cu-plated vias; Glass core substrate · Cu-filled TGVs | Conductivity through and along a laminate with straight Cu vias | exact | parallel paths 9.2851 and 36.0295 W/m·K; in the plane 0.847 and 1.31 (Maxwell, parallel cylinders) | 9.2851 and 36.0295 (to the fourth decimal); 0.848 and 1.32 |
+| Glass-core TGV · conformal Cu wall (and every via with its thermal stress) | Radial stress of the glass at the via wall, half way along the via | exact | concentric cylinders in generalized plane strain (Lamé) | 0.067 % (every via-stress run reports its deviation) |
+| Die-attach solder · SAC305 with 15 % voids | Conductivity of solder with 15 % insulating voids | [15] | below 2(1 − φ)/(2 + φ) = 79.1 % of the dense value (Maxwell's bound for insulating spheres) | 76.9 % |
+
+*In the self-test only* (a test function, a two-layer strip, a single plate, a second code): Maximum packing of bidisperse spheres (the φ_m of the viscosity models) [16] - within 0.011; Sobol indices of the Ishigami function (DOE sensitivity) [17] - passed; Curvature of a bimetal strip (thermal stress and warpage) [18] - −20.002 1/m; Exact two-phase relation between stiffness and expansion (Levin, 1967; no DOI) - 5×10⁻⁷; Moisture uptake of a plate (Crank's series) - within 2×10⁻³; A homogeneous slab in openEMS against the exact slab transmission - within 0.001 dB; The tetrahedral FEM against FEniCSx (DOLFINx 0.11) on the same mesh: a second code, not a literature value - the same to 12 digits.
+
+1. J. C. Smith, “Experimental values for the elastic constants of a particulate-filled glassy polymer”, *J. Res. Natl. Bur. Stand. A* **80A** (1), 45 (1976). [doi:10.6028/jres.080A.008](https://doi.org/10.6028/jres.080A.008) — table 2.
+2. F. Boyer, É. Guazzelli, O. Pouliquen, “Unifying suspension and granular rheology”, *Phys. Rev. Lett.* **107** (18), 188301 (2011). [doi:10.1103/PhysRevLett.107.188301](https://doi.org/10.1103/PhysRevLett.107.188301) — eq. (8), μ_1 0.32, μ_2 0.7, I_0 0.005, φ_m 0.585.
+3. M. Guo, J. Liu, C. Jia, S. Guo, Y. Li, H. Zhou, “Microstructure and properties of SiCp/Al electronic packaging materials fabricated by pseudo-semi-solid thixoforming”, *Journal of University of Science and Technology Beijing* **36** (4), 489–495 (2014). [doi:10.13374/j.issn1001-053x.2014.04.011](https://doi.org/10.13374/j.issn1001-053x.2014.04.011) — as tabulated in L. Lai et al., *Micromachines* **14** (8), 1491 (2023), Table 2, [doi:10.3390/mi14081491](https://doi.org/10.3390/mi14081491).
+4. Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, *Materials* **18** (16), 3882 (2025). [doi:10.3390/ma18163882](https://doi.org/10.3390/ma18163882).
+5. K. P. Murali, S. Rajesh, O. Prakash, A. R. Kulkarni, R. Ratheesh, “Preparation and properties of silica filled PTFE flexible laminates for microwave circuit applications”, *Composites Part A* **40** (8), 1179–1185 (2009). [doi:10.1016/j.compositesa.2009.05.007](https://doi.org/10.1016/j.compositesa.2009.05.007).
+6. Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, *IEEE Trans. Magn.* **49** (7), 4172–4175 (2013). [doi:10.1109/TMAG.2013.2250925](https://doi.org/10.1109/TMAG.2013.2250925).
+7. K. Kawarai, M. Inoue, “Influence of curing temperature to electrical reliability of a phenolic-based adhesive containing copper particles treated with an aliphatic polyamine”, *Journal of Smart Processing* **7** (5), 199–206 (2018). [doi:10.7791/jspmee.7.199](https://doi.org/10.7791/jspmee.7.199).
+8. Lord Rayleigh, “On the influence of obstacles arranged in rectangular order upon the properties of a medium”, *Philos. Mag.* **34** (211), 481–502 (1892). [doi:10.1080/14786449208620364](https://doi.org/10.1080/14786449208620364).
+9. D. P. H. Hasselman, L. F. Johnson, “Effective thermal conductivity of composites with interfacial thermal barrier resistance”, *J. Compos. Mater.* **21** (6), 508–515 (1987). [doi:10.1177/002199838702100602](https://doi.org/10.1177/002199838702100602).
+10. J. C. Maxwell Garnett, “Colours in metal glasses and in metallic films”, *Philos. Trans. R. Soc. Lond. A* **203**, 385–420 (1904). [doi:10.1098/rsta.1904.0024](https://doi.org/10.1098/rsta.1904.0024).
+11. A. Einstein, “Eine neue Bestimmung der Moleküldimensionen”, *Ann. Phys.* **324** (2), 289–306 (1906), [doi:10.1002/andp.19063240204](https://doi.org/10.1002/andp.19063240204); correction: *Ann. Phys.* **339** (3), 591–592 (1911), [doi:10.1002/andp.19113390313](https://doi.org/10.1002/andp.19113390313).
+12. I. M. Krieger, T. J. Dougherty, “A mechanism for non-Newtonian flow in suspensions of rigid spheres”, *Trans. Soc. Rheol.* **3** (1), 137–152 (1959). [doi:10.1122/1.548848](https://doi.org/10.1122/1.548848).
+13. F. T. Trouton, “On the coefficient of viscous traction and its relation to that of viscosity”, *Proc. R. Soc. Lond. A* **77** (519), 426–440 (1906). [doi:10.1098/rspa.1906.0038](https://doi.org/10.1098/rspa.1906.0038).
+14. D. L. Johnson, J. Koplik, R. Dashen, “Theory of dynamic permeability and tortuosity in fluid-saturated porous media”, *J. Fluid Mech.* **176**, 379–402 (1987). [doi:10.1017/S0022112087000727](https://doi.org/10.1017/S0022112087000727).
+15. J. C. Maxwell, *A Treatise on Electricity and Magnetism*, Vol. 1, Clarendon Press, Oxford (1873), art. 314 (a book; no DOI).
+16. R. S. Farr, R. D. Groot, “Close packing density of polydisperse hard spheres”, *J. Chem. Phys.* **131** (24), 244104 (2009). [doi:10.1063/1.3276799](https://doi.org/10.1063/1.3276799).
+17. T. Ishigami, T. Homma, “An importance quantification technique in uncertainty analysis for computer models”, *Proc. First Int. Symp. on Uncertainty Modeling and Analysis*, 398–403 (1990). [doi:10.1109/ISUMA.1990.151285](https://doi.org/10.1109/ISUMA.1990.151285).
+18. S. Timoshenko, “Analysis of bi-metal thermostats”, *J. Opt. Soc. Am.* **11** (3), 233 (1925). [doi:10.1364/JOSA.11.000233](https://doi.org/10.1364/JOSA.11.000233).
 
 **RVE size.** The 7× and 10× criteria were determined from repeated runs on independent random structures, evaluated
 with the statistical method of Kanit et al. (2003). The random scatter of one realisation (95 % interval) was ±0.12 % /
@@ -798,8 +838,8 @@ failed, together with the reason. Chapter 31 of the user guide explains these ch
 
 | User guide | PDF |
 |---|---|
-| English, 188 pages | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) |
-| Korean, 176 pages | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) |
+| English, 333 pages | [MPSim-User-Guide-EN.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf) |
+| Korean, 316 pages | [MPSim-User-Guide-KO.pdf](https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-KO.pdf) |
 
 Each simulation chapter describes how the property is measured in the laboratory, how MPSim computes it, how the
 numbers and renderings are read, and the underlying assumptions; chapter 32 treats two semiconductor-material problems
@@ -928,7 +968,7 @@ app/
     doe.py, optimise.py, calibrate.py, links.py        studies, surrogate models, calibration, linked inputs
     visual.py, report.py viewer data, publication figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (68 materials), presets.json (61 presets)
+    data/                materials.json (68 materials), presets.json (72 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README images (the user guides are attached to the releases)
@@ -966,7 +1006,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.10.0, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.10.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 
