@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.9.0",
+  "softwareVersion": "5.10.0",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -182,7 +182,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.9.0</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.10.0</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -376,8 +376,8 @@
     <div class="wrap">
       <h2>Finite elements on a mesh fitted to the particles</h2>
       <p class="sub">A voxel solver sees a particle as the voxels it holds: a staircase surface, and a contact wherever two voxels touch.
-        Since 5.9.0 the conduction-type properties can also be solved by finite elements on a tetrahedral mesh that follows the particles'
-        exact surfaces. The finite volume stays the default.</p>
+        The conduction-type properties (5.9.0) and the stiffness and thermal expansion (5.10.0) can also be solved by finite elements on a
+        tetrahedral mesh that follows the particles' exact surfaces. The voxel solvers stay the default.</p>
       <div class="ex">
         <h3>The same compound, on voxels and on the fitted mesh</h3>
         <ul>
@@ -391,8 +391,44 @@
             twelve digits (1.16977753126), and one sphere per periodic cell converges with the square of the voxel size to Rayleigh's
             solution.</li>
         </ul>
-        <figure class="shot plots"><img src="assets/fem_showcase.webp" width="2635" height="918" loading="lazy"
-             alt="Heat flux in a section of an alumina and BN compound on voxels and on the body-fitted tetrahedral mesh, and the conductivity against the grid for both methods"></figure>
+        <figure class="shot plots"><img src="assets/fem3d_heat.webp" width="2715" height="1062" loading="lazy"
+             alt="Heat flux of an alumina and BN compound in 3D: finite volume on the voxels beside finite elements on the tetrahedral mesh fitted to the particles"></figure>
+      </div>
+      <div class="ex">
+        <h3>Stiffness and thermal expansion on the fitted mesh (5.10.0)</h3>
+        <ul>
+          <li>The same mesh with displacement elements: the six strains and the thermal load are solved together on all cores; a film
+            of resin between two particles is an interface element with the stiffness of a thin layer held between two stiff faces.</li>
+          <li>Fused silica 60 vol% in epoxy: the voxel elements give 25.0 → 17.4 GPa from 32³ to 192³ and are still falling, the FEM
+            16.2 → 15.7 GPa from 32³ to 64³; the thermal expansion 10.1 → 14.6 ppm/K against 15.2 → 15.6.</li>
+          <li>On the same mesh FEniCSx gives the same stiffness and thermal stress to twelve digits.</li>
+          <li>Against a measurement: glass spheres in epoxy (J. C. Smith, J. Res. Natl. Bur. Stand. A 80A (1976) 45,
+            <a href="https://doi.org/10.6028/jres.080A.008">doi:10.6028/jres.080A.008</a>) at 23 / 30 / 40 / 50 vol%: measured 5.08 / 6.01 / 7.94 /
+            12.09 GPa, FEM 5.13 / 6.32 / 8.22 / 11.22, voxel elements of the same grid 5.82 / 7.62 / 10.68 / 16.16.</li>
+          <li>Bonded contacts: particles that were sintered or pressed together are joined by a neck of the radius entered. AlSiC with
+            63 vol% SiC (measured 8.21 ppm/K): 9.23 without necks, 8.20 with a neck of 0.6 of the particle radius.</li>
+          <li>Every FEM result is drawn in 3D on the mesh itself, the voxel solver's field beside it with the same camera and colour scale.</li>
+        </ul>
+        <figure class="shot plots"><img src="assets/fem3d_stress.webp" width="2525" height="1062" loading="lazy"
+             alt="Thermal stress of a silica-filled epoxy in 3D: voxel finite elements beside the tetrahedral FEM fitted to the particles"></figure>
+        <figure class="shot plots"><img src="assets/elastic_grid.webp" width="1955" height="1292" loading="lazy"
+             alt="Young's modulus and thermal expansion against the grid for voxel elements and the tetrahedral FEM"></figure>
+      </div>
+      <div class="ex">
+        <h3>A graded mesh for blends of very different sizes (5.10.0)</h3>
+        <ul>
+          <li>An octree whose cells are as small as the particle they describe, cut at the exact surfaces; its finest cell may be smaller
+            than the voxel, so thin fibres and fine fillers keep their shape.</li>
+          <li>Grains of 3 µm with 0.6 vol% fibres 20 times thinner: 3.6 times fewer tetrahedra than the lattice mesh of the same finest
+            cell, 14 times fewer one level finer. Dense blends whose fines fill every gap save 15 to 31 %: the count follows the surface
+            area, not the mesher.</li>
+          <li>The multigrid solve runs on all cores: a conduction solve at 64³ in 7 s (15 s in 5.9.0).</li>
+          <li>Compression with contacts and friction: the spheres of a compression are also pressed by particle dynamics with
+            lubrication films of their real width and Coulomb friction - 11.5 / 25 / 35 times the plain resin's stress after 30 % for
+            a friction coefficient of 0 / 0.25 / 0.5 at 50 vol%.</li>
+        </ul>
+        <figure class="shot plots"><img src="assets/graded_mesh.webp" width="1595" height="1347" loading="lazy"
+             alt="Graded tetrahedral mesh of irregular grains with thin copper fibres, coloured by the heat flux"></figure>
       </div>
     </div>
   </section>
@@ -471,9 +507,9 @@
         size distributions of CV 0.2-0.5 on 256³-400³ grids: every case reaches its loading within 2 %, its mean sizes within
         2 % of the input (3 % with only 800 particles in the box).</p>
       <div class="stats">
-        <div class="stat"><b>105</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>111</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
-        <div class="stat"><b>56</b><span>ready-to-run presets for semiconductor materials, at least one for every analysis, four compared with published measurements, each with a tutorial in the guide</span></div>
+        <div class="stat"><b>61</b><span>ready-to-run presets for semiconductor materials, at least one for every analysis, four compared with published measurements, each with a tutorial in the guide</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
       </div>
       <h3 style="margin:30px 0 8px">Presets</h3>
@@ -501,6 +537,11 @@
         <li>Calibration · Cu via paste on 12 diameters, two cures</li><li>DOE · RVE size of a Cu paste near percolation</li>
         <li>Glass-core TGV · low-CTE Cu paste with fused silica</li><li>DOE · fused silica in the TGV paste</li>
         <li>FEM · alumina + BN compound on a tetrahedral mesh fitted to the particles</li>
+        <li>FEM · EMC stiffness and CTE on a tetrahedral mesh fitted to the particles</li>
+        <li>FEM · grains with thin fibres on a graded tetrahedral mesh</li>
+        <li>Measured benchmark · glass spheres 40 vol% in epoxy: FEM and voxel elements against 7.94 GPa</li>
+        <li>FEM · AlSiC, SiC 63 vol%: bonded contacts fitted to the measured expansion</li>
+        <li>Compression · silica 50 vol% with contacts and friction beside the resin flow</li>
         <li>Short glass fibres · diameter and length distributed independently</li><li>Alumina flakes · three axes</li>
         <li>Crushed silica · sized by volume-equivalent diameter</li><li>Structure from a TIFF · CT-like stack of an EMC</li>
       </ul>
@@ -551,7 +592,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.9.0},
+  version   = {5.10.0},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
