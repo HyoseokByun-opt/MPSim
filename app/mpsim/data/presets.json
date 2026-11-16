@@ -2378,7 +2378,7 @@
   {
    "id": "image_ct_emc",
    "name": "Structure from a TIFF · a grey CT-like stack of an EMC (epoxy, silica, voids), split by thresholds",
-   "description": "An 8-bit image of 64 × 64 × 64 voxels of 1 µm shipped with MPSim (emc_ct_example.tif: voids dark, epoxy mid-grey, silica bright, with blur and noise, as a scan looks before segmentation). Three grey-value ranges from automatic (Otsu) thresholds become the voids, the epoxy matrix and the silica; thermal conductivity and Grain analysis of the connected regions run on the image as on a generated RVE. Your own image: Structure tab, Image (TIFF), Load TIFF.",
+   "description": "An 8-bit image of 64 × 64 × 64 voxels of 1 µm shipped with MPSim (emc_ct_example.tif: voids dark, epoxy mid-grey, silica bright, with blur and noise, as a scan looks before segmentation). Three grey-value ranges from automatic (Otsu) thresholds become the voids, the epoxy matrix and the silica; thermal conductivity and Grain analysis (its particles, touching ones separated) run on the image as on a generated RVE. Your own image: Structure tab, Image (TIFF), Load TIFF.",
    "form": {
     "name": "EMC from a CT-like image",
     "source": "image",
@@ -2422,6 +2422,123 @@
     },
     "options": {
      "directions": "z"
+    }
+   }
+  },
+  {
+   "id": "image_visc_emc",
+   "name": "Viscosity from a TIFF · a scan-like stack of an uncured compound, touching silica spheres in resin",
+   "description": "An 8-bit image of 96 × 96 × 96 voxels of 0.5 µm shipped with MPSim (emc_visc_example.tif: resin mid-grey, fused silica bright, blurred and noisy as a scan), made from 90 touching spheres of mean diameter 9.93 µm (CV 0.25) at 50 vol%. A threshold splits resin and silica; the viscosity analysis separates the touching particles (90 found, mean 9.91 µm) and the particle dynamics shears them from where they are in the image, as spheres of their volume-equivalent sizes, with the MUF resin's flow curve; Grain analysis reports the same particles and writes them as particles.csv. Your own image: Structure tab, Image (TIFF), Load TIFF.",
+   "form": {
+    "name": "Uncured compound from a scan",
+    "source": "image",
+    "image": {
+     "example": "emc_visc_example.tif",
+     "voxel": 0.5,
+     "unit": "um",
+     "split": "ranges",
+     "thresholds": [
+      130
+     ],
+     "auto_n": 2,
+     "classes": [
+      {
+       "key": 0,
+       "role": "matrix",
+       "material_id": "epoxy",
+       "name": "Resin"
+      },
+      {
+       "key": 1,
+       "role": "phase",
+       "material_id": "sio2",
+       "name": "Fused silica"
+      }
+     ]
+    },
+    "rve": {
+     "quality": "fast"
+    },
+    "analyses": {
+     "viscosity": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z",
+     "viscosity": {
+      "model": {
+       "type": "carreau",
+       "mu0": 2,
+       "mu_inf": 0.2,
+       "lam": 0.05,
+       "n": 0.6
+      },
+      "gd_min": 0.1,
+      "gd_max": 1000,
+      "gd_ref": 10,
+      "density_resin": 1150,
+      "settle_min": 30,
+      "underfill": {
+       "gap_um": 50,
+       "length_mm": 10,
+       "gamma_mN_m": 35,
+       "theta_deg": 30
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "list_visc_emc",
+   "name": "Viscosity from a particle list · particles.csv of the same 90 silica spheres, drawn again without generating",
+   "description": "The particle file MPSim writes beside every run (particles.csv with particles_README.txt), shipped for the 90 touching fused-silica spheres (mean 9.93 µm, 50 vol%) the image of 'Viscosity from a TIFF' was made from. Structure - List (CSV) draws them on 96³ voxels of 0.5 µm as they were generated, without packing them again; the particle dynamics shears them from where they are. Your own run: Result Viewer - Grain analysis or the Export ribbon - Use as the structure, or Structure tab, List (CSV), Load CSV.",
+   "form": {
+    "name": "Uncured compound from a particle list",
+    "source": "particle_list",
+    "matrix": {
+     "material_id": "epoxy",
+     "name": "Resin"
+    },
+    "particles_in": {
+     "example": "emc_visc_example",
+     "unit": "um",
+     "classes": [
+      {
+       "key": "1|sphere",
+       "material_id": "sio2",
+       "name": "Fused silica"
+      }
+     ]
+    },
+    "rve": {
+     "quality": "fast"
+    },
+    "analyses": {
+     "viscosity": true,
+     "grains": true
+    },
+    "options": {
+     "directions": "z",
+     "viscosity": {
+      "model": {
+       "type": "carreau",
+       "mu0": 2,
+       "mu_inf": 0.2,
+       "lam": 0.05,
+       "n": 0.6
+      },
+      "gd_min": 0.1,
+      "gd_max": 1000,
+      "gd_ref": 10,
+      "density_resin": 1150,
+      "settle_min": 30,
+      "underfill": {
+       "gap_um": 50,
+       "length_mm": 10,
+       "gamma_mN_m": 35,
+       "theta_deg": 30
+      }
+     }
     }
    }
   },

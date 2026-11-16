@@ -328,7 +328,7 @@
     return {
       name: "New case", defaults: FORM_DEFAULTS, matrix: matEntry("epoxy"), phases: [phaseEntry("al2o3", "sphere")],
       // 5.6.6: "image" takes the structure from a TIFF (form.image) instead of generating particles
-      source: "particles", image: null,
+      source: "particles", image: null, particles_in: null,
       rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, press_contact: true, realisations: { mode: "fixed", target_pct: 2, n_min: 3, n_max: 20 }, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, press_cure: false, press_mold_C: 175, press_control: "rate", press_stress_Pa: 100, press_part_mm: 1, press_time_s: 600, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
@@ -341,7 +341,7 @@
         viscosity: { model: { type: "newtonian", mu: 1, K: 1, n: 0.7, mu0: 1, mu_inf: 0, lam: 1 }, yield_Pa: 0, gd_min: 0.01, gd_max: 1000, gd_ref: 10,
           phi_m_mode: "auto", friction: "none", phi_m: 0.64, dilute_rve: true, density_resin: 1150, settle_min: 60, rve_with_dem: false,
           underfill: { gap_um: 50, length_mm: 10, gamma_mN_m: 35, theta_deg: 30 },
-          dem: { on: true, n: 500, strain: 10, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto" } },
+          dem: { on: true, n: 500, strain: 10, roughness_nm: 5, hmin_nm: 1, mu_f: 0.25, hamaker_J: null, bound_nm: 0, adhesion_mJ_m2: 0, rates: 4, backend: "auto", from_structure: true } },
         moisture: { thickness_mm: 1, hours: 168, sides: "both" }, above_tg: false,
         overlap_steps: { on: true, tries: 2, max_vox: 3, share: "auto", max_pct: 0.5 },
         mechtest: { mode: "compression", axis: "z", lateral: "free", control: "force", value: 100, length_mm: null, area_mm2: 10, strength_MPa: null },
@@ -469,8 +469,8 @@
         { group: "Exchange", items: [RB("libExport", "save", "Export library"), RB("database", "database", "Material table")] },
       ],
       structure: [
-        { group: "Add a phase (any material; Air makes it pore space)", items: PARTICLE_SHAPES.map((s) => RB("add:" + s, SHAPES[s].icon, SHAPES[s].label, { color: "var(--c-gen)", dis: f.source === "image" })) },
-        { group: "Bicontinuous", items: [RB("add:network", "network", "Network", { color: "var(--c-flow)", dis: f.source === "image" })] },
+        { group: "Add a phase (any material; Air makes it pore space)", items: PARTICLE_SHAPES.map((s) => RB("add:" + s, SHAPES[s].icon, SHAPES[s].label, { color: "var(--c-gen)", dis: f.source === "image" || f.source === "particle_list" })) },
+        { group: "Bicontinuous", items: [RB("add:network", "network", "Network", { color: "var(--c-flow)", dis: f.source === "image" || f.source === "particle_list" })] },
         { group: "Selected phase", items: [RB("dup", "duplicate", "Duplicate", { dis: !f.phases.length }), RB("del", "delete", "Delete", { dis: !f.phases.length })] },
         { group: "Update", items: [RB("refresh", "reset", "Refresh", { primary: true, tip: "Plans the case again and redraws this panel: size distribution, particle counts, recommended RVE and criteria (they also follow every change by themselves)" })] },
       ],
@@ -516,7 +516,7 @@
       ],
       results: [
         { group: "Views", items: [RB("c:vis", "view3d", "3D / 2D view", { on: state.center === "vis" }), RB("c:res", "table", "Result Viewer", { on: state.center === "res" }), RB("c:rep", "report", "Report", { on: state.center === "rep" })] },
-        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:particles_set", "table", "Particles CSV", { dis: !state.resultJob || !realSizes(state.result), tip: "particles.csv (every particle: centre, size, dimensions, volume, orientation), polyhedra.csv and the conventions - to draw the same particles in another program" }), RB("dl:psa_set", "grains", "PSA CSV", { dis: !state.resultJob || !(realSizes(state.result) || (((state.result || {}).properties || {}).grains || {}).sizes), tip: "psa.csv and psa_summary.csv: the size distribution of every dimension realised in the structure against the input (number and volume, per bin and cumulative; means, D10/D50/D90)" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob }), RB("dl:run", "zip", "Run folder ZIP", { dis: !state.resultJob, tip: "The whole run folder - results, 3D view, structure, report - to open in MPSim on another PC (Runs - Import ZIP)" })] },
+        { group: "Export", items: [RB("dl:result", "json", "Result JSON", { dis: !state.resultJob }), RB("dl:layer_card", "layers", "Layer card", { dis: !state.resultJob }), RB("dl:structure_set", "image", "Structure TIFF set", { dis: !state.resultJob || !!(state.result && state.result.dem_direct), tip: "structure.tif (one grey value per material), structure_labels.tif (material IDs) and structure_legend.csv (IDs, grey values, materials and properties) - for ImageJ, PuMA or any other voxel code" }), RB("dl:particles_set", "table", "Particles CSV", { dis: !state.resultJob || !(realSizes(state.result) || (state.result || {}).particles_csv), tip: "particles.csv (every particle: centre, size, dimensions, volume, orientation), polyhedra.csv and the conventions - to draw the same particles in another program" }), RB("dl:psa_set", "grains", "PSA CSV", { dis: !state.resultJob || !(realSizes(state.result) || (((state.result || {}).properties || {}).grains || {}).sizes), tip: "psa.csv and psa_summary.csv: the size distribution of every dimension realised in the structure against the input (number and volume, per bin and cumulative; means, D10/D50/D90)" }), RB("dl:bundle", "zip", "Complete ZIP", { dis: !state.resultJob }), RB("dl:run", "zip", "Run folder ZIP", { dis: !state.resultJob, tip: "The whole run folder - results, 3D view, structure, report - to open in MPSim on another PC (Runs - Import ZIP)" })] },
         { group: "Figures", items: [RB("shot", "camera", "Screen capture"), RB("render", "image", "Hi-res figure", { tip: "High-resolution figure rendered on the server (PyVista)" })] },
       ],
     };
@@ -1388,8 +1388,9 @@
   }
   // where the structure comes from: generated particles, or an image (5.6.6)
   function sourceSeg() {
-    const im = state.form.source === "image";
-    return `<div class="seg" style="margin-bottom:8px"><button data-src="particles" class="${im ? "" : "on"}">Generated particles</button><button data-src="image" class="${im ? "on" : ""}">Image (TIFF)</button></div>`;
+    // "particles": generated (the default since 5.6.6); "image": a TIFF; "particle_list": a particle CSV (5.10.2)
+    const src = state.form.source === "image" ? "image" : state.form.source === "particle_list" ? "particle_list" : "particles";
+    return `<div class="seg" style="margin-bottom:8px"><button data-src="particles" class="${src === "particles" ? "on" : ""}" title="Particles generated from the composition">Generated</button><button data-src="image" class="${src === "image" ? "on" : ""}" title="A 3D TIFF read as the structure">Image (TIFF)</button><button data-src="particle_list" class="${src === "particle_list" ? "on" : ""}" title="A particle list drawn as the structure: particles.csv of a run, or a table of spheres">List (CSV)</button></div>`;
   }
   /* A structure from a TIFF image: a 3D stack (or one 2D image extruded along z) of grey values, colours or
      palette indices; every value, colour or grey-value range is a class, and each class the matrix or a phase
@@ -1428,9 +1429,96 @@
         <div class="row wrap" style="gap:6px;align-items:center"><select data-imgaxis style="width:auto">${["x", "y", "z"].map((a) => `<option value="${a}" ${a === ax ? "selected" : ""}>Normal to ${a}</option>`).join("")}</select>
           <input type="range" min="0" max="${nAx - 1}" value="${kk}" data-imgk style="flex:1"><span class="hint">${kk + 1} / ${nAx}</span></div>
         <img id="imgSlice" src="/api/images/${encodeURIComponent(im.id)}/slice?axis=${ax}&k=${kk}${t}" style="width:100%;image-rendering:pixelated;border:1px solid var(--line, #d0d7de);border-radius:6px;margin-top:6px" alt="Slice of the image">
-        <div class="hint">The image is one periodic cell: the solvers wrap it around its faces as they wrap a generated RVE, so an image cut out of a larger sample meets a mismatched neighbour at its faces. Grain analysis counts the connected regions of every phase as its grains (touching grains are one region).</div>
+        <div class="hint">The image is one periodic cell: the solvers wrap it around its faces as they wrap a generated RVE, so an image cut out of a larger sample meets a mismatched neighbour at its faces. Grain analysis finds the particles of every phase, touching ones separated; they are written as particles.csv, which List (CSV) draws again.</div>
       </div></div>
       <div class="sec"><div class="sh">${I("morphology")}Composition</div><div class="sb" id="compBody"></div></div>`;
+  }
+  /* A structure from a particle list (5.10.2): particles.csv as MPSim writes it beside every run (every shape, with
+     polyhedra.csv and particles_README.txt), or a plain table of spheres (x, y, z, d per row, optionally a phase).
+     The particles are drawn on a voxel grid by the generator's own raster - the structure, without packing it again. */
+  function particlesPanel() {
+    const pl = state.form.particles_in, f = state.form;
+    const load = `<label class="btn sm primary">${I("open")}${pl && pl.id ? "Load another list" : "Load CSV"}<input type="file" accept=".csv,.txt" multiple data-plfile hidden></label>`;
+    const intro = `<div class="hint" style="margin-top:6px">A list of particles drawn as the structure, without generating it: MPSim's own <b>particles.csv</b> of an earlier run (select it together with polyhedra.csv and particles_README.txt where they are - the README gives the box and the voxel size), or a plain table of spheres with a centre and a diameter per row (columns x, y, z and d, or r for the radius; a column phase - a number or a name - for several fillers). MPSim writes particles.csv for every structure with particles and for the particles it finds in an image.</div>`;
+    if (!pl || !pl.id) return `<div class="sec"><div class="sh">${I("table")}Structure from a particle list</div><div class="sb">${load}${intro}</div></div>`;
+    const un = pl.unit || "um", box = pl.box || [], h = +pl.voxel || 0;
+    const n3 = box.length === 3 && h > 0 ? box.map((b) => Math.round(+b / h)) : null;
+    const rows = (pl.classes || []).map((c) => [`${esc(c.label || c.key)}<br><small class="hint">${esc(c.shape || "")} × ${(+c.count || 0).toLocaleString()}</small>`,
+      `<select data-plmat="${esc(String(c.key))}" style="width:100%;min-width:0">${materialOptions(c.material_id)}</select><input data-plname="${esc(String(c.key))}" value="${esc(c.name || "")}" title="Name" style="width:100%;min-width:0;margin-top:4px">`]);
+    const mem = n3 ? n3[0] * n3[1] * n3[2] : 0;
+    return `<div class="sec"><div class="sh">${I("table")}Structure from a particle list</div><div class="sb">
+        <div class="row wrap" style="gap:8px;align-items:center">${load}<span class="hint"><b>${esc(pl.name || "")}</b> · ${(+pl.n || 0).toLocaleString()} particles · ${pl.format === "mpsim" ? "MPSim's particle file" : "a table of spheres"}${pl.film ? " · a film" : ""}</span></div>
+        <div class="g2" style="margin-top:6px"><div><label class="f">Voxel size</label><input type="number" step="any" min="0" data-k="particles_in.voxel" data-num></div>
+          <div><label class="f">Lengths in the file</label><select data-k="particles_in.unit"><option value="nm">nm</option><option value="um">µm</option><option value="mm">mm</option></select></div></div>
+        <div class="g3"><div><label class="f">Box x</label><input type="number" step="any" min="0" data-k="particles_in.box.0" data-num></div><div><label class="f">Box y</label><input type="number" step="any" min="0" data-k="particles_in.box.1" data-num></div><div><label class="f">Box z</label><input type="number" step="any" min="0" data-k="particles_in.box.2" data-num></div></div>
+        <div class="hint">${pl.readme ? "The box and the voxel size are those particles_README.txt gives (the run the list came from); a finer voxel draws the same particles on a finer grid." : `The file gives no box: enter it (the particles' extent is ${(pl.box_suggested || []).map(fmt).join(" × ")} ${esc(LEN_LABEL[un] || un)}). The box is one periodic cell - a particle crossing a face continues on the opposite one.`} Grid: ${n3 ? `${n3.join(" × ")} voxels (${(mem / 1e6).toFixed(mem < 1e7 ? 2 : 0)} M)` : "—"}.</div>
+        <div class="subh">Matrix</div>
+        <select data-plmatrix style="min-width:160px">${materialOptions(f.matrix.material_id)}</select>
+        <div class="subh">Phases of the list</div>
+        ${tbl(["Phase of the list", "Material · name"], rows)}
+        <div class="hint">Every phase of the list (its phase column; one shape per phase) takes a material. Its shape, the mean proportions of its particles and the measured distribution of their sizes enter the models (closed forms, the maximum packing fraction); the voxels are the particles as listed. A coating in the list is drawn with its particle (one material). The particle dynamics of the viscosity starts from these particles where they are.</div>
+      </div></div>
+      <div class="sec"><div class="sh">${I("morphology")}Composition</div><div class="sb" id="compBody"></div></div>`;
+  }
+  // a particle list stored on the server (an upload, an example, a run's own particles): the form's description
+  function particlesFromMeta(m, prev, phaseForm) {
+    prev = prev || {};
+    const pl = {
+      id: m.id, dir: m.dir, name: m.name, n: m.n, format: m.format, film: !!m.film, readme: !!m.readme,
+      box: prev.box && prev.id === m.id ? prev.box : (m.box || m.box_suggested || []), box_suggested: m.box_suggested,
+      voxel: prev.voxel && prev.id === m.id ? prev.voxel : (m.voxel || +(Math.max(0.05, (m.phases[0] || {}).d_mean / 10 || 1)).toPrecision(2)),
+      unit: prev.unit || "um", example: prev.example,
+    };
+    const given = {};
+    (prev.classes || []).forEach((c) => (given[c.key] = c));
+    pl.classes = m.phases.map((p, k) => {
+      const g = given[p.key], from = phaseForm && phaseForm[k];
+      const id = (g && g.material_id) || (from && from.material_id) || "sio2", mm = mat(id) || mat("sio2");
+      return { key: p.key, label: p.name, shape: p.shape, count: p.count, material_id: mm.id,
+        name: (g && g.name) || (from && from.name) || (p.name && !/^Phase \d|^Particles$/.test(p.name) ? p.name : mm.name),
+        props: (g && g.props) || (from && from.props) || clone(mm.props) };
+    });
+    return pl;
+  }
+  async function uploadParticles(input) {
+    const fs = Array.from(input.files || []);
+    if (!fs.length) return;
+    const fd = new FormData();
+    fs.forEach((f) => fd.append("file", f));
+    toast(`Reading ${fs.map((f) => f.name).join(", ")} …`, 60000);
+    try {
+      const r = await (await fetch("/api/particles", { method: "POST", body: fd })).json();
+      if (!r.ok) throw new Error(r.error || "the list could not be read");
+      state.form.particles_in = particlesFromMeta(r.particles, null);
+      state.form.source = "particle_list";
+      toast(`${r.particles.name}: ${r.particles.n.toLocaleString()} particles in ${r.particles.phases.length} phase(s)${r.particles.box ? "" : " - enter the box"}.`, 7000);
+    } catch (err) { toast("The particle list could not be read: " + err.message, 9000); }
+    saveForm(); renderLeft(); renderRibbon(); schedulePlan(0);
+  }
+  // a preset's particle list shipped with MPSim (data/particles), stored as an upload is
+  async function exampleParticles() {
+    const pl = state.form.particles_in;
+    if (!pl || !pl.example || pl.id) return;
+    try {
+      const r = await api("POST", "/api/particles/example", { name: pl.example });
+      state.form.particles_in = particlesFromMeta(r.particles, pl);
+    } catch (err) { toast("The example particle list could not be loaded: " + err.message, 8000); }
+    saveForm(); renderLeft(); renderRibbon(); schedulePlan(0);
+  }
+  // the particles of the run on show as the structure of the case: drawn again, not generated
+  async function particlesFromRun() {
+    if (!state.resultJob) return;
+    try {
+      const r = await api("POST", `/api/jobs/${state.resultJob}/particles_as_structure`, {});
+      const sp = ((state.result || {}).spec || {});
+      const ph = (sp.phases || []).map((p) => ({ material_id: p.material_id, name: p.name, props: p.props }));
+      if (sp.matrix && sp.matrix.material_id) state.form.matrix = { name: sp.matrix.name, material_id: sp.matrix.material_id, props: clone(sp.matrix.props) };
+      state.form.particles_in = particlesFromMeta(r.particles, null, ph);
+      state.form.source = "particle_list";
+      saveForm(); renderLeft(); renderRibbon(); schedulePlan(0);
+      setTab("structure");
+      toast(`The structure of the case is now the ${r.particles.n.toLocaleString()} particles of this run (Structure - Particle list): drawn again, not generated.`, 8000);
+    } catch (err) { toast("The run's particles could not be taken: " + err.message, 9000); }
   }
   // the classes an image's grey values make: each value, or the ranges between thresholds
   async function imageClasses(params) {
@@ -1504,6 +1592,7 @@
   function leftStructure() {
     const f = state.form, cols = phaseColors();
     if (f.source === "image") return sourceSeg() + imagePanel();
+    if (f.source === "particle_list") return sourceSeg() + particlesPanel();
     if (state.sel >= f.phases.length) state.sel = Math.max(0, f.phases.length - 1);
     const rows = [`<div class="prow ${state.sel < 0 ? "on" : ""}" data-sel="-1"><i class="sw2" style="background:${isVoid(f.matrix) ? "#7fd3f7" : PHASE_COLORS[0]}"></i>${I("matrix")}<div class="nm">${esc(f.matrix.name)}<small>matrix${(mat(f.matrix.material_id) || {}).name && mat(f.matrix.material_id).name !== f.matrix.name ? " · " + esc(mat(f.matrix.material_id).name) : ""}${isVoid(f.matrix) ? " · gas" : ""}</small></div><span class="vf" id="vfMatrix"></span></div>`]
       .concat((f.matrix_regions || []).map((mr, k) => `<div class="prow ${state.sel === -2 - k ? "on" : ""}" data-sel="${-2 - k}"><i class="sw2" style="background:${matrixRegionColor(k, isVoid(mr))}"></i>${I("matrix")}<div class="nm">${esc(mr.name)}<small>matrix · ${secTxt(mr.section)}</small></div><span class="vf" id="vfMr${k}"></span></div>`))
@@ -1570,6 +1659,15 @@
 
   function leftDomain() {
     const f = state.form, pl = state.plan && state.plan.plan;
+    if (f.source === "particle_list") {
+      const pl = f.particles_in || {};
+      return `<div class="sec"><div class="sh">${I(f.rve.quality)}Accuracy level</div><div class="sb">
+          <div class="seg" id="qualitySeg">${["fast", "standard", "accurate"].map((q) => `<button data-q="${q}" class="${f.rve.quality === q ? "on" : ""}">${q[0].toUpperCase() + q.slice(1)}</button>`).join("")}</div>
+          <div class="hint" style="margin-top:6px">${QUALITY_HINT[f.rve.quality]}</div></div></div>
+        <div class="sec"><div class="sh">${I("cube")}Domain</div><div class="sb">
+          <div class="note">The structure is drawn from the particle list ${esc(pl.name || "")}: its box and the voxel size entered on the Structure tab are the RVE${pl.film ? " (a film)" : ""}. There is one realisation.</div>
+          <div data-live="domrec">${domRecHtml()}</div><div data-live="domchecks">${domChecksHtml()}</div></div></div>`;
+    }
     if (f.source === "image") {
       const im = f.image || {};
       return `<div class="sec"><div class="sh">${I(f.rve.quality)}Accuracy level</div><div class="sb">
@@ -3199,6 +3297,8 @@
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dilute_rve"><span></span></span> Intrinsic viscosity of non-spherical fillers from a dilute RVE</label>
       <div class="subh">Particle dynamics</div>
       <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dem.on"><span></span></span> Shear the fillers as moving particles (on by default)</label>
+      <label class="chk"><span class="switch"><input type="checkbox" data-k="options.viscosity.dem.from_structure"><span></span></span> Start from the structure's own particles where they are - a structure from an image or a particle list (on by default)</label>
+      <div class="hint">An image's particles (touching ones separated) or a list's spheres start where the structure has them, as spheres of their volume-equivalent sizes in its box, instead of a packing of the same sizes made anew. The structure is one periodic cell: where it holds fewer particles than the number below, the cell is repeated (2 × 2 × 2 and up, at most 4 × 4 × 4) - the same arrangement with more particles, which narrows the scatter. A box that is not cubic, a film or fewer than 40 particles pack anew. A generated structure's spheres always pack anew (validated against Krieger–Dougherty); its other shapes start from the RVE.</div>
       <div class="g3">${num("options.viscosity.dem.n", "Particles", "", "1")}${num("options.viscosity.dem.strain", "Sheared strain", "")}${num("options.viscosity.dem.mu_f", "Friction coefficient", "")}</div>
       <div class="hint">More particles narrow the scatter between runs (about 2.5 / √(particles × strain): 6 % at 500 and a strain of 5, 0.6 % at 50 000) and are needed for blends of very different sizes. The neighbour search grows with the count, not its square: the time per step grows in proportion, and the memory is about 2 GB per 100 000 particles, on the GPU or in RAM. Hundreds of thousands are for an NVIDIA GPU; a laptop CPU took 2.3 s per step at 128 000.</div>
       <div class="g3">${num("options.viscosity.dem.roughness_nm", "Surface roughness", "nm")}${num("options.viscosity.dem.hmin_nm", "Closest approach", "nm")}${num("options.viscosity.dem.hamaker_J", "Hamaker constant (empty: auto)", "J")}</div>
@@ -3249,11 +3349,12 @@
               dm.rigid ? ["Shapes", dm.rigid.filter((b) => b.shape !== "sphere").map((b) => `${esc(b.phase)}: ${b.count} ${esc(b.shape)} particles of ${b.spheres} spheres <span class="hint">rigid multi-sphere particles</span>`).join("<br>")] : null,
               ["Contacts per particle", fmt(dm.contacts_per_particle)],
               ["Particles", dm.counts.map((c, i) => `${c} × ${fmt(dm.d_um[i])} µm`).join(" + ") + ` <span class="hint">box ${fmt(dm.box_um)} µm</span>`],
+              dm.from_structure ? ["Start", `the structure's own particles where they are${dm.from_structure.repeat > 1 ? `, its cell repeated ${dm.from_structure.repeat} × ${dm.from_structure.repeat} × ${dm.from_structure.repeat}` : ""} <span class="hint">${dm.from_structure.n} spheres of their volume-equivalent sizes in a ${fmt(dm.from_structure.box_um)} µm box; no packing of its own</span>`] : null,
               ["Friction · roughness · closest approach", `${fmt(dm.mu_f)} · ${fmt(dm.roughness_nm)} nm · ${fmt(dm.hmin_nm)} nm`],
               ["Bound layer · adhesion", `${fmt(dm.bound_nm)} nm · ${fmt(dm.adhesion_mJ_m2)} mJ/m²${dm.bound_nm ? ` <span class="hint">effective φ ${fmt(dm.phi_effective)}</span>` : ""}`],
               ["Hamaker constant", dm.hamaker.map((h) => `${esc(h.phase)} ${fmt(h.J)} J <span class="hint">${esc(h.basis)}</span>`).join("<br>")]])}
         </div></div>
-        ${dm.anim ? `<div class="bt" style="margin-top:10px">The sheared particles <span class="hint">the solver's own box (not the RVE above), the top moving +x and the bottom −x; drag to turn it</span></div><div id="demPlayer"></div>` : ""}
+        ${dm.anim ? `<div class="bt" style="margin-top:10px">The sheared particles <span class="hint">${dm.from_structure ? "the structure's own box and particles, sheared" : "the solver's own box (not the RVE above)"}, the top moving +x and the bottom −x; drag to turn it</span></div><div id="demPlayer"></div>` : ""}
         <p class="hint">The fillers are not held: each one moves and turns with the resin, the films between close surfaces resist squeezing and sliding (lubrication), touching surfaces push and rub (friction), and the van der Waals attraction pulls them together. Roughness, the closest approach and the attraction carry lengths of their own, so the same loading of a finer filler comes out stiffer. Above about 35 vol%, or where the particles of the RVE touch, this is the best estimate.</p></div>`;
     const f = p.flow;
     draws.push(() => CH.line($("#viscFlow"), { xlog: true, ylog: true, xlabel: "Shear rate (1/s)", ylabel: "Viscosity (Pa·s)", series: [
@@ -3280,6 +3381,10 @@
         <div class="bt" style="margin-top:8px">Closed forms at this φ</div>${kv(refs)}</div>
       <div class="box"><div class="bt">Relative viscosity against filler loading</div>${canvas("viscCurve", 300)}</div>
       ${demBox}
+      ${p.from_image ? `<div class="box" style="grid-column:1/-1"><div class="bt">Particles found in the image <span class="hint">touching particles separated by a periodic watershed of the distance to their surface</span></div>
+        ${tbl(["Filler", "Particles", "vol%", "Mean d (µm)", "D10 / D50 / D90, by volume (µm)", "Circumscribed d (µm)"],
+              Object.values(p.from_image).map((s) => [esc(s.name), s.n_particles, fmt(100 * s.vf), fmt(s.eqd_um_mean), s.eqd_um_d10_d50_d90_volume.map(fmt).join(" / "), fmt(s.circ_um_mean)]))}
+        <p class="hint">The particle dynamics, the maximum packing fraction, the closed forms and the settling take these particles as spheres with their volume-equivalent diameters (the measured number distribution), at the image's content; the particle dynamics packs them anew in its own box. Their shapes are not kept there: an elongated or flaky filler shears like spheres of its volume. The RVE flow solve, when it runs, takes the image itself.</p></div>` : ""}
       <div class="box"><div class="bt">Flow curve <span class="hint">resin ${esc(f.model.type)}${f.yield_Pa ? `, yield stress ${fmt(f.yield_Pa)} Pa` : ""}; shear-rate amplification in the resin ${fmt(f.amplification)}</span></div>${canvas("viscFlow", 280)}
         ${kv([[`Compound at ${fmt(p.gd_ref)} 1/s`, `<b class="mono">${fmt(p.mu_compound_ref)}</b> Pa·s`], [`Resin at ${fmt(p.gd_ref)} 1/s`, `${fmt(p.mu_resin_ref)} Pa·s`]])}
         ${f.dem_rates ? `<div class="hint">The compound follows the particle dynamics at ${f.dem_rates.gd.length} shear rates (dots; relative viscosity ${f.dem_rates.mu_r.map(fmt).join(" → ")} from ${fmt(f.dem_rates.gd[0])} to ${fmt(f.dem_rates.gd[f.dem_rates.gd.length - 1])} 1/s), linear in log-log between them.</div>` : (p.dem && p.dem.rate_note ? `<div class="hint">Particle dynamics: ${esc(p.dem.rate_note)}.</div>` : "")}</div>
@@ -3538,9 +3643,9 @@
     return `<div class="rgrid">${Object.entries(sizes).map(([pi, e]) => sizeBox(pi, e)).join("")}</div>${sizeFilesNote()}`;
   }
   function sizeFilesNote(img) {
-    if (img) return `<div class="row wrap" style="gap:6px;margin-top:6px"><a class="btn sm" href="${jobUrl("download/psa_set")}">${I("zip")}Size distributions (CSV)</a></div>
-      <p class="hint">grains.csv lists every connected region of every phase (voxels, volume, volume-equivalent diameter); psa.csv their distribution in bins (number and volume %, per bin and cumulative), psa_summary.csv its statistics.</p>`;
-    return `<div class="row wrap" style="gap:6px;margin-top:6px"><a class="btn sm" href="${jobUrl("download/particles_set")}">${I("zip")}Particles (CSV)</a><a class="btn sm" href="${jobUrl("download/psa_set")}">${I("zip")}Size distributions (CSV)</a></div>
+    if (img) return `<div class="row wrap" style="gap:6px;margin-top:6px"><a class="btn sm" href="${jobUrl("download/psa_set")}">${I("zip")}Size distributions (CSV)</a>${(state.result || {}).particles_csv ? `<a class="btn sm" href="${jobUrl("download/particles_set")}">${I("zip")}Particles (CSV)</a><button class="btn sm" data-plfromrun title="Draw these particles as the structure of the case (Structure - Particle list): no generation">${I("table")}Use as the structure</button>` : ""}</div>
+      <p class="hint">grains.csv lists every particle of every phase, touching ones separated (voxels, volume, volume-equivalent and circumscribed diameters, centre); psa.csv their distribution in bins (number and volume %, per bin and cumulative), psa_summary.csv its statistics.</p>`;
+    return `<div class="row wrap" style="gap:6px;margin-top:6px"><a class="btn sm" href="${jobUrl("download/particles_set")}">${I("zip")}Particles (CSV)</a><a class="btn sm" href="${jobUrl("download/psa_set")}">${I("zip")}Size distributions (CSV)</a><button class="btn sm" data-plfromrun title="Draw these particles as the structure of the case (Structure - Particle list): no generation">${I("table")}Use as the structure</button></div>
       <p class="hint">particles.csv lists every particle as built - centre, size d, volume-equivalent diameter, volume, the extents along its own axes, length, aspect ratios, polyhedron shape and orientation (rows of the rotation = the particle's axes in the box) - so that another program draws the same structure (polyhedra.csv: the vertices of each polyhedron; particles_README.txt: the conventions). psa.csv holds the realised and the input distributions of every dimension in common bins (number and volume %, per bin and cumulative), psa_summary.csv their statistics. The structure drawn from particles.csv at the voxel centres reproduces structure.tif voxel for voxel.</p>`;
   }
   function sizeBox(pi, e, li) {
@@ -5302,6 +5407,22 @@
       else if (t.dataset.libimport !== undefined) importLibrary(t);
       else if (t.dataset.psdfile !== undefined) readPsdFile(t);
       else if (t.dataset.imgfile !== undefined) uploadImage(t);
+      else if (t.dataset.plfile !== undefined) uploadParticles(t);
+      else if (t.dataset.plmat !== undefined) {
+        const c = ((state.form.particles_in || {}).classes || []).find((x) => String(x.key) === t.dataset.plmat), m = mat(t.value);
+        if (c && m) { const auto = !c.name || c.name === (mat(c.material_id) || {}).name; c.material_id = m.id; c.props = clone(m.props); if (auto) c.name = m.name; }
+        saveForm(); schedulePlan(0); renderLeft();
+      }
+      else if (t.dataset.plname !== undefined) {
+        const c = ((state.form.particles_in || {}).classes || []).find((x) => String(x.key) === t.dataset.plname);
+        if (c) c.name = t.value;
+        saveForm(); schedulePlan(0);
+      }
+      else if (t.dataset.plmatrix !== undefined) {
+        const m = mat(t.value);
+        if (m) state.form.matrix = { name: m.name, material_id: m.id, props: clone(m.props) };
+        saveForm(); schedulePlan(0); renderLeft();
+      }
       else if (t.dataset.imgmatrix !== undefined) {
         (state.form.image.classes || []).forEach((c) => { c.role = String(c.key) === t.dataset.imgmatrix ? "matrix" : "phase"; });
         saveForm(); schedulePlan(0); renderComposition();
@@ -5425,6 +5546,7 @@
         const p = state.presets.find((x) => x.id === t.dataset.preset);
         state.form = completeForm(p.form); state.sel = 0;
         if (state.form.source === "image") exampleImage();
+        if (state.form.source === "particle_list") exampleParticles();
         if (p.doe) {
           // a DOE preset: the study's settings too, ready in the DOE tab
           state.doe = Object.assign({ name: "", design: "full", samples: 12, seed: 1, parameters: [], edge: "fixed" }, clone(p.doe));
@@ -5459,7 +5581,7 @@
     });
 
     document.body.addEventListener("click", async (e) => {
-      const b = e.target.closest("[data-open],[data-stop],[data-restart],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel],[data-doestop],[data-fgroup]");
+      const b = e.target.closest("[data-plfromrun],[data-open],[data-stop],[data-restart],[data-del],[data-goviewer],[data-editspec],[data-center],[data-sec],[data-network],[data-libmatrix],[data-libadd],[data-doerun],[data-optopen],[data-optqueue],[data-doetoggle],[data-doeopen2],[data-doegroup],[data-doeretry],[data-doedel],[data-doestop],[data-fgroup]");
       if (!b) return;
       if (b.dataset.fgroup) {
         e.stopPropagation();
@@ -5561,6 +5683,7 @@ ${live.length} case${live.length === 1 ? " is" : "s are"} still going and will b
       else if (b.dataset.goviewer !== undefined) { setCenter("vis"); openViewer(b.dataset.goviewer); }
       else if (b.dataset.network !== undefined) { setCenter("vis"); await openViewer(""); V.state.networkOn = true; V.state.field = ""; V.state.faces = false; syncViewerControls(); V.refresh(true); }
       else if (b.dataset.center) setCenter(b.dataset.center);
+      else if (b.dataset.plfromrun !== undefined) particlesFromRun();
       else if (b.dataset.sec) {
         $$("#rvNav button").forEach((x) => x.classList.toggle("on", x === b));
         const s = $("#sec-" + b.dataset.sec); if (s) s.scrollIntoView({ behavior: "smooth", block: "start" });

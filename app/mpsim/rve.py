@@ -478,6 +478,9 @@ def image_plan(rve, props, q):
     h = float(im["h_um"])
     n = nx * ny * nz
     mem = memory_estimate(1, props, nz=n, elastic=rve.get("elastic_method", "fans"))
+    if props & {"grains", "viscosity"} and im.get("kind") != "particles":
+        # its particles separated (grains.separate): about 100 bytes per voxel of the image at the peak, measured
+        mem["particle separation (image)"] = n * 100 / 1e9
     peak = max(mem.values()) if mem else 0.0
     ram = machine_ram_gb()
     warn_at, fail_at = (0.5 * ram, 0.9 * ram) if ram else (8.0, 32.0)
@@ -486,14 +489,23 @@ def image_plan(rve, props, q):
                "status": "pass" if peak <= warn_at else ("warn" if peak <= fail_at else "fail"),
                "note": " · ".join(f"{k} {v:.1f} GB" for k, v in mem.items())
                        + (f". This machine has {ram:.0f} GB (warning above half of it, failure above 90 %)" if ram else "")}]
-    notes = [f"The structure is the image {im.get('name') or ''}: {nx} × {ny} × {nz} voxels of {h:g} µm, taken as one "
-             f"periodic cell (the solvers wrap it around its faces as they wrap a generated RVE; an image cut from a "
-             f"larger sample meets a mismatched neighbour at its faces)."]
-    if nz == 1 or min(nx, ny, nz) < 8:
-        notes.append("The image is very thin in one direction; a 2D image should be extruded along z.")
-    return {"N": nx, "h_um": h, "L_um": nx * h, "film": False, "Nz": nz, "T_um": nz * h,
-            "shape": [nx, ny, nz], "box_um": [nx * h, ny * h, nz * h], "image": True,
-            "recommended": {"h_um": h, "h_exact": h, "L_um": nx * h, "reason": "the image's own grid"},
+    plist = im.get("kind") == "particles"
+    film = bool(im.get("film"))
+    if plist:
+        notes = [f"The structure is drawn from the particle list {im.get('name') or ''} ({int(im.get('n') or 0):,} "
+                 f"particles): {nx} × {ny} × {nz} voxels of {h:.4g} µm, "
+                 + ("a film (x, y periodic, z between its faces)." if film else
+                    "one periodic cell, as the list's box was.")]
+    else:
+        notes = [f"The structure is the image {im.get('name') or ''}: {nx} × {ny} × {nz} voxels of {h:g} µm, taken as one "
+                 f"periodic cell (the solvers wrap it around its faces as they wrap a generated RVE; an image cut from a "
+                 f"larger sample meets a mismatched neighbour at its faces)."]
+        if nz == 1 or min(nx, ny, nz) < 8:
+            notes.append("The image is very thin in one direction; a 2D image should be extruded along z.")
+    return {"N": nx, "h_um": h, "L_um": nx * h, "film": film, "Nz": nz, "T_um": nz * h,
+            "shape": [nx, ny, nz], "box_um": [nx * h, ny * h, nz * h], "image": not plist, "particle_list": plist,
+            "recommended": {"h_um": h, "h_exact": h, "L_um": nx * h,
+                            "reason": "the particle list's box and the voxel size entered" if plist else "the image's own grid"},
             "quality": rve.get("quality", "standard"), "quality_label": q["label"], "seeds": 1, "settle": None,
             "vf_tol": q["vf_tol"], "features": [], "checks": checks, "notes": notes, "capped": False, "budget": None,
             "memory_gb": mem}
@@ -670,6 +682,10 @@ def post_checks(plan_, gen_info, quality="standard"):
         if gen_info.get("overlap_over_share"):
             note += ("; with less overlap the loading was missed (particles shrunk or left out), so the build above the "
                      "share is kept: the content entered, with this much overlap")
+        if gen_info.get("from_csv") is not None and oc["shared"]:
+            # a particle list is drawn as it is: its overlaps are the list's (a warning, never a failure)
+            status = "warn"
+            note += " - the particles of the list overlap as listed (each shared voxel is kept by the first in the list)"
         checks.append({"id": "overlap", "group": "Generated structure",
                        "label": "Voxel overlap check: voxels in two particles (every particle drawn again)",
                        "value": rel, "target": lim, "unit": "rel", "status": status, "note": note})

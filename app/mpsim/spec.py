@@ -525,14 +525,86 @@ def _image_form(form):
             "classes": cls}
 
 
+def _particles_form(form):
+    """A structure from a particle list (5.10.2): the form's phases from the list's phases - each with its shape,
+    the mean proportions of its particles, the measured distribution of their size d and the content of their
+    volumes in the box - and the RVE from the box and the voxel size. Returns the list's description for the
+    pipeline (spec['particles_in'])."""
+    import os
+    from . import particle_input as PI
+    pin = form.get("particles_in") or {}
+    d = pin.get("dir")
+    if (not d or not os.path.isfile(os.path.join(d, PI.META_FILE))) and pin.get("example"):
+        d = PI.example_dir(pin["example"])
+    if not d or not os.path.isfile(os.path.join(d, PI.META_FILE)):
+        raise ValueError("Structure from a particle list: no list is loaded (Structure tab, Load CSV)")
+    meta = PI.load_meta(d)
+    unit = pin.get("unit", "um")
+    if unit not in G.UNIT_TO_UM:
+        raise ValueError(f"Structure from a particle list: unknown length unit '{unit}'")
+    s = G.UNIT_TO_UM[unit]
+    box = pin.get("box") or meta.get("box")
+    if not box or len(box) != 3:
+        raise ValueError("Structure from a particle list: the file gives no box - enter its edges x, y, z "
+                         "(Structure tab)")
+    box = [_num(v, "box edge of the particle list", lo=1e-12) * s for v in box]
+    h0 = pin.get("voxel") or meta.get("voxel")
+    if not h0:
+        raise ValueError("Structure from a particle list: enter the voxel size (Structure tab)")
+    h0 = _num(h0, "voxel size of the particle list", lo=1e-12) * s
+    nx = max(2, int(round(box[0] / h0)))
+    h = box[0] / nx                         # a whole number of voxels along x
+    ny, nz = max(2, int(round(box[1] / h))), max(2, int(round(box[2] / h)))
+    for ax, n_, b_ in (("y", ny, box[1]), ("z", nz, box[2])):
+        if abs(n_ * h - b_) > 0.01 * b_ + 1e-9:
+            raise ValueError(f"Structure from a particle list: the box {box[0]:.4g} × {box[1]:.4g} × {box[2]:.4g} µm "
+                             f"is no whole number of voxels of {h:.4g} µm along {ax}; choose a voxel size that "
+                             f"divides every edge")
+    film = bool(meta.get("film"))
+    if film and nx != ny:
+        raise ValueError("Structure from a particle list: a film needs equal x and y edges")
+    arrays = PI.load_list(d)
+    given = {str(c.get("key")): c for c in pin.get("classes") or []}
+    phases = []
+    for i, ph in enumerate(meta["phases"]):
+        g = given.get(str(ph["key"])) or {}
+        size, table = PI.phase_sizes(arrays, i, s)
+        vf = ph["volume"] * s ** 3 / (box[0] * box[1] * box[2])
+        phases.append({"name": g.get("name") or ph["name"], "material_id": g.get("material_id") or "sio2",
+                       "props": g.get("props"), "shape": ph["shape"] if ph["shape"] not in ("ellipsoid", "fibre", "fiber",
+                                                                                         "capsule") else
+                       {"ellipsoid": "spheroid", "fibre": "cylinder", "fiber": "cylinder",
+                        "capsule": "spherocylinder"}[ph["shape"]],
+                       "size": dict(size, unit="um"), "dist": table or {"type": "mono"},
+                       "fraction": {"value": min(100.0 * vf, 99.0), "basis": "vol"},
+                       "orientation": {"mode": "iso"}, "r_int": g.get("r_int") or 0.0,
+                       "r_contact": g.get("r_contact") or 0.0, "rc_elec": g.get("rc_elec") or 0.0})
+    form["phases"] = phases
+    form.pop("matrix_regions", None)
+    rv = form.setdefault("rve", {})
+    rv.update(auto=False, L_um=nx * h, voxel_um=h, N=None, film=film, T_um=nz * h if film else None,
+              arrangement="random", n_seeds=1, realisations={"mode": "fixed"}, dispersion={"mode": "uniform"},
+              auto_enlarge=False, stat_enlarge=False)
+    return {"dir": os.path.abspath(d), "id": meta.get("id"), "name": meta.get("name"), "h_um": h,
+            "shape": [nx, ny, nz], "box_um": [nx * h, ny * h, nz * h], "film": film, "scale": s, "unit": unit,
+            "n": int(meta["n"]), "format": meta.get("format"), "poly_meta": meta.get("poly_meta") or [],
+            "keys": [ph["key"] for ph in meta["phases"]]}
+
+
 def normalize(form):
     form = copy.deepcopy(form or {})
     errors = []
     lib = M.library_by_id()
     image = None
+    plist = None
     if form.get("source") == "image":
         try:
             image = _image_form(form)
+        except ValueError as e:
+            errors.append(str(e))
+    elif form.get("source") == "particle_list":
+        try:
+            plist = _particles_form(form)
         except ValueError as e:
             errors.append(str(e))
     try:
@@ -999,6 +1071,10 @@ def normalize(form):
                     # further shear rates for the flow curve (0: only the reference
                     # rate); skipped where the attraction is negligible
                     "rates": int(_num(dem.get("rates", 4), "shear rates of the flow curve", 0, 12)),
+                    # a structure read from an image or a particle list: the particle dynamics starts from its
+                    # particles where they are (spheres of their volume-equivalent sizes in its box) instead of
+                    # packing spheres of the same sizes anew (5.10.2)
+                    "from_structure": bool(dem.get("from_structure", True)),
                     "hamaker_J": (None if dem.get("hamaker_J") in (None, "", "auto") else
                                   _num(dem.get("hamaker_J"), "Hamaker constant", 0.0, 1e-17)),
                     "backend": dem.get("backend") if dem.get("backend") in ("auto", "cpu", "cuda") else "auto"},
@@ -1026,11 +1102,9 @@ def normalize(form):
                       + " require a pore (void) phase")
     if "grains" in chosen and not any(p["shape"] != G.NETWORK for p in phases):
         errors.append("Grain analysis requires at least one particle phase")
-    if image is not None:
-        # an image is voxels: no particles to move, shear or press
-        for k in ("viscosity",):
-            if k in chosen:
-                errors.append(f"{ANALYSES[k][0]} needs particles; a structure from an image has voxels only")
+    if image is not None and "viscosity" in chosen and not any(not p["void"] for p in phases):
+        # an image's viscosity: its filler particles are separated and sheared as spheres of their measured sizes
+        errors.append(f"{ANALYSES['viscosity'][0]} needs a filler: the image has no solid class besides its matrix")
     if "moisture" in chosen:
         mp_ = out["matrix"]["props"]
         if not out["matrix"]["void"] and not (mp_.get("D_w") and mp_.get("c_sat")):
@@ -1114,6 +1188,11 @@ def normalize(form):
         out["image"] = image
         # the plan takes the image's grid (rve.plan)
         out["rve"]["image"] = {"shape": image["shape"], "h_um": image["h_um"], "name": image["name"]}
+    if plist is not None:
+        out["particles_in"] = plist
+        # the plan takes the list's grid as an image's (rve.plan), with a film's walls
+        out["rve"]["image"] = {"shape": plist["shape"], "h_um": plist["h_um"], "name": plist["name"],
+                               "film": plist["film"], "kind": "particles", "n": plist["n"]}
     if errors:
         raise ValueError("\n".join(errors))
     out["labels"] = label_table(out)

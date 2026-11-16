@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.10.1-0b62c4" alt="version 5.10.1">
+  <img src="https://img.shields.io/badge/version-5.10.2-0b62c4" alt="version 5.10.2">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-112%20checks-2da44e" alt="112 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-115%20checks-2da44e" alt="115 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -90,8 +90,15 @@ The main capabilities are listed below.
 - **Structures from images.** A 3D TIFF - a CT or FIB-SEM reconstruction, a segmented label image, MPSim's own
   structure.tif - is read as the RVE: 8/16-bit grey, palette or RGB stacks, a 2D image extruded along z; every grey value,
   colour or grey-value range (thresholds entered or found by the multi-level Otsu method) becomes the matrix or a phase
-  of a library material, and every voxel analysis runs on it. Grain analysis counts the connected regions of each phase.
-  A structure written as structure.tif and read back gives the same labels and the same conductivity.
+  of a library material, and every voxel analysis runs on it. Grain analysis separates the touching particles of each
+  phase (a periodic marker watershed of the distance to their surface) and reports them beside the connected regions.
+  The viscosity runs on an image too: the particle dynamics shears its separated particles from where they are, as
+  spheres of their volume-equivalent sizes, and the RVE flow solve takes the image itself. A structure written as
+  structure.tif and read back gives the same labels and the same conductivity.
+- **Structures from particle lists.** particles.csv - written beside every run with particles, and for the particles
+  found in an image - is read back and drawn by the generator's own raster: the same structure voxel for voxel (every
+  shape, bulk and film), in seconds instead of a new generation; a plain table of spheres (x, y, z, d, phase) serves as
+  well. Result Viewer → Use as the structure takes a finished run's particles; the particle dynamics starts from them.
 - **Compression while the resin flows.** The periodic RVE is shortened along z with its sides free or held, step by
   step: each step solves the three-dimensional creeping flow of the whole RVE on its voxels (every resin with its own
   viscosity, the filler spheres rigid, the pores a compressible gas), the spheres move as rigid bodies and the resins
@@ -698,7 +705,7 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **112 problems with known solutions** (71 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **115 problems with known solutions** (73 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -759,6 +766,9 @@ reference values. A selection:
 | Particle files: particles.csv and polyhedra.csv redrawn by plain numpy with the README's conventions, eight shapes, bulk and film | the generated structure | identical voxel for voxel |
 | Sizes realised in every dimension: triaxial spheroids with their own c/a, fibres with their own length, irregular grains by volume | the input distribution | every mean within 0.6 of three standard errors; two-sample test not rejecting |
 | Structure from a TIFF: structure.tif, label, RGB, palette and ImageJ stacks; a noisy grey image | the generated labels; the shares of the phases | identical; shares within 0.03 % by automatic thresholds |
+| Particles of an image separated: generated packings of touching spheres (8 voxels across, one size and CV 0.3) written as images | the generated particles | 440 of 440 and 385 of 385; mean size and spread within 0.01 |
+| Particle list: particles.csv of generated structures of every shape (bulk and film, two phases) drawn again | the generated structure | identical voxel for voxel |
+| One structure three ways: generated, drawn from its particles.csv, read from its structure_labels.tif | the generated voxels and conductivity; the particle dynamics from where the particles are, image against list | 185 spheres: identical voxels and conductivity; 185 found in the image; μr 8.51 (image) against 8.54 (list) |
 | Statistical RVE: realisations until the 95 % interval is within the target | stops at the target or the most allowed; whole-number DOE seeds | passed |
 | Every step of a compression kept in 3D, also for a reused structure | labels and stress of each step's whole box | passed |
 
@@ -968,7 +978,7 @@ app/
     doe.py, optimise.py, calibrate.py, links.py        studies, surrogate models, calibration, linked inputs
     visual.py, report.py viewer data, publication figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (68 materials), presets.json (72 presets)
+    data/                materials.json (68 materials), presets.json (74 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README images (the user guides are attached to the releases)
@@ -1006,7 +1016,7 @@ Further cases are listed in appendix D of the user guide.
 Published work that uses MPSim should cite the software (GitHub shows the citation under **Cite this repository**,
 from [CITATION.cff](CITATION.cff)):
 
-> H. Byun, *MPSim: Material Property Simulation*, version 5.10.1, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
+> H. Byun, *MPSim: Material Property Simulation*, version 5.10.2, Zenodo (2026). https://doi.org/10.5281/zenodo.23120194
 
 The DOI 10.5281/zenodo.23120194 always resolves to the latest version; each release also has its own DOI on Zenodo.
 

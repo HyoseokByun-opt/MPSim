@@ -1134,6 +1134,68 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
             return jsonify({"ok": False, "error": f"The image could not be read: {e}"}), 400
         return jsonify({"ok": True, "image": _image_meta_out(meta)})
 
+    # ------------------------------------------------- structure from a particle list (5.10.2)
+    def particles_root():
+        return os.path.join(app.config["WORKSPACE"], "particle_lists")
+
+    def _plist_out(meta):
+        return {k: v for k, v in meta.items() if k not in ("poly_meta",)}
+
+    @app.post("/api/particles")
+    def api_particles_upload():
+        """A particle list - particles.csv (with polyhedra.csv and particles_README.txt where there are), or a plain
+        table of spheres - kept in the workspace as the structure of a case."""
+        from mpsim import particle_input as PI
+        try:
+            request.max_content_length = 1 << 36
+        except AttributeError:
+            pass
+        fs = [f for f in request.files.getlist("file") if f and f.filename]
+        if not fs:
+            return jsonify({"ok": False, "error": "No file was sent"}), 400
+        import tempfile
+        tmpd = tempfile.mkdtemp(prefix="mpsim_plist_")
+        try:
+            files = []
+            for f in fs:
+                base = os.path.basename(f.filename)
+                p_ = os.path.join(tmpd, base)
+                f.save(p_)
+                files.append((p_, base))
+            meta = PI.store(particles_root(), files)
+        except Exception as e:                                       # noqa: BLE001
+            return jsonify({"ok": False, "error": f"The particle list could not be read: {e}"}), 400
+        finally:
+            shutil.rmtree(tmpd, ignore_errors=True)
+        return jsonify({"ok": True, "particles": _plist_out(meta)})
+
+    @app.post("/api/particles/example")
+    def api_particles_example():
+        """An example particle list shipped with MPSim (mpsim/data/particles/<name>), stored as an upload is."""
+        from mpsim import particle_input as PI
+        name = os.path.basename(str((request.get_json(force=True, silent=True) or {}).get("name") or ""))
+        src = os.path.join(ROOT, "mpsim", "data", "particles", name)
+        if not name or not os.path.isdir(src):
+            return jsonify({"ok": False, "error": f"No example particle list '{name}'"}), 404
+        try:
+            meta = PI.store_folder(particles_root(), src, name=name)
+        except Exception as e:                                       # noqa: BLE001
+            return jsonify({"ok": False, "error": f"The particle list could not be read: {e}"}), 400
+        return jsonify({"ok": True, "particles": _plist_out(meta)})
+
+    @app.post("/api/jobs/<jid>/particles_as_structure")
+    def api_particles_from_run(jid):
+        """The particles of a finished run (its particles.csv and the files beside it) kept as a particle list, to
+        draw the same structure again in another case without generating it."""
+        from mpsim import particle_input as PI
+        job = job_or_404(jid)
+        try:
+            meta = PI.store_folder(particles_root(), job.out_dir,
+                                   name=f"{(job.meta.get('name') or job.id)[:60]} · particles.csv")
+        except Exception as e:                                       # noqa: BLE001
+            return jsonify({"ok": False, "error": f"The run's particles could not be read: {e}"}), 400
+        return jsonify({"ok": True, "particles": _plist_out(meta)})
+
     def _image_dir(iid):
         d = os.path.join(image_root(), re.sub(r"[^\w.-]+", "", iid))
         if not os.path.isfile(os.path.join(d, "meta.json")):

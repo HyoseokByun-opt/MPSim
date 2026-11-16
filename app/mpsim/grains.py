@@ -336,6 +336,54 @@ PARTICLE_COLUMNS = ["id", "phase", "phase_name", "shape", "x_um", "y_um", "z_um"
                     "shell_um", "r11", "r12", "r13", "r21", "r22", "r23", "r31", "r32", "r33"]
 
 
+def write_image_particles(out_dir, names, seps, h_um, shape, round_ratio=0.8):
+    """particles.csv (with particles_README.txt) of a structure read from an image: every particle found in it
+    (separate), in the conventions of the particle files of a generated structure, so that Structure - Particles
+    (CSV) draws them again or another program reads them. A phase whose particles are round (the median of the
+    shortest over the longest axis of their ellipsoids of inertia at least round_ratio) is written as spheres of
+    their volume-equivalent diameter; any other as the ellipsoid of each particle's second moments - the same
+    volume, its three axes and their orientation (a triaxial spheroid). names: {phase index: name}; seps:
+    {phase index: separate()}. Returns the files written."""
+    import csv
+    import os
+    nx, ny, nz = (int(v) for v in shape)
+    box = [nx * h_um, ny * h_um, nz * h_um]
+    n_all = 0
+    with open(os.path.join(out_dir, "particles.csv"), "w", newline="", encoding="utf-8") as fh:
+        wr = csv.writer(fh)
+        wr.writerow(PARTICLE_COLUMNS)
+        for i in sorted(seps):
+            sp = seps[i]
+            if not sp or not sp.get("n"):
+                continue
+            semi, axes = np.asarray(sp["semi_um"], float), np.asarray(sp["axes"], float)
+            ratio = semi[:, 2] / np.maximum(semi[:, 0], 1e-12)
+            spheres = float(np.median(ratio)) >= round_ratio
+            for k in range(int(sp["n"])):
+                n_all += 1
+                c = np.mod(np.asarray(sp["centers_um"][k], float), box)
+                eqd, V = float(sp["eqd_um"][k]), float(sp["vol_um3"][k])
+                if spheres:
+                    row = [n_all, i + 1, names.get(i, f"Phase {i + 1}"), "sphere", c[0], c[1], c[2], eqd, eqd, V,
+                           eqd, eqd, eqd, None, None, None, None, None, None] + [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+                else:
+                    a, b, cc = semi[k]
+                    row = [n_all, i + 1, names.get(i, f"Phase {i + 1}"), "spheroid", c[0], c[1], c[2], 2 * a, eqd, V,
+                           2 * a, 2 * b, 2 * cc, None, cc / a, b / a, None, None, None] + [float(v) for v in axes[k].ravel()]
+                wr.writerow(["" if v is None else (f"{v:.10g}" if isinstance(v, float) else v) for v in row])
+    with open(os.path.join(out_dir, "particles_README.txt"), "w", encoding="utf-8") as fh:
+        fh.write(PARTICLES_README.format(X=box[0], Y=box[1], Z=box[2], n=n_all, h=h_um,
+                                         film="periodic in x, y and z (a particle may cross a face and continue on the "
+                                              "opposite one)")
+                 .replace("as MPSim built them.", "as MPSim found them in the image (touching particles separated by a "
+                                                  "periodic watershed; a round phase as spheres of the volume-equivalent "
+                                                  "diameter, any other as each particle's ellipsoid of inertia of the "
+                                                  "same volume).")
+                 .replace("The voxel structure (structure.tif) samples these particles", "Drawn again, these particles "
+                          "approximate the image (structure.tif), which holds the particles' own shapes; drawn particles sample them"))
+    return ["particles.csv", "particles_README.txt"]
+
+
 def write_particle_files(out_dir, spec_phases, gen_phases, ginfo, report=None):
     """particles.csv: every particle as built - centre, size, shape dimensions, volume and orientation - so
     that another program can draw the same structure; polyhedra.csv: the vertices of every polyhedron shape
@@ -374,7 +422,7 @@ def write_particle_files(out_dir, spec_phases, gen_phases, ginfo, report=None):
                    2.0 * hx, 2.0 * hy, 2.0 * hz, length, asp[0], asp[1], P[3] if code == 5 else None,
                    int(P[1]) if code == 6 else None, ((sp.get("shell") or {}).get("thickness_um")) or None]
             row += [float(v) for v in Rs[j].ravel()]
-            wr.writerow(["" if v is None else (f"{v:.8g}" if isinstance(v, float) else v) for v in row])
+            wr.writerow(["" if v is None else (f"{v:.10g}" if isinstance(v, float) else v) for v in row])
     written.append("particles.csv")
     used = sorted({int(P[1]) for c, P in zip(codes, Ps) if int(c) == 6})
     if used:
@@ -390,6 +438,7 @@ def write_particle_files(out_dir, spec_phases, gen_phases, ginfo, report=None):
         written.append("polyhedra.csv")
     with open(os.path.join(out_dir, "particles_README.txt"), "w", encoding="utf-8") as fh:
         fh.write(PARTICLES_README.format(X=box[0], Y=box[1], Z=box[2], n=len(codes),
+                                         h=float(ginfo.get("h_um") or (box[0] / max(int(ginfo.get("N") or 1), 1))),
                                          film="a film: x and y periodic, z from 0 to the thickness (walls)"
                                          if film else "periodic in x, y and z (a particle may cross a face and "
                                                       "continue on the opposite one)"))
@@ -465,11 +514,133 @@ def _periodic_components(mask):
     return new.reshape(-1)[lab].astype(np.int32), int(len(uniq) - 1)
 
 
+def separate(mask, h_um, log=None):
+    """The particles of one phase of a voxel image, touching ones apart: a marker watershed of the distance to the
+    phase's surface, its markers the maxima of that distance (smoothed, sigma 0.4) and of them only one where two lie
+    nearer to each other than to the surface (the steps of SNOW, J. T. Gostick, Phys. Rev. E 96 (2017) 023307, by
+    porespy.filters, without its saddle-point trimming, which merged a small sphere into a larger neighbour: 371 of
+    385 touching spheres of 8 voxels, CV 0.3, found with it, all 385 without), on the image padded by its own
+    periodic copies, so that a particle cut by a face of the box is found whole; a particle is kept where its centre
+    lies inside the box (each once). Checked on generated packings of touching particles: spheres of one size and
+    of CV 0.3 and 0.5 and polyhedra exactly, oblate spheroids (2 : 1) +0.2 %, prolate ones (3 : 1) +7 % (a long
+    particle can split in two). Returns {"n", "vol_um3", "eqd_um" (volume-equivalent diameters), "circ_um"
+    (circumscribed diameters about the centre), "centers_um", "pad", "seconds", "specks" (regions of fewer than 4
+    voxels or 2 % of the median particle's, noise of a segmentation, left out), "speck_voxels"}."""
+    from scipy import ndimage
+    import porespy as ps
+    t0 = time.time()
+    mask = np.ascontiguousarray(np.asarray(mask, bool))
+    n = np.array(mask.shape, np.int64)
+    if not mask.any():
+        return {"n": 0, "vol_um3": np.zeros(0), "eqd_um": np.zeros(0), "circ_um": np.zeros(0),
+                "centers_um": np.zeros((0, 3)), "pad": 0, "seconds": 0.0, "specks": 0, "speck_voxels": 0.0,
+                "speck_min_vox": 1.0, "semi_um": np.zeros((0, 3)), "axes": np.zeros((0, 3, 3))}
+    # the largest inscribed radius sets how far a particle reaches across a face
+    p0 = int(min(n.min() // 2, 16))
+    rmax = float(ndimage.distance_transform_edt(np.pad(mask, p0, mode="wrap")).max())
+    pad = int(min(n.min() // 2, max(8, math.ceil(3.0 * rmax))))
+    big = np.pad(mask, pad, mode="wrap")
+    if log and big.size > 2e7:
+        # measured: about 50 bytes per voxel of the padded image at the peak (the distance map and the watershed)
+        log(f"    separating the particles of a {' × '.join(str(x) for x in mask.shape)} image (padded by {pad} voxels "
+            f"to {big.size / 1e6:.0f} M voxels) takes about {50 * big.size / 2**30:.1f} GB")
+    from skimage.segmentation import watershed
+    dt = ndimage.distance_transform_edt(big).astype(np.float32)
+    dt = ndimage.gaussian_filter(dt, 0.4, output=dt)
+    # a maximum within 3 voxels (or a fifth of the largest radius) of a higher one is not a particle of its own
+    r_peak = int(max(3, round(0.2 * rmax)))
+    peaks = ps.filters.trim_nearby_peaks(ps.filters.find_peaks(dt, r_max=r_peak), dt)
+    reg = watershed(-dt, markers=ndimage.label(peaks > 0)[0], mask=big).astype(np.int32)
+    del dt, peaks
+    reg[~big] = 0
+    nl = int(reg.max())
+    # voxel counts and centres, summed slice by slice (a full-size weight array would double the memory)
+    cnt = np.zeros(nl + 1)
+    sums = np.zeros((nl + 1, 3))
+    # and the second moments (xx, yy, zz, xy, xz, yz) for each particle's ellipsoid of inertia
+    mom = np.zeros((nl + 1, 6))
+    jj, kk = np.meshgrid(np.arange(big.shape[1], dtype=np.float64) + 0.5, np.arange(big.shape[2], dtype=np.float64) + 0.5,
+                         indexing="ij")
+    jj, kk = jj.ravel(), kk.ravel()
+    jk = jj * kk
+    for i in range(big.shape[0]):
+        sl = reg[i].ravel()
+        c = np.bincount(sl, minlength=nl + 1)
+        cnt += c
+        x_ = i + 0.5
+        sj = np.bincount(sl, weights=jj, minlength=nl + 1)
+        sk = np.bincount(sl, weights=kk, minlength=nl + 1)
+        sums[:, 0] += c * x_
+        sums[:, 1] += sj
+        sums[:, 2] += sk
+        mom[:, 0] += c * x_ * x_
+        mom[:, 1] += np.bincount(sl, weights=jj * jj, minlength=nl + 1)
+        mom[:, 2] += np.bincount(sl, weights=kk * kk, minlength=nl + 1)
+        mom[:, 3] += x_ * sj
+        mom[:, 4] += x_ * sk
+        mom[:, 5] += np.bincount(sl, weights=jk, minlength=nl + 1)
+    cen = sums / np.maximum(cnt, 1.0)[:, None]
+    keep = np.flatnonzero((cnt > 0) & np.all((cen >= pad) & (cen < pad + n), axis=1))
+    keep = keep[keep > 0]
+    # specks of a segmentation (a few noisy voxels over a threshold) are no particles: fewer than 4 voxels, or than
+    # 2 % of the median particle's (a scan-like image of 90 spheres gave 95 particles, the five extra single voxels)
+    speck_min = max(4.0, 0.02 * float(np.median(cnt[keep]))) if len(keep) else 4.0
+    speck = cnt[keep] < speck_min
+    n_speck, v_speck = int(speck.sum()), float(cnt[keep][speck].sum())
+    keep = keep[~speck]
+    # the circumscribed radius: the farthest voxel centre from the particle's centre, plus half a voxel diagonal;
+    # the farthest voxel lies on the particle's boundary, so only the boundary voxels are measured
+    bnd = np.zeros(big.shape, bool)
+    for ax in range(3):
+        for sh in (1, -1):
+            bnd |= reg != np.roll(reg, sh, axis=ax)
+    bnd &= reg > 0
+    idx = np.nonzero(bnd)
+    del bnd
+    rb = reg[idx]
+    del reg
+    d2b = np.zeros(len(rb))
+    for ax in range(3):
+        d2b += (idx[ax] + 0.5 - cen[rb, ax]) ** 2
+    far = np.zeros(nl + 1)
+    np.maximum.at(far, rb, d2b)
+    del idx, rb, d2b
+    rmx = np.sqrt(far[keep]) + 0.5 * math.sqrt(3.0)
+    vol = cnt[keep] * h_um ** 3
+    eqd = (6.0 * vol / math.pi) ** (1.0 / 3.0)
+    # the ellipsoid of the same second moments (a uniform ellipsoid has the variance a^2 / 5 along a semi-axis
+    # a; a voxel adds h^2 / 12), scaled to the particle's volume: its semi-axes a >= b >= c and its axes
+    m_ = cnt[keep][:, None]
+    ex = mom[keep] / m_
+    c0 = cen[keep]
+    cov = np.empty((len(keep), 3, 3))
+    cov[:, 0, 0] = ex[:, 0] - c0[:, 0] ** 2 - 1.0 / 12.0
+    cov[:, 1, 1] = ex[:, 1] - c0[:, 1] ** 2 - 1.0 / 12.0
+    cov[:, 2, 2] = ex[:, 2] - c0[:, 2] ** 2 - 1.0 / 12.0
+    cov[:, 0, 1] = cov[:, 1, 0] = ex[:, 3] - c0[:, 0] * c0[:, 1]
+    cov[:, 0, 2] = cov[:, 2, 0] = ex[:, 4] - c0[:, 0] * c0[:, 2]
+    cov[:, 1, 2] = cov[:, 2, 1] = ex[:, 5] - c0[:, 1] * c0[:, 2]
+    lam, vec = np.linalg.eigh(cov)                     # ascending
+    semi = np.sqrt(np.maximum(5.0 * lam[:, ::-1], 1e-12))
+    semi *= ((3.0 * vol / (4.0 * math.pi * h_um ** 3)) / np.prod(semi, axis=1))[:, None] ** (1.0 / 3.0)
+    rows = np.transpose(vec[:, :, ::-1], (0, 2, 1))  # row k: the axis of semi-axis k
+    rows[:, 2] = np.cross(rows[:, 0], rows[:, 1])      # right-handed
+    out = {"n": int(len(keep)), "vol_um3": vol, "eqd_um": eqd, "circ_um": np.maximum(2.0 * rmx * h_um, eqd),
+           "semi_um": semi * h_um, "axes": rows,
+           "centers_um": np.mod(cen[keep] - pad, n) * h_um, "pad": pad, "seconds": time.time() - t0,
+           "specks": n_speck, "speck_voxels": v_speck, "speck_min_vox": speck_min}
+    if log:
+        log(f"    {out['n']} particles separated (periodic watershed, {out['seconds']:.1f} s)"
+            + (f"; {n_speck} specks of fewer voxels left out" if n_speck else ""))
+    return out
+
+
 def analyse_image(spec, info, labels, table, h_um, log=None):
-    """Grain analysis of a structure read from an image: every phase's connected regions (joined across the
-    periodic faces) as its grains - their number, volume-equivalent diameters by number and by volume, the
-    clusters and percolation - and the matrix between them. Grains that touch form one region (no watershed
-    separation): a packed powder reads as fewer, larger grains than it holds."""
+    """Grain analysis of a structure read from an image: every phase's particles, touching ones separated by a
+    periodic watershed (separate) - their number, volume-equivalent and circumscribed diameters by number and by
+    volume - beside its connected regions (joined across the periodic faces: the clusters and percolation), and
+    the matrix between them. Up to 5.10.0 the connected regions were the grains, so a packed powder read as fewer,
+    larger grains than it holds."""
     from .solvers.conduction import wrapping_axes
     t0 = time.time()
     box, _ = particle_box(info)
@@ -485,20 +656,42 @@ def analyse_image(spec, info, labels, table, h_um, log=None):
         if n == 0:
             out["phases"][str(li)] = entry
             continue
-        nv = np.bincount(comp.ravel(), minlength=n + 1)[1:].astype(float)
-        V = nv * h_um ** 3
-        eqd = (6.0 * V / math.pi) ** (1.0 / 3.0)
+        nv_reg = np.bincount(comp.ravel(), minlength=n + 1)[1:].astype(float)
+        # the particles: touching ones separated (periodic watershed); the connected regions are the clusters
+        try:
+            # the viscosity analysis may have separated them already (pipeline: info["_separated"])
+            sep = (info.get("_separated") or {}).get(li)
+            if sep is None:
+                sep = separate(mask, h_um, log=log)
+                if isinstance(info, dict):
+                    info.setdefault("_separated", {})[li] = sep     # the particle files take them (pipeline)
+        except Exception as e:                                       # noqa: BLE001
+            sep = None
+            if log:
+                log(f"    {t['name']}: the particles could not be separated ({e}); the connected regions are taken")
+        if sep is not None and sep["n"] > 0:
+            V, eqd, circ = sep["vol_um3"], sep["eqd_um"], sep["circ_um"]
+            n_p = int(sep["n"])
+        else:
+            V = nv_reg * h_um ** 3
+            eqd = (6.0 * V / math.pi) ** (1.0 / 3.0)
+            circ = eqd.copy()
+            n_p = int(n)
+        nv = V / h_um ** 3
+        n_cl = int(np.count_nonzero(nv_reg >= (sep or {}).get("speck_min_vox", 1.0))) if sep is not None else int(n)
         faces = sum(int(np.count_nonzero(mask != np.roll(mask, -1, axis=ax))) for ax in range(3))
         entry.update({
             "phase": int(i),
-            "number_density_per_mm3": n / (vol_box * 1e-9),
+            "n_particles": n_p, "separated": sep is not None and sep["n"] > 0,
+            "number_density_per_mm3": n_p / (vol_box * 1e-9),
             "eq_diameter_um": {"number": _quantiles(eqd), "volume": _quantiles(eqd, V)},
-            # both diameters of the particles as built, by number and by volume (as the realised sizes give them)
-            "diameters": {"circumscribed": size_stats(2.0 * a, V), "volume_equivalent": size_stats(eqd, V)},
+            # both diameters of the particles, by number and by volume (as the realised sizes give them)
+            "diameters": {"circumscribed": size_stats(circ, V), "volume_equivalent": size_stats(eqd, V)},
             "specific_surface_voxel_1pm": faces * h_um * h_um / vol_box * 1e6,
-            "single_voxel_regions": int(np.count_nonzero(nv == 1)),
-            "voxel": {"volume_fraction": float(mask.mean()), "clusters": {"n_clusters": int(n)},
-                      "particles_per_cluster": 1.0, "percolates": dict(zip("xyz", wrapping_axes(mask)))}})
+            "single_voxel_regions": int(np.count_nonzero(nv_reg == 1)),
+            # the clusters: connected regions of at least a particle's least size (the specks are no clusters)
+            "voxel": {"volume_fraction": float(mask.mean()), "clusters": {"n_clusters": n_cl, "n_regions": int(n)},
+                      "particles_per_cluster": n_p / max(n_cl, 1), "percolates": dict(zip("xyz", wrapping_axes(mask)))}})
         out["phases"][str(li)] = entry
         st = size_stats(eqd, V)
         lo, hi = float(eqd.min()), float(eqd.max())
@@ -507,7 +700,7 @@ def analyse_image(spec, info, labels, table, h_um, log=None):
                  else np.array([lo * 0.999, hi * 1.001]))
         rn, rv, rcn, rcv = _hist(eqd, V, edges)
         out["sizes"][str(i)] = {
-            "name": t["name"], "shape": "image", "n_particles": int(n), "basis": "eqd", "shell_um": 0.0, "own": [],
+            "name": t["name"], "shape": "image", "n_particles": n_p, "basis": "eqd", "shell_um": 0.0, "own": [],
             "regions": True,
             "dimensions": [{"key": "eqd", "label": QTY_LABEL["eqd"][0], "unit": "um", "real": st, "input": None,
                             "bins": {"edges": edges.tolist(), "mid": np.sqrt(edges[1:] * edges[:-1]).tolist(),
@@ -515,7 +708,10 @@ def analyse_image(spec, info, labels, table, h_um, log=None):
                                      "real_number_cum": rcn.tolist(), "real_volume_cum": rcv.tolist(),
                                      "input_number": None, "input_volume": None,
                                      "input_number_cum": None, "input_volume_cum": None}}]}
-        out["_components"].append((i, t["name"], nv, V, eqd))
+        out["_components"].append((i, t["name"], nv, V, eqd, circ,
+                                   sep["centers_um"] if sep is not None and sep["n"] > 0 else None))
+        if sep is not None and sep["n"] > 0:
+            out.setdefault("_particles", {})[int(i)] = sep
         del mask, comp
     matrix = np.asarray(labels) == 0
     lt = None
@@ -524,28 +720,37 @@ def analyse_image(spec, info, labels, table, h_um, log=None):
         out["matrix_ligament"] = MO.size_distribution(lt, matrix, h_um, bins=14)
     out["seconds"] = time.time() - t0
     if log:
-        log(f"    grain analysis of the image: " + ", ".join(f"{e['name']} {e['n_particles']} regions"
-                                                         for e in out["phases"].values()) + f" ({out['seconds']:.1f} s)")
+        log(f"    grain analysis of the image: " + ", ".join(
+            f"{e['name']} {e['n_particles']} particles in {e.get('voxel', {}).get('clusters', {}).get('n_clusters', 0)} clusters"
+            for e in out["phases"].values()) + f" ({out['seconds']:.1f} s)")
     return out, lt
 
 
 def write_components(out_dir, comps):
-    """grains.csv: every connected region of every phase of an image (its voxels, volume and volume-equivalent
-    diameter)."""
+    """grains.csv: every particle of every phase of an image, touching ones separated (5.10.2) - its voxels, volume,
+    volume-equivalent and circumscribed diameters and centre; where a phase's particles could not be separated, its
+    connected regions (no centre)."""
     import csv
     import os
     with open(os.path.join(out_dir, "grains.csv"), "w", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)
-        wr.writerow(["phase", "phase_name", "region", "voxels", "volume_um3", "eqd_um"])
-        for i, name, nv, V, eqd in comps:
+        wr.writerow(["phase", "phase_name", "particle", "voxels", "volume_um3", "eqd_um", "circ_um", "x_um", "y_um", "z_um"])
+        for c in comps:
+            i, name, nv, V, eqd = c[:5]
+            circ = c[5] if len(c) > 5 else None
+            cen = c[6] if len(c) > 6 else None
             for k in range(len(nv)):
-                wr.writerow([int(i) + 1, name, k + 1, int(nv[k]), f"{float(V[k]):.6g}", f"{float(eqd[k]):.6g}"])
+                row = [int(i) + 1, name, k + 1, int(round(float(nv[k]))), f"{float(V[k]):.6g}", f"{float(eqd[k]):.6g}",
+                       f"{float(circ[k]):.6g}" if circ is not None else ""]
+                row += [f"{float(x):.6g}" for x in cen[k]] if cen is not None else ["", "", ""]
+                wr.writerow(row)
     return ["grains.csv"]
 
 
 PARTICLES_README = """Particles of the structure ({n} particles), as MPSim built them.
 
 Box: {X:.8g} x {Y:.8g} x {Z:.8g} um (x, y, z), from the origin; {film}. Lengths in micrometres.
+Voxel: {h:.8g} um, the grid the run drew them on (Structure - List (CSV) reads this file and draws them again).
 The voxel structure (structure.tif) samples these particles at the voxel centres ((i + 0.5) h, (j + 0.5) h, (k + 0.5) h):
 a voxel belongs to a particle when its centre lies inside it.
 

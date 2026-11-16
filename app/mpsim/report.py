@@ -560,6 +560,15 @@ def write(out_dir, r):
         P.append(f"<p>Rigid filler fraction φ = {_fmt(100 * p['phi'])} vol%"
                  + (f", bubbles {_fmt(100 * p['bubbles'])} vol%" if p.get("bubbles") else "")
                  + f". Best estimate of the relative viscosity μ/μ<sub>resin</sub> = <b>{_fmt(p['mu_r'])}</b> ({e(p['basis'])}).</p>")
+        if p.get("from_image"):
+            P.append("<p>The structure is an image: its touching particles were separated by a periodic watershed of the "
+                     "distance to their surface, and the particle dynamics, the maximum packing fraction, the closed forms "
+                     "and the settling take them as spheres of their volume-equivalent diameters (their shapes are not "
+                     "kept there); the RVE flow solve, when it runs, takes the image itself.</p>")
+            P.append(_table(["Filler", "Particles", "Mean diameter (µm)", "D10 / D50 / D90 by volume (µm)"],
+                            [[e(s["name"]), str(s["n_particles"]), _fmt(s["eqd_um_mean"]),
+                              " / ".join(_fmt(x) for x in s["eqd_um_d10_d50_d90_volume"])]
+                             for s in p["from_image"].values()]))
         sh = p.get("shear") or {}
         rows = [[f"Simple shear {k}", _fmt(sh.get(k))] for k in ("yz", "xz", "xy") if sh.get(k) is not None]
         if p.get("extension") is not None:

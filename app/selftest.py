@@ -3931,6 +3931,186 @@ def t_image_input():
 
 
 
+@check("Structure from a TIFF: touching particles separated by a periodic watershed - generated packings of touching "
+       "spheres (one size and a lognormal spread) read back with their particle count, mean size and spread; triaxial "
+       "spheroids with their axes and orientation (ellipsoids of inertia)")
+def t_image_separate():
+    from scipy import ndimage
+    from mpsim import generate as GEN
+    from mpsim import grains as GR
+    out = []
+    for d, vf, cv in ((8.0, 0.45, 0.0), (8.0, 0.45, 0.3)):
+        ph = _gen_phase("sphere", {"d": d}, vf, dist={"type": "lognormal", "cv": cv} if cv else {"type": "mono"})
+        lab, info = GEN.generate(64, 1.0, [ph], seed=5, log=lambda *a: None, contacts="keep", gap_vox=0.0)
+        r = info["particles"]["P"][:, 0]
+        s = GR.separate(lab == 1, 1.0)
+        nreg = ndimage.label(lab == 1)[1]
+        dt = 2.0 * r
+        expect(abs(s["n"] - len(r)) <= max(1, 0.01 * len(r)), f"{s['n']} particles separated of {len(r)}")
+        expect(nreg < 0.8 * len(r), f"{nreg} connected regions of {len(r)} particles: they hardly touch")
+        expect(abs(s["eqd_um"].mean() / dt.mean() - 1) < 0.01, f"mean size {s['eqd_um'].mean():.3f} against {dt.mean():.3f}")
+        cvs = s["eqd_um"].std() / s["eqd_um"].mean()
+        expect(abs(cvs - dt.std() / dt.mean()) < 0.01, f"spread {cvs:.3f} against {dt.std() / dt.mean():.3f}")
+        expect(np.all(s["circ_um"] >= s["eqd_um"]) and np.all(s["circ_um"] < 1.35 * s["eqd_um"] + 2.0),
+               "circumscribed diameters")
+        out.append(f"CV {cv}: {s['n']} of {len(r)} particles in {nreg} connected regions, mean {s['eqd_um'].mean():.2f} "
+                   f"(true {dt.mean():.2f}) µm, CV {cvs:.3f} (true {dt.std() / dt.mean():.3f})")
+    # triaxial spheroids: each particle's ellipsoid of inertia gives its axes and their orientation (particles.csv)
+    from scipy.spatial import cKDTree
+    ph = _gen_phase("spheroid", {"d": 16.0, "aspect": 0.4, "aspect_y": 0.7}, 0.2, dist={"type": "mono"})
+    lab, info = GEN.generate(80, 1.0, [ph], seed=3, log=lambda *a: None, contacts="keep", gap_vox=0.0)
+    s = GR.separate(lab == 1, 1.0)
+    P, Rr, C = info["particles"]["P"], info["particles"]["R"], info["particles"]["centers"]
+    ii = cKDTree(np.mod(C, 80), boxsize=80).query(np.mod(s["centers_um"], 80))[1]
+    med = np.median(s["semi_um"], axis=0)
+    cos_a = float(np.median([abs(np.dot(s["axes"][k, 0], Rr[ii[k], 0])) for k in range(s["n"])]))
+    cos_c = float(np.median([abs(np.dot(s["axes"][k, 2], Rr[ii[k], 2])) for k in range(s["n"])]))
+    expect(np.all(np.abs(med / np.array([8.0, 5.6, 3.2]) - 1) < 0.03) and min(cos_a, cos_c) > 0.99,
+           f"ellipsoids of inertia: semi-axes {med} against 8 / 5.6 / 3.2, |cos| {cos_a:.4f} / {cos_c:.4f}")
+    out.append(f"triaxial spheroids: semi-axes {' / '.join(f'{x:.2f}' for x in med)} (8 / 5.6 / 3.2), axes |cos| "
+               f"{min(cos_a, cos_c):.4f}")
+    return "; ".join(out)
+
+
+@check("Complete pipeline: one structure three ways - generated, drawn again from its particles.csv (Particle list) "
+       "and read from its structure_labels.tif (Image): the same voxels and conductivity from the list; the image's "
+       "particles found; the particle dynamics starting where the particles are gives the same viscosity from the image "
+       "and from the list", quick=False)
+def t_pipeline_image_visc():
+    import json
+    import shutil
+    import tifffile
+    from mpsim import image_input as IM
+    from mpsim import particle_input as PI
+    from mpsim import pipeline as PL
+    root = tempfile.mkdtemp(prefix="mpsim_three_")
+    dem = {"n": 100, "strain": 1.5, "rates": 0}
+    try:
+        gen = {"name": "selftest generated", "matrix": {"material_id": "epoxy"},
+               "phases": [{"material_id": "sio2", "name": "Silica", "shape": "sphere", "size": {"d": 6, "unit": "um"},
+                           "dist": {"type": "lognormal", "cv": 0.15}, "fraction": {"value": 45, "basis": "vol"}}],
+               "rve": {"auto": False, "L_um": 36, "voxel_um": 1.0, "auto_enlarge": False, "quality": "fast"},
+               "analyses": {"thermal": True}, "options": {"directions": "z"}}
+        d1 = os.path.join(root, "gen")
+        PL.run(gen, d1, log=lambda *a: None)
+        with open(os.path.join(d1, "result.json"), encoding="utf-8") as fh:
+            r1 = json.load(fh)
+        n_true = sum(e["n_particles"] for e in r1["realisations"][0].get("particle_sizes", {}).values()) or None
+        meta = PI.store_folder(os.path.join(root, "pstore"), d1)
+        n_true = n_true or meta["n"]
+        lst = {"name": "selftest list", "source": "particle_list", "matrix": {"material_id": "epoxy"},
+               "particles_in": {"dir": meta["dir"], "unit": "um",
+                                "classes": [{"key": meta["phases"][0]["key"], "material_id": "sio2", "name": "Silica"}]},
+               "rve": {"quality": "fast"}, "analyses": {"thermal": True, "viscosity": True},
+               "options": {"directions": "z", "viscosity": {"dem": dict(dem)}}}
+        d2 = os.path.join(root, "list")
+        PL.run(lst, d2, log=lambda *a: None)
+        with open(os.path.join(d2, "result.json"), encoding="utf-8") as fh:
+            r2 = json.load(fh)
+        same = np.array_equal(tifffile.imread(os.path.join(d1, "structure_labels.tif")),
+                              tifffile.imread(os.path.join(d2, "structure_labels.tif")))
+        expect(same, "the structure drawn from particles.csv differs from the generated one")
+        k1, k2 = r1["properties"]["thermal"]["diag"][2], r2["properties"]["thermal"]["diag"][2]
+        expect(abs(k1 - k2) < 1e-9, f"conductivity {k2} from the list against {k1} generated")
+        v2 = r2["properties"]["viscosity"]
+        expect((v2["dem"].get("from_structure") or {}).get("n") == meta["n"], f"the list's particle dynamics: {v2['dem'].get('from_structure')}")
+        meta_i = IM.store(os.path.join(root, "istore"), os.path.join(d1, "structure_labels.tif"), "labels.tif")
+        img = {"name": "selftest image viscosity", "source": "image", "analyses": {"viscosity": True},
+               "image": {"dir": meta_i["dir"], "voxel": 1.0, "unit": "um",
+                         "classes": [{"key": 0, "role": "matrix", "material_id": "epoxy"},
+                                     {"key": 1, "material_id": "sio2", "name": "Silica"}]},
+               "rve": {"quality": "fast"}, "options": {"viscosity": {"dem": dict(dem)}}}
+        d3 = os.path.join(root, "image")
+        PL.run(img, d3, log=lambda *a: None)
+        with open(os.path.join(d3, "result.json"), encoding="utf-8") as fh:
+            r3 = json.load(fh)
+        v3 = r3["properties"]["viscosity"]
+        fi = v3.get("from_image") or {}
+        e = fi.get("0") or fi.get(0) or {}
+        expect(e and abs(e["n_particles"] - meta["n"]) <= max(1, 0.02 * meta["n"]), f"{e.get('n_particles')} particles of {meta['n']}")
+        expect(v3["basis"] == "particle dynamics" and (v3["dem"].get("from_structure") or {}).get("n") == e["n_particles"],
+               f"the image's particle dynamics: {v3['basis']}, {v3['dem'].get('from_structure')}")
+        expect(r3.get("particles_csv") and os.path.exists(os.path.join(d3, "particles.csv")), "no particles.csv of the image")
+        # the same particles where they are: a short run (100 spheres' worth of strain 1.5 scatters by ~30 % between
+        # packings), but one arrangement - the sizes from the voxels are all that differs
+        ratio = v3["mu_r"] / v2["mu_r"]
+        expect(abs(ratio - 1) < 0.05, f"μr {v3['mu_r']:.4g} from the image against {v2['mu_r']:.4g} from the list")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return (f"{meta['n']} spheres: the list draws the generated voxels again (k {k2:.6f} both); the image gives "
+            f"{e['n_particles']} particles; particle dynamics from where they are μr {v3['mu_r']:.4g} (image) against "
+            f"{v2['mu_r']:.4g} (list)")
+
+
+@check("Particle list: particles.csv written for generated structures of every shape (bulk and film, two phases) read "
+       "back and drawn by the generator's raster voxel for voxel; a plain table of spheres read with its phases; the "
+       "form's phases, box and grid from a list; a missing box refused")
+def t_particle_list():
+    import shutil
+    from mpsim import generate as GEN
+    from mpsim import grains as GR
+    from mpsim import particle_input as PI
+    from mpsim import rve as R
+    from mpsim import spec as S
+    from mpsim import pipeline as PL
+    cases = [[_gen_phase("sphere", {"d": 8.0}, 0.3)],
+             [_gen_phase("spheroid", {"d": 10.0, "aspect": 0.4, "aspect_y": 0.7}, 0.2, None, {"aspect": {"type": "normal", "cv": 0.1}})],
+             [_gen_phase("cylinder", {"d": 4.0, "length": 16.0}, 0.15, None, {"length": {"type": "lognormal", "cv": 0.3}})],
+             [_gen_phase("spherocylinder", {"d": 6.0, "length": 14.0}, 0.15, None, None, "volume")],
+             [_gen_phase("cuboid", {"d": 10.0, "ly": 7.0, "lz": 4.0}, 0.2, None, {"lz": {"type": "normal", "cv": 0.2}})],
+             [_gen_phase("superellipsoid", {"d": 10.0, "ly": 7.0, "lz": 5.0, "n": 4.0}, 0.2)],
+             [_gen_phase("polyhedron", {"d": 10.0, "poly": "irregular", "n_vertices": 14, "variants": 8}, 0.2)],
+             [dict(_gen_phase("sphere", {"d": 10.0}, 0.25), name="big"), dict(_gen_phase("sphere", {"d": 4.0}, 0.15), name="small")]]
+    root = tempfile.mkdtemp(prefix="mpsim_plist_")
+    out = []
+    try:
+        for k, phs in enumerate(cases):
+            nz = 24 if k in (0, 6) else None
+            lab, info = GEN.generate(40, 1.0, phs, seed=3, log=lambda *a: None, contacts="keep", gap_vox=0.0,
+                                     overlap_steps={"tries": 2, "max_vox": 3}, nz=nz)
+            d = os.path.join(root, f"c{k}")
+            os.makedirs(d)
+            info.setdefault("h_um", 1.0)
+            GR.write_particle_files(d, [{"name": p["name"]} for p in phs], phs, info)
+            meta = PI.store_folder(os.path.join(root, "store"), d)
+            expect(meta["voxel"] == 1.0 and meta["box"] == [float(v) for v in lab.shape] and meta["film"] == bool(nz),
+                   f"case {k}: README read as box {meta['box']}, voxel {meta['voxel']}, film {meta['film']}")
+            lab2, _ = PI.structure({"dir": meta["dir"], "scale": 1.0, "h_um": 1.0, "shape": list(lab.shape),
+                                    "film": meta["film"], "poly_meta": meta["poly_meta"], "name": "t"}, phs)
+            diff = int(np.count_nonzero(lab2 != lab))
+            expect(diff == 0, f"{'+'.join(p['shape'] for p in phs)}{' film' if nz else ''}: {diff} voxels differ")
+            out.append(f"{'+'.join(p['shape'] for p in phs)}{' (film)' if nz else ''}")
+        # a plain table: spheres with a phase column, no box
+        d = os.path.join(root, "plain")
+        os.makedirs(d)
+        with open(os.path.join(d, "mine.csv"), "w") as fh:
+            fh.write("X,Y,Z,Diameter,Phase\n5,5,5,4,A\n15,5,5,6,B\n25,25,25,4,A\n")
+        meta = PI.store(os.path.join(root, "store"), [(os.path.join(d, "mine.csv"), "mine.csv")])
+        expect(meta["format"] == "spheres" and meta["n"] == 3 and [p["count"] for p in meta["phases"]] == [2, 1]
+               and meta["box"] is None, f"plain table read as {meta['format']}, {[(p['key'], p['count']) for p in meta['phases']]}")
+        form = {"name": "t", "source": "particle_list", "matrix": {"material_id": "epoxy"},
+                "particles_in": {"dir": meta["dir"], "unit": "um", "voxel": 0.5,
+                                 "classes": [{"key": meta["phases"][0]["key"], "material_id": "sio2"},
+                                             {"key": meta["phases"][1]["key"], "material_id": "al2o3"}]},
+                "rve": {"quality": "fast"}, "analyses": {"thermal": True}}
+        try:
+            S.normalize(form)
+            refused = False
+        except ValueError as e:
+            refused = "box" in str(e)
+        expect(refused, "a list without a box was not refused")
+        form["particles_in"]["box"] = [30, 30, 30]
+        sp = S.normalize(form)
+        plan = R.plan(PL._plan_phases(sp), dict(sp["rve"], contacts="keep", elastic_method="fans"), {"thermal"})
+        expect(plan["shape"] == [60, 60, 60] and abs(plan["h_um"] - 0.5) < 1e-12 and plan.get("particle_list"),
+               f"plan {plan.get('shape')} {plan.get('h_um')}")
+        vf = [p["vf"] for p in sp["phases"]]
+        expect(abs(vf[0] - 2 * (math.pi / 6 * 64) / 27000) < 1e-9 and sp["phases"][1]["material_id"] == "al2o3",
+               f"phases {vf}, {[p['material_id'] for p in sp['phases']]}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return "voxel for voxel: " + ", ".join(out) + "; a plain table of spheres with phases; box and grid of a list; no box refused"
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
