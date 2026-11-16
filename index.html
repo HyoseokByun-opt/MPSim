@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.10.1",
+  "softwareVersion": "5.10.2",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -182,7 +182,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.10.1</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.10.2</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -202,7 +202,7 @@
           clusters), sheared or compressed while the resin flows, on a voxel representative volume element (RVE) whose size
           is checked against measured criteria. Every dimension of a particle can have a distribution of its own, and the sizes
           the structure holds are set against the input in every dimension; the particles are written as files that redraw the
-          structure voxel for voxel. A structure can also be read from a TIFF image (CT, FIB-SEM, segmented labels).</p></div>
+          structure voxel for voxel. A structure can also be read from a TIFF image (CT, FIB-SEM, segmented labels); its touching particles are separated, and its viscosity is computed from them. A particle list (particles.csv of an earlier run, or a table of spheres) draws a structure again without generating it.</p></div>
         <div class="step"><span class="n">2</span><h3>Solve the physics</h3>
           <p>Validated open-source solvers (periodic finite volumes, FFT-accelerated voxel finite elements, NASA PuMA, PoreSpy and
           openEMS) compute the effective tensors, which are compared with rigorous bounds.</p></div>
@@ -507,7 +507,7 @@
         size distributions of CV 0.2-0.5 on 256³-400³ grids: every case reaches its loading within 2 %, its mean sizes within
         2 % of the input (3 % with only 800 particles in the box).</p>
       <div class="stats">
-        <div class="stat"><b>112</b><span>self-test problems with known solutions</span></div>
+        <div class="stat"><b>115</b><span>self-test problems with known solutions</span></div>
         <div class="stat"><b>7× / 10×</b><span>RVE edge per largest particle, from Kanit et al. statistics</span></div>
         <div class="stat"><b>72</b><span>ready-to-run presets for semiconductor materials, at least one for every analysis, 24 of them benchmarks against published measurements and solutions; 62 with a tutorial in the guide</span></div>
         <div class="stat"><b>68</b><span>materials in the library, all editable</span></div>
@@ -547,6 +547,8 @@
         <li>Benchmark · DOE · glass spheres in epoxy at Smith's four loadings</li>
         <li>Short glass fibres · diameter and length distributed independently</li><li>Alumina flakes · three axes</li>
         <li>Crushed silica · sized by volume-equivalent diameter</li><li>Structure from a TIFF · CT-like stack of an EMC</li>
+        <li>Viscosity from a TIFF · touching silica spheres of a scan, separated and sheared</li>
+        <li>Viscosity from a particle list · an earlier run's particles.csv drawn again without generating</li>
       </ul>
       <h3 style="margin:30px 0 8px">Benchmarks against the literature</h3>
       <p>Every comparison with a published measurement or a published solution is a preset (Home → Benchmarks against the literature) with a tutorial in the user guide; appendix B.7 of the guide lists them with every source. Each number is that of the preset run as loaded with this version.</p>
@@ -636,7 +638,7 @@ cd C:\MPSim
       <pre><code>@software{byun_mpsim,
   author    = {Byun, Hyoseok},
   title     = {{MPSim: Material Property Simulation}},
-  version   = {5.10.1},
+  version   = {5.10.2},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23120194},
