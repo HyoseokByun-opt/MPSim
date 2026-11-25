@@ -2736,14 +2736,17 @@ def _tet_build(geo, spec, h_um, log):
         o = spec["options"]
         mat_of = {t["phase"]: li for li, t in enumerate(geo["table"]) if t["kind"] == "core"}
         mats = [mat_of.get(i, 0) for i in range(len(geo["gen_phases"]))]
+        # a neck that depends on the pair's size (sintering): neck x (r_small / r_ref)^-p
+        law = (float(o["tet_neck_ref_um"]), float(o.get("tet_neck_exp", 2.0 / 3.0))) if o.get("tet_neck_ref_um") else None
         if o.get("tet_mesh") == "graded":
             ref = o.get("tet_refine", "auto")
             geo["mesh"] = TM.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats, nz=geo.get("nz"), log=log,
                                         res=float(o.get("tet_res", 4)), refine=None if ref in (None, "auto") else int(ref),
-                                        contact=int(o.get("tet_contact", 0)), neck=float(o.get("tet_neck", 0.0)))
+                                        contact=int(o.get("tet_contact", 0)), neck=float(o.get("tet_neck", 0.0)),
+                                        neck_law=law)
         else:
             geo["mesh"] = TF.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats, nz=geo.get("nz"), log=log,
-                                        neck=float(o.get("tet_neck", 0.0)))
+                                        neck=float(o.get("tet_neck", 0.0)), neck_law=law)
     return geo["mesh"]
 
 
@@ -2879,10 +2882,16 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
                     except Exception as e:                           # noqa: BLE001
                         log(f"    (the cross-check PuMA FE solve failed: {e})")
             qt = r.pop("q_tets", None) if primary == "tet" else None
+            ut = r.pop("u_tets", None) if primary == "tet" else None
             if qt is not None and first and viewer is not None and d == dirs[0]:
                 _tet_figure(key, viewer, geo["mesh"], qt, xq if check == "fv" else None, v_used, d, h_um, labels,
                             r["column"][di], r.get("crosscheck"))
-            del qt
+            if qt is not None and first and viewer is not None:
+                try:
+                    _fem_fields(key, viewer, geo["mesh"], qt, ut, v_used, d, labels.shape, h_um, log)
+                except Exception as e:                               # noqa: BLE001
+                    log(f"    (the finite-element view of {COND[key]['title']} {d} failed: {e})")
+            del qt, ut
             T[:, di] = r["column"]
             pot = None
             flux = r.pop("q", None)
@@ -3079,6 +3088,39 @@ def _tet_figure(key, viewer, mesh, qt, xq, vals, d, h_um, labels, k_fem, k_vox):
     viewer.add_tet(f"{key}_{d}_mesh", mesh, mag, label, unit, grp, log=log, voxel=vox,
                    voxel_title=(f"Finite volume on the voxels: {k_vox:.3g} {u}" if k_vox is not None else ""),
                    mesh_title=f"Finite elements on the mesh fitted to the particles: {k_fem:.3g} {u}")
+
+
+def _fem_fields(key, viewer, mesh, qt, ut, vals, d, shape, h_um, log):
+    """The fields of a tetrahedral conduction solve on the mesh itself, for the viewer's FEM style (5.11.0):
+    the flux (or the local field) and the potential of every tetrahedron, each paired with the voxel field of
+    the same quantity (`of`), with which the viewer swaps it."""
+    di = "xyz".index(d)
+    D = d.upper()
+    grp = COND[key]["group"]
+    mag = np.sqrt((np.asarray(qt, float) ** 2).sum(-1))
+    fe = " — finite elements"
+    if key == "thermal":
+        viewer.add_fem(f"thermal_{d}_q_fem", mesh, mag, f"Heat flux magnitude |q| ({D} gradient){fe}", "W/m²", grp,
+                       of=f"thermal_{d}_q", logf=log)
+        if ut is not None:
+            viewer.add_fem(f"thermal_{d}_T_fem", mesh, ut, f"Temperature ({D} gradient, ΔT = 1 K){fe}", "K", grp,
+                           of=f"thermal_{d}_T", ramp_axis=di)
+    elif key == "electrical":
+        viewer.add_fem(f"electrical_{d}_J_fem", mesh, mag, f"Current density magnitude |J| ({D} gradient){fe}", "A/m²",
+                       grp, of=f"electrical_{d}_J", log=True, logf=log)
+        if ut is not None:
+            viewer.add_fem(f"electrical_{d}_V_fem", mesh, ut, f"Electric potential ({D} gradient, 1 V){fe}", "V", grp,
+                           of=f"electrical_{d}_V", ramp_axis=di)
+    else:
+        name = "Electric" if key == "dielectric" else "Magnetic"
+        sym = "|E|/E₀" if key == "dielectric" else "|H|/H₀"
+        L_m = shape[di] * h_um * 1e-6
+        enh = mag / np.asarray(vals, float)[np.asarray(mesh["mat"]).astype(np.int64)] * L_m
+        viewer.add_fem(f"{key}_{d}_E_fem", mesh, enh, f"Local field enhancement {sym} ({D} field){fe}", "-", grp,
+                       of=f"{key}_{d}_E", logf=log)
+        if ut is not None:
+            viewer.add_fem(f"{key}_{d}_phi_fem", mesh, ut, f"{name} potential ({D} gradient){fe}", "-", grp,
+                           of=f"{key}_{d}_phi", ramp_axis=di)
 
 
 def _cond_fields(key, viewer, labels, table, vals, pot, flux, d, h_um, with_vectors=True):
@@ -3551,6 +3593,21 @@ def _elastic_solve(labels, table, spec, h_um, backend, prog, log, event, should_
                            voxel_title=("Voxel finite elements (FANS): E = "
                                         f"{float(np.mean(r['crosscheck']['E'])):.3g} GPa" if vm_vox is not None else ""),
                            mesh_title=f"Finite elements on the mesh fitted to the particles: E = {Em:.3g} GPa")
+            # the same stresses on the elements for the viewer's FEM style, each beside its voxel field
+            try:
+                fe = " — finite elements"
+                grp_ = "Thermo-mechanical"
+                viewer.add_fem("cte_vm_fem", mesh, vm_t, f"Thermal stress, von Mises (ΔT = {dT:g} K, {bc}){fe}", "MPa",
+                               grp_, of="cte_vm", logf=log)
+                viewer.add_fem("cte_hyd_fem", mesh, (sig_t[:, 0] + sig_t[:, 1] + sig_t[:, 2]) / 3.0 * sc,
+                               f"Hydrostatic stress σm (ΔT = {dT:g} K, {bc}){fe}", "MPa", grp_, of="cte_hyd",
+                               diverging=True)
+                viewer.add_fem("cte_szz_fem", mesh, sig_t[:, 2] * sc, f"Normal stress σzz (ΔT = {dT:g} K, {bc}){fe}",
+                               "MPa", grp_, of="cte_szz", diverging=True)
+                viewer.add_fem("cte_sxz_fem", mesh, sig_t[:, 4] * sc, f"Shear stress τxz (ΔT = {dT:g} K, {bc}){fe}",
+                               "MPa", grp_, of="cte_sxz", diverging=True)
+            except Exception as e:                                   # noqa: BLE001
+                log(f"    (the finite-element view of the thermal stress failed: {e})")
         del sig_t, vm_vox
     elif method == "fans":
         free = spec["options"].get("thermal_bc") == "free"

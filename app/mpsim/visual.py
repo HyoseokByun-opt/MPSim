@@ -65,6 +65,7 @@ TRI_NETWORK = 1_500_000       # a network phase (one connected skin)
 VOX_QUADS_MAX = 6_000_000     # voxel faces of the "Voxels" style
 FACE_MAX = 1024               # RVE faces at the solver's resolution up to this edge
 SURF_MAGIC = b"MPS2"
+GHOST_VOX = 6                  # voxels of a phase through which its opacity is reached (viewer and figures)
 
 # Default colours of the regions. The matrix is a light neutral grey; a
 # filler takes the colour of its material where that has one (metals,
@@ -542,6 +543,63 @@ class ViewWriter:
         self.meta["tet_figs"] = [t for t in self.meta["tet_figs"] if t["key"] != key] + [
             {"key": key, "label": label, "unit": unit, "group": group, "log": bool(log), "compare": voxel is not None,
              "voxel_title": voxel_title, "mesh_title": mesh_title}]
+
+    def add_fem(self, key, mesh, val, label, unit, group, of=None, log=False, diverging=False, note="", logf=None,
+                ramp_axis=None):
+        """A field of the body-fitted tetrahedral mesh for the 3D viewer's FEM style (5.11.0): one value per
+        tetrahedron, drawn on the faces of the elements themselves - the particles' surfaces as the mesh fits
+        them and the cut of the elements on the RVE's faces - instead of on voxels. `of`: the key of the voxel
+        field of the same quantity, which the viewer swaps for this one in the FEM style. ramp_axis: a potential
+        that rises by one across the RVE along this axis (0, 1, 2) - a triangle drawn one period away from where
+        the solver had its tetrahedron takes the value one period further on. The geometry is written once per
+        mesh; every further field adds its values."""
+        from . import tetview as TV
+        val = np.asarray(val, np.float64).ravel()
+        fem = getattr(self, "_fem", None)
+        if fem is None or fem.get("id") != id(mesh):
+            drawn = [i for i, t in enumerate(self.table) if t["kind"] not in ("matrix", "interphase")]
+            g = TV.fem_geometry(mesh, drawn, log=logf)
+            labs = {}
+            for lab, (P, tt, _s) in g["surf"].items():
+                fn = f"fem_surf_{lab}.bin"
+                TV.write_fem(os.path.join(self.dir, fn), P)
+                labs[str(lab)] = {"file": fn, "n_tri": int(len(tt))}
+            TV.write_fem(os.path.join(self.dir, "fem_faces.bin"), g["faces"][0])
+            fem = {"id": id(mesh), "tets": {lab: (tt, s) for lab, (P, tt, s) in g["surf"].items()},
+                   "faces": (g["faces"][1], g["faces"][2]), "vol": TV.tet_volumes(mesh)}
+            self._fem = fem
+            info = {"n_tets": int(len(mesh["tets"])), "n_vertices": int(len(mesh["points"])),
+                    "graded": bool(mesh.get("graded")), "labels": labs,
+                    "faces": {"file": "fem_faces.bin", "n_tri": int(len(g["faces"][1]))},
+                    "region_um": g["region"], "n_tri_total": g["total"],
+                    "length_um": [float(v) for v in np.asarray(mesh["L"], float)], "fields": []}
+            old = (self.meta.get("fem") or {}).get("fields") or []
+            info["fields"] = old if (self.meta.get("fem") or {}).get("n_tets") == info["n_tets"] else []
+            self.meta["fem"] = info
+        files = {}
+
+        def tri_vals(tt, s):
+            v = val[tt]
+            return v + s[:, ramp_axis] if ramp_axis is not None and len(s) else v
+        for lab, (tt, s) in fem["tets"].items():
+            fn = f"fem_{key}_{lab}.f32"
+            tri_vals(tt, s).astype("<f4").tofile(os.path.join(self.dir, fn))
+            files[str(lab)] = fn
+        fn = f"fem_{key}_faces.f32"
+        tri_vals(*fem["faces"]).astype("<f4").tofile(os.path.join(self.dir, fn))
+        files["faces"] = fn
+        ok = np.isfinite(val)
+        fin = val[ok]
+        mn, mx = (float(fin.min()), float(fin.max())) if fin.size else (0.0, 1.0)
+        # the colour range over the volume: by element count the many small elements at the contacts (where the
+        # flux peaks) set the 99th percentile, and the rest of the RVE comes out in one colour
+        p1, p99 = (TV.weighted_percentiles(fin, fem["vol"][ok], (1, 99)) if fin.size else (0.0, 1.0))
+        pos = fin[fin > 0]
+        entry = {"key": key, "label": label, "unit": unit, "group": group, "of": of, "files": files,
+                 "min": mn, "max": mx, "p01": p1, "p99": p99, "log": bool(log), "diverging": bool(diverging),
+                 "log_min": float(np.percentile(pos, 1)) if pos.size else None, "note": note,
+                 "categorical": False}
+        self.meta["fem"]["fields"] = [f for f in self.meta["fem"]["fields"] if f["key"] != key] + [entry]
 
     def add_vector(self, key, vec, label, unit, group, field=None, note=""):
         """A vector field, written as x, y, z per voxel for arrow glyphs.
@@ -1476,11 +1534,51 @@ def _draw_vectors(p, view_dir, meta, key, every=None, scale=1.0, uniform=False):
     p.add_mesh(arrows, scalars="mag", cmap="turbo", show_scalar_bar=False, smooth_shading=True)
 
 
-def _volume_voxels(p, view_dir, meta, vvol, fmeta, clim, log, cmap, op):
+def _fem_scene(p, view_dir, meta, fem, req, show_particles, opl, cmap, clim, log, sbar, bar_done, mode):
+    """The FEM style of the viewer in a figure (5.11.0): the element faces of every drawn phase and, for a
+    quantity solved on the mesh, the elements' cut on the RVE faces, each in its element's colour. -> (whether
+    the RVE faces were drawn, bar_done)."""
+    import pyvista as pv
+    ff = next((f for f in fem.get("fields") or [] if f["key"] == req.get("fem_field")), None) if mode == "field" else None
+    edges = bool(req.get("fem_edges"))
+
+    def poly_of(fn):
+        with open(os.path.join(view_dir, fn), "rb") as fh:
+            fh.read(4)
+            m, ox, oy, oz, st = struct.unpack("<I4f", fh.read(20))
+            q = np.frombuffer(fh.read(18 * m), "<u2").reshape(-1, 3)
+        pts = q.astype(np.float64) * st + np.array([ox, oy, oz])
+        return pv.PolyData(pts, np.column_stack([np.full(m, 3), np.arange(3 * m).reshape(m, 3)]).ravel())
+    parts = [(lab, e["file"]) for lab, e in (fem.get("labels") or {}).items()] if show_particles else []
+    faces_on = bool(ff) and bool(req.get("box_faces", True)) and (fem.get("faces") or {}).get("n_tri")
+    if faces_on:
+        parts.append(("faces", fem["faces"]["file"]))
+    for part, fn in parts:
+        a = 1.0 if part == "faces" else opl(part)
+        if a <= 0:
+            continue
+        mesh = poly_of(fn)
+        vals_fn = (ff or {}).get("files", {}).get(part)
+        if ff and vals_fn and (req.get("color_particles", True) or part == "faces"):
+            v = np.fromfile(os.path.join(view_dir, vals_fn), "<f4")
+            mesh.cell_data["f"] = np.maximum(v, clim[0] * 1e-3) if log else v
+            p.add_mesh(mesh, scalars="f", preference="cell", cmap=cmap, clim=clim, log_scale=log, opacity=a,
+                       smooth_shading=False, show_edges=edges, edge_color="#1b1f24", line_width=0.5,
+                       show_scalar_bar=not bar_done, scalar_bar_args=sbar)
+            bar_done = True
+        else:
+            lab = meta["labels"][int(part)] if part != "faces" else meta["labels"][0]
+            p.add_mesh(mesh, color=lab["color"], opacity=a, smooth_shading=False, specular=0.2, show_edges=edges,
+                       edge_color="#1b1f24", line_width=0.5)
+    return bool(faces_on), bar_done
+
+
+def _volume_voxels(p, view_dir, meta, vvol, fmeta, clim, log, cmap, op, pop=None):
     """Every voxel of the structure as a volume (nearest neighbour, shaded):
     coloured by phase, or by the field (RGBA, from the 16-bit copy) with the
     matrix transparent. One empty voxel is added around the box so that the
-    particles cut by its faces are shaded like the rest."""
+    particles cut by its faces are shaded like the rest. pop: each phase's own
+    opacity (label -> 0..1), reached through GHOST_VOX voxels as in the viewer."""
     import gzip
     import pyvista as pv
     import vtk
@@ -1489,7 +1587,9 @@ def _volume_voxels(p, view_dir, meta, vvol, fmeta, clim, log, cmap, op):
     with gzip.open(os.path.join(view_dir, vvol["labels"]), "rb") as fh:
         lab = np.frombuffer(fh.read(), np.uint8).reshape((nx, ny, nz), order="F")
     lab = np.pad(lab, 1)
-    drawn = np.array([0.0 if (l["kind"] in ("matrix", "interphase")) else 1.0 for l in meta["labels"]])
+    pop = pop or {}
+    drawn = np.array([0.0 if (l["kind"] in ("matrix", "interphase")) else max(0.0, min(1.0, pop.get(l["value"], 1.0)))
+                      for l in meta["labels"]])
     img = pv.ImageData(dimensions=lab.shape, spacing=(h, h, h), origin=(-0.5 * h,) * 3)
     full = fmeta.get("full") if fmeta else None
     if full and os.path.exists(os.path.join(view_dir, full["file"])):
@@ -1537,7 +1637,8 @@ def _volume_voxels(p, view_dir, meta, vvol, fmeta, clim, log, cmap, op):
     prop.SetAmbient(0.35)
     prop.SetDiffuse(0.75)
     prop.SetSpecular(0.2)
-    prop.SetScalarOpacityUnitDistance(0.1 * h)
+    # an opacity is reached through GHOST_VOX voxels (1 stays solid at once), as in the viewer
+    prop.SetScalarOpacityUnitDistance(GHOST_VOX * h)
     mapper.SetSampleDistance(0.5 * h)
     vol = vtk.vtkVolume()
     vol.SetMapper(mapper)
@@ -1595,15 +1696,27 @@ def render_scene(view_dir, req, out_png):
 
     show_particles = req.get("show_particles", mode != "field")
     op = float(req.get("particle_opacity", 1.0))
+    # each phase's own opacity (0 hides it), times the overall one (5.11.0)
+    pop = {int(k): float(v) for k, v in (req.get("phase_opacity") or {}).items()}
+
+    def opl(v):
+        return max(0.0, min(1.0, op * pop.get(int(v), 1.0)))
+    fem = meta.get("fem") if req.get("surface_style") == "fem" else None
+    fem_faces = False
+    if fem:
+        fem_faces, bar_done = _fem_scene(p, view_dir, meta, fem, req, show_particles, opl, cmap, clim, log, sbar,
+                                         bar_done, mode)
     vvol = meta.get("voxel_volume") if req.get("surface_style") == "voxels" else None
     if vvol and show_particles:
         _volume_voxels(p, view_dir, meta, vvol, fmeta if (mode == "field" and req.get("color_particles", True))
-                       else None, clim, log, cmap, op)
+                       else None, clim, log, cmap, op, pop=pop)
     vox = meta.get("voxel_style") if (req.get("surface_style") == "voxels" and not vvol) else None
     for key_, vf in ((vox or {}).get("files") or {}).items():
         # the voxel faces, flat shaded, each coloured by its own voxel
         if not show_particles:
             break
+        if opl(key_) <= 0:
+            continue
         lab = meta["labels"][int(key_)]
         with open(os.path.join(view_dir, vf["file"]), "rb") as fh:
             n, m = struct.unpack("<II", fh.read(8))
@@ -1617,15 +1730,17 @@ def render_scene(view_dir, req, out_png):
                     else arr.ravel(order="F")[vi])
             mesh.cell_data["f"] = np.maximum(flat, clim[0] * 1e-3) if log else flat
             p.add_mesh(mesh, scalars="f", preference="cell", cmap=cmap, clim=clim, log_scale=log,
-                       smooth_shading=False, opacity=op, show_scalar_bar=not bar_done, scalar_bar_args=sbar)
+                       smooth_shading=False, opacity=opl(key_), show_scalar_bar=not bar_done, scalar_bar_args=sbar)
             bar_done = True
         else:
-            p.add_mesh(mesh, color=lab["color"], smooth_shading=False, opacity=op, specular=0.2)
+            p.add_mesh(mesh, color=lab["color"], smooth_shading=False, opacity=opl(key_), specular=0.2)
     for sf in meta["surfaces"]:
-        if not show_particles or vox or vvol:
+        if not show_particles or vox or vvol or fem:
             break
         lab = meta["labels"][sf["label"]]
-        op_s = op
+        op_s = opl(sf["label"])
+        if op_s <= 0:
+            continue
         pts, nrm, tri = load_surface(view_dir, sf)
         faces = np.hstack([np.full((len(tri), 1), 3, np.int64), tri.astype(np.int64)]).ravel()
         mesh = pv.PolyData(pts.astype(np.float64), faces)
@@ -1656,7 +1771,9 @@ def render_scene(view_dir, req, out_png):
         pieces = []
         fc = meta.get("faces") or {}
         face_file = (fc.get("fields") or {}).get(fmeta["key"])
-        if req.get("box_faces", True) and face_file:
+        if fem_faces:
+            pass                       # the RVE faces were drawn from the elements
+        elif req.get("box_faces", True) and face_file:
             # the faces as the solver resolved them, not the browser volume's blocks
             vals = np.fromfile(os.path.join(view_dir, face_file), "<f4")
             if log:

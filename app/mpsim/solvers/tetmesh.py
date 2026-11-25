@@ -572,7 +572,7 @@ def plan(N, h, ginfo, nz=None, res=4.0, refine=None, max_refine=3, coarsest=None
 
 
 def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, delta=TF.DELTA, log=None, res=4.0,
-               refine=None, contact=1, coarsest=None, neck=0.0):
+               refine=None, contact=1, coarsest=None, neck=0.0, neck_law=None):
     """The graded body-fitted mesh of a generated structure. Arguments as tetfem.build_mesh, and: res, cells
     across the smallest dimension of a particle at its surface; refine, the halvings of the voxel for the finest
     cell (default: as many as the finest particle needs, three at most); contact, the further levels where two
@@ -596,7 +596,7 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
     P = np.ascontiguousarray(parts["P"], float)
     ext = np.zeros((len(codes), 3))
     _extents(codes, R, P, planes, nfaces, ext)
-    nk, grow = TF.neck_pairs(ginfo, float(neck), Lg, gper)
+    nk, grow = TF.neck_pairs(ginfo, float(neck), Lg, gper, neck_law)
     ext += grow                                       # a neck reaches half its width beyond the particle
     S = (1 << lmax) * s0
     nroot = (nf >> lmax).astype(np.int64)

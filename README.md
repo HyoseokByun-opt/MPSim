@@ -6,12 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.10.2-0b62c4" alt="version 5.10.2">
+  <img src="https://img.shields.io/badge/version-5.11.0-0b62c4" alt="version 5.11.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
   <a href="https://doi.org/10.5281/zenodo.23120194"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23120194.svg" alt="DOI 10.5281/zenodo.23120194"></a>
-  <img src="https://img.shields.io/badge/self--test-115%20checks-2da44e" alt="115 self-test checks">
+  <img src="https://img.shields.io/badge/self--test-117%20checks-2da44e" alt="117 self-test checks">
   <a href="#documentation"><img src="https://img.shields.io/badge/user%20guide-EN%20%7C%20KO-8250df" alt="user guide in English and Korean"></a>
 </p>
 
@@ -113,14 +113,8 @@ The main capabilities are listed below.
   the potential with every voxel's conductivity at its temperature, the heat of the current split exactly between voxels,
   and the temperature, solved in turn to a steady state at each step of a current or voltage sweep, up to thermal
   runaway.
-- **Through vias filled with the composite.** A plated-through hole of a board, its wall electroplated (thinner in the
-  middle by the throwing power of the plating) and its core filled with the composite of the RVE - a conductive paste:
-  the DC resistance of one via and the share of the current the fill carries, the resistance and inductance against
-  frequency from the Bessel solution of the plated wall around the fill, the characteristic impedance set by the
-  return vias around it and the S-parameters of the via as a transmission line up to 40 GHz. The particles of a paste
-  can carry an electrical contact resistance on their contacts, fitted to a measured resistivity in the Calibration
-  tab (5.7.0). The thermal stress the via puts into its substrate - a glass core - with the composite as its core, by
-  axisymmetric finite elements checked against FEniCSx; the four layouts of return vias compared (5.8.0).
+- **Electrical contact resistance.** The particles of a conductive paste or adhesive can carry an electrical contact
+  resistance on their contacts, fitted to a measured resistivity in the Calibration tab (5.7.0).
 - **Uneven dispersions.** The same recipe can be arranged unevenly to compare with the even dispersion: particles only
   in a region of the box, a loading graded along an axis, or a share of the particles gathered in clusters. The
   packing follows the requested density by Monte-Carlo moves weighted against the crowding of hard spheres, and the
@@ -172,8 +166,16 @@ The main capabilities are listed below.
   the interface resistance, since the heat crosses the contact faces).
 - **Studies.** Design of experiments (full factorial, one factor at a time, Latin hypercube; the share of a filler in a
   fixed filler content as a factor; one fixed grid for all cases or a grid per case), Gaussian-process surrogates,
-  Sobol sensitivity indices, single-objective optima and NSGA-II Pareto fronts. The result table lists, next to each
-  input, the filler content and filler shares realised in the generated structure.
+  single-objective optima and NSGA-II Pareto fronts. The result table lists, next to each input, the filler content and
+  filler shares realised in the generated structure.
+- **Sensitivity analysis.** The finished cases of a study are asked which inputs move a response, alone and together,
+  by 25 measures of every family in common use: Pearson, Spearman, Kendall, partial and partial rank correlation;
+  standardised (rank) regression, the ANOVA of a response surface with its Pareto chart of effects, the LASSO path;
+  correlation ratio, mutual information, distance correlation and HSIC; Gaussian-process length scales, random-forest
+  and gradient-boosting importance, SHAP; Sobol indices on the surrogate, a polynomial chaos expansion in closed form,
+  eFAST, Morris, DGSM and PAWN. Six models are scored by cross-validation, and the consensus weighs every model-based
+  measure by its Q². Interactions are read by Sobol S₂, the PCE, SHAP interaction values, Friedman's H and the ANOVA,
+  with partial dependence, ICE and ALE; every response of a study can be compared at once.
 - **Linked inputs.** A DOE factor or a calibration unknown can set further inputs: the same value (`x`), a ratio
   (`0.8*x`) or a function of several factors (`sqrt(x1*x2)`). Two grades of one filler can thus share one interfacial
   resistance, which reduces the number of factors and lets the measurements determine a single value.
@@ -186,8 +188,9 @@ The main capabilities are listed below.
   alone takes every core of the PC by default; several runs share them. The structure is built on all cores too: the
   placement of particles, their drawing on the grid and the repair of overlaps give exactly the structure of one core
   (octahedra at 45 vol%: 23.4 s → 7.7 s; flakes with spheres on 248³: 299 s → 105–118 s).
-- **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces or as crisp voxels, fields on the RVE
-  faces and on sections, arrows, animated field lines and pore networks; publication figures rendered on the server
+- **Visualisation.** An interactive 3D view (vtk.js) with particles as smooth surfaces, as crisp voxels or, for a run
+  solved on the body-fitted mesh, as the finite elements themselves; every phase with its own opacity and a Solo view of
+  one filler of a blend; fields on the RVE faces and on sections, arrows, animated field lines and pore networks; publication figures rendered on the server
   (PyVista); animations saved as GIF; live fields during the solution; a single-file HTML report for every run.
 
 ### The workspace
@@ -196,7 +199,8 @@ The main capabilities are listed below.
   <img src="docs/images/screenshot.png" alt="The workspace: ribbon, command panel, 3D view and inspector" width="100%">
 </p>
 
-The ribbon follows the order of a study (Home, Material, Structure, Domain, Structure Analysis, Simulation, Results).
+The ribbon follows the order of a study (Home, Material, Structure, Domain, Structure Analysis, Simulation, Calibration,
+DOE, Sensitivity Analysis, Optimization, Results).
 The command panel on the left holds the inputs of the active tab, the centre shows the 3D/2D view, the Result Viewer
 or the report, and the inspector on the right controls the display and lists every run of the workspace: a click shows a
 run in every view, a stopped run starts again from its row, and run folders or run ZIPs from another PC open into the
@@ -216,7 +220,6 @@ of the user guide describes the workspace in detail; chapter 33 is a tutorial fo
 | | Mechanical test (tension or compression) | Effective stiffness + one FANS solve at the test load | Force-displacement line, apparent modulus, Poisson's ratio or lateral stress, von Mises and axial stress and strain fields, load at the matrix strength |
 | Multiphysics | Thermal stress and warpage (thin film) | Film FV heat flow → FANS voxel FE with a thermal eigenstrain per voxel → laminate theory | Temperature field, curvature and warpage, in-plane stress through the film, largest principal and peeling stress per region, substrate stress |
 | | Joule heating (thin film) | Film FV potential and heat solved in turn with σ(T) | Voltage, peak and face temperatures per step, runaway estimate, current-density and Joule-heat fields |
-| | Through via filled with the composite | Bessel solution of the plated wall around the fill; multipole cross-section; transmission line in slices | DC resistance per via and the fill's share, R(f) and L(f), Z0, S21 and S11 up to 40 GHz, a wall-thickness sweep |
 | | Cure during the compression | Kamal–Sourour + Castro–Macosko in the 3D compression | Conversion, viscosity, stress and temperature against time, gel stop |
 | Rheology | Viscosity and flowability | FANS creeping flow; particle dynamics (lubrication DEM); Krieger–Dougherty with Farr–Groot φm | Relative viscosity, flow curve, φm, underfill filling time, settling, local shear-rate field |
 | Reliability | Moisture uptake and swelling | Periodic FV on the water activity; FANS eigenstrain | D_eff tensor, saturated uptake, uptake curve, swelling strain and CME |
@@ -231,6 +234,7 @@ of the user guide describes the workspace in detail; chapter 33 is a tutorial fo
 | | Percolation paths | Connected components, geodesic distance | Spanning fractions, geodesic tortuosity, largest passing sphere |
 | | Grain analysis | Particle list, PoreSpy, PuMA structure tensor | Size distribution, sphericity, orientation tensor, spacing, clusters |
 | Inverse problems | Calibration | RVE surrogate (Gaussian process), Bayesian posterior | Unknown material values with credible intervals, identifiability, next measurement |
+| Studies | Sensitivity analysis of a DOE | Statistics of the runs; six cross-validated models (GP, random forest, gradient boosting, PCE, response surfaces); Sobol, eFAST, Morris, DGSM, PAWN on the surrogate | Consensus ranking of 25 measures with its agreement (Kendall W), interactions by five measures, partial dependence and ALE, every response at once |
 
 Each result states the method that produced it. Conduction and thermal-expansion results are compared with rigorous
 bounds (Wiener, Hashin–Shtrikman, Schapery); a value outside a rigorous bound is reported as a failed check.
@@ -537,6 +541,17 @@ Spheres of 4 µm (35 vol%) with spheres of 0.8 µm (15 vol%), k 100 : 1:
 - Reductions: linear elements; perfect interfaces except for the films (interface and contact resistances, anisotropic
   fillers, coated particles, networks, images and compressed structures stay with the finite volume, and the run says
   so); about 50 times the time of the finite volume per solve; 1.4 GB at 96³, about 3 GB at 128³.
+- **Seen on its own elements (5.11.0).** A run solved on the mesh opens in the 3D view's FEM mesh style: the particle
+  surfaces and the RVE faces are the element faces, each in the colour of its own element, with the element edges on
+  request; the colour range is taken over the volume, not the element count, so that the small elements at the contacts
+  do not set it. Every phase has its own opacity, and Solo shows one filler of a blend through the others.
+
+<p align="center">
+  <img src="docs/images/fem_phase_solo.png" alt="Heat flux on the elements of the BN platelets, alumina as ghosts" width="62%">
+</p>
+
+The heat flux of the alumina + BN compound on the finite elements, with the BN platelets alone (Solo) and the alumina
+spheres around them at 0.1 opacity: 2.89 million tetrahedra, 801,352 element faces drawn.
 
 ## Application examples: coupled analyses
 
@@ -597,87 +612,6 @@ coefficient of silver and 25 µΩ·mm² at 20 °C, so a set current runs away ab
 Checks: the parabola of a uniform conductor exactly; with a TCR, a separate one-dimensional solve to 1.5·10⁻⁴ K; the
 energy balance to 10⁻⁵.
 
-### A hybrid-filled through via: Cu plating and a Cu paste
-
-A 100 µm hole through a 1.8 mm board (aspect ratio 18:1), its wall electroplated with Cu - 20 µm at the hole's ends and
-16 µm in the middle, the hole:surface thickness ratio of 0.80 reached in 18:1 holes by G. L. Fisher, W. Sonnenberg,
-J. Bladon, R. Bernards, *Trans. IMF* **68** (2), 50–54 (1990),
-[doi:10.1080/00202967.1990.11870866](https://doi.org/10.1080/00202967.1990.11870866) - and its core filled with a Cu
-paste; 4 return vias around it at the 300 µm pitch, laminate εr 3.37 and tan δ 0.002 (J. Temga, T. Shiba, N. Suematsu,
-*Sensors* **24** (2), 714 (2024), [doi:10.3390/s24020714](https://doi.org/10.3390/s24020714)). The paste is that of
-K. Kawarai, M. Inoue, *J. Smart Process.* **7** (5), 199–206 (2018),
-[doi:10.7791/jspmee.7.199](https://doi.org/10.7791/jspmee.7.199): Cu of D50 6.38 µm at 85 wt% (40 vol%), 5×10⁻⁵ Ω·cm
-after a cure at 130 °C or more and 8×10⁻⁴ Ω·cm at 80–100 °C. In the RVE the spheres may overlap (the necks a cure
-forms) and their contacts carry the electrical contact resistance that reproduces each measurement: 1.09×10⁻¹⁴ and
-1.18×10⁻¹² Ω·m² (Calibration tab, 128³ voxels of 0.4 µm). That box is 8 particles across, and near its percolation
-threshold a paste conducts better in a small box: five realisations each with the same R_c,e gave 2.38 MS/m in a box
-of 8 diameters, 2.12 in 12, 2.00 in 16 and 2.05 in 20 (320³ voxels, 5 min a run on 18 cores) - a value of the paste
-itself wants 16-20 diameters, with R_c,e calibrated on that grid. In the via the effect is small where the wall is
-thick: the paste of the 8-diameter box taken 15 % less conductive raises the via's DC resistance at 40 vol% by 0.35 %
-with a 20 µm wall and by 2.1 % with a 5 µm wall.
-
-<p align="center">
-  <img src="docs/images/via_result.png" alt="The through via in the Result Viewer: resistance and the fill's share against frequency, S-parameters, Z0" width="90%">
-</p>
-
-| Cu in the paste (cure ≥ 130 °C) | Paste, along the via | One via, wall 5 µm | One via, wall 20 µm | Paste's share of the DC current (5 / 20 µm) |
-|---|---|---|---|---|
-| 30 vol% (78 wt%) | 496 µΩ·cm | 22.90 mΩ | 6.718 mΩ | 1.7 / 0.3 % |
-| 40 vol% (85 wt%) | 45.7 µΩ·cm | 19.63 mΩ | 6.553 mΩ | 15.7 / 2.7 % |
-| 55 vol% (91 wt%) | 11.6 µΩ·cm | 13.45 mΩ | 6.073 mΩ | 42.3 / 9.8 % |
-
-The paste matters only where the wall is thin, and only at low frequency: it drops out of the current above the
-frequency at which the skin depth of copper equals the wall (17 MHz for 16 µm). At 10 GHz the current runs in the
-outer 0.7 µm of the wall and every case gives 148.4 mΩ, Z0 60.4 Ω, S21 −0.086 dB and S11 −18.3 dB; Z0 is set by the
-return vias (8 around: 59 Ω, ground-signal-ground: 75 Ω, one return via: 115 Ω). The paste of the cure at 80–100 °C
-carries less than 1 % of the current at any content. Not included: the pads, antipads and planes of the stack-up
-(a 3D full-wave problem). Checks: the Bessel solution against its DC limit (7×10⁻¹⁵), a solid wire's formula and the
-surface resistance (0.33 % at 40 GHz); the cross-section against two parallel wires exactly; a 3D solve of the via
-itself (120 × 120 × 720 voxels of the plated wall, the paste and the laminate) against the DC model, within 0.04 %.
-
-### The same via in a glass core: its thermal stress
-
-The via in a 1.8 mm glass core (εr 4.8, tan δ 0.007 as used for through-glass vias by J. Liu, J. Zhang, L. Gao, H. Chen,
-*Micromachines* **14** (4), 803 (2023), [doi:10.3390/mi14040803](https://doi.org/10.3390/mi14040803)), the paste on a
-box of 12 particle diameters with its contact resistance calibrated there (8.41×10⁻¹⁵ Ω·m², an upper bound), the wall
-10 µm. With 4 return vias Z0 is 50.6 Ω (S11 −39 dB at 10 GHz); with one beside it 96 Ω (S11 −6.7 dB). Cooled from the
-cure at 150 °C to 25 °C, the copper (E 123.5 GPa, ν 0.350: H. M. Ledbetter, E. R. Naimon, *J. Phys. Chem. Ref. Data*
-**3**, 897 (1974), [doi:10.1063/1.3253150](https://doi.org/10.1063/1.3253150); α 17.0 ppm/K: NIST SRM 736, T. A. Hahn,
-*J. Appl. Phys.* **41**, 5096 (1970), [doi:10.1063/1.1658614](https://doi.org/10.1063/1.1658614)) and the paste (E 12.0
-GPa and α 32.2 ppm/K from the RVE) shrink more than the glass (α 3.8 ppm/K: M. Zhai et al., CLEO/Europe-EQEC 2023,
-[doi:10.1109/CLEO/Europe-EQEC57999.2023.10231702](https://doi.org/10.1109/CLEO/Europe-EQEC57999.2023.10231702); E 73
-GPa, ν 0.22 typical) and pull on it. Axisymmetric finite elements (9-node quadrilaterals, half the via):
-
-<p align="center">
-  <img src="docs/images/via_stress.png" alt="The via's thermal stress in the Result Viewer: the glass's tension against the wall for the paste, an empty and a fully plated via" width="52%">
-  <img src="docs/images/via_stress_map.png" alt="Largest principal stress near the via's top: the paste core, the Cu wall and the glass" width="44%">
-</p>
-
-| The glass's largest tension (MPa) | Wall 5 µm | 10 µm | 15 µm | 20 µm | 25 µm |
-|---|---|---|---|---|---|
-| Fully plated, at mid-height | 110 | 110 | 110 | 110 | 110 |
-| Conformal (empty), at mid-height | 23 | 41 | 56 | 69 | 79 |
-| Cu paste 40 vol%, at mid-height | 78 | 84 | 90 | 94 | 98 |
-| Cu 45 + fused silica 20 vol% paste, at mid-height | 72 | 79 | 85 | 91 | 95 |
-| Conformal, top surface 5 µm from the hole | 95 | 101 | 97 | 91 | 84 |
-| Cu paste 40 vol%, top surface 5 µm from the hole | 162 | 139 | 120 | 104 | 91 |
-| Cu 45 + fused silica 20 vol% paste, top surface 5 µm from the hole | 113 | 102 | 92 | 84 | 78 |
-
-The less copper, the less the glass is loaded half way along the via - as the cracks that appear around copper TGVs
-only above a copper thickness (C. Okoro et al., *IEEE Trans. Device Mater. Reliab.* **21**, 354 (2021),
-[doi:10.1109/TDMR.2021.3096931](https://doi.org/10.1109/TDMR.2021.3096931)) and the smaller deformation of conformal
-vias (K. Pan et al., ECTC 2022, 1211, [doi:10.1109/ECTC51906.2022.00194](https://doi.org/10.1109/ECTC51906.2022.00194)).
-The resin-bonded paste, softer than copper but expanding more, does not buffer the glass: in a 5 µm wall it raises
-the stress on the glass's top surface next to the hole by 70 % over an empty via. Fused silica in place of part of the
-resin (E 72 GPa, ν 0.17: S. Spinner, *J. Am. Ceram. Soc.* **45**, 394 (1962),
-[doi:10.1111/j.1151-2916.1962.tb11177.x](https://doi.org/10.1111/j.1151-2916.1962.tb11177.x); α 0.5 ppm/K: T. A. Hahn,
-R. K. Kirby, *AIP Conf. Proc.* **3**, 13 (1972), [doi:10.1063/1.2948551](https://doi.org/10.1063/1.2948551)) brings the
-paste's expansion down from 29.2 to 18.3 ppm/K at Cu 45 vol% and 20 vol% silica, and the glass's top stress to about an
-empty via's.
-Checks: the concentric-cylinder solution at mid-height (0.3 %), the same model in FEniCSx (DOLFINx 0.11, P2
-triangles; 16 values within 0.32 %), a mesh four times finer (0.3 %). Linear elastic: the copper's yield and creep
-would lower these values.
-
 ### A moulded underfill that gels before the mould closes
 
 Silica 5 µm (40 vol%) in epoxy pressed at 1 %/s towards 55 % in a mould at 175 °C while the resin cures. The kinetics
@@ -703,9 +637,38 @@ The compound gels with the mould closed by 49.9 % of the 55 % asked; the tempera
 the mould (exchange time 0.32 s for a 1 mm part). Checks: n-th order kinetics against the closed form to 10⁻⁶; a resin
 pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 against 0.86746).
 
+## Application example: which inputs move the conductivity
+
+<p align="center">
+  <img src="docs/images/sensitivity.png" alt="Sensitivity analysis of a 24-case study: consensus, Sobol indices, interaction network, joint effect" width="100%">
+</p>
+
+A 24-case Latin hypercube varies four inputs of an alumina-filled epoxy together - the alumina content (20-50 vol%), the
+particle diameter (6-14 µm), the filler's conductivity (5-35 W/m·K) and the matrix's (0.15-0.35 W/m·K) - and the
+Sensitivity Analysis tab asks 25 measures which of them move the thermal conductivity (preset "Sensitivity · alumina
+in epoxy", about 2 min for the study and 10-40 s for the analysis).
+
+| Input | Consensus | Sobol S₁ / S_T | Pearson r | PRCC |
+|---|---|---|---|---|
+| Alumina content | 1.00 (first in 24 of 25) | 0.70 / 0.75 | 0.85 | 0.98 |
+| Matrix conductivity | 0.44 | 0.15 / 0.18 | 0.60 | 0.91 |
+| Filler conductivity | 0.25 | 0.07 / 0.12 | 0.13 (p = 0.54) | 0.79 (p = 2×10⁻⁵) |
+| Particle diameter | 0.17 | 0.01 / 0.02 | −0.29 | −0.52 |
+
+- **Agreement.** Kendall's W over the 25 rankings is 0.80; the global surrogate (a quadratic surface) predicts runs it
+  did not see with Q² 0.94, the Gaussian process with 0.91, the random forest with 0.72.
+- **A masked input.** The filler's conductivity is invisible to a plain correlation, because the content moves k far
+  more; held fixed, the others no longer hide it (PRCC 0.79). The diameter's plain correlation is mostly the content's:
+  the two are correlated over the realised structures (r = −0.35).
+- **Interactions.** Content × filler conductivity is found by three of five measures (PCE S₂, SHAP interaction values,
+  ANOVA p = 0.005): the filler's conductivity matters more the more filler there is. All interactions together carry
+  6 % of the variance (1 − ΣS₁).
+- The measures are those of the literature, each cited in chapter 28A of the user guide; Sobol, eFAST, Morris, DGSM,
+  PAWN, the polynomial chaos expansion and the Shapley values are implemented on NumPy, the models are scikit-learn's.
+
 ## Verification
 
-`5_SELF_TEST.bat` solves **115 problems with known solutions** (73 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **117 problems with known solutions** (75 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
@@ -723,16 +686,16 @@ reference values. A selection:
 | Homogeneous slab in openEMS | exact slab transmission | within 0.001 dB |
 | Cylindrical pore | Poiseuille; Λ = Λ′ = r | passed |
 | Sobol indices of the Ishigami function | closed form | passed |
+| Sensitivity analysis of y = 2x₁ + 4(x₂ − 0.5)² + 6x₁x₃ with a dummy x₄ (40 runs, 25 measures) | x₁ first, the dummy last with S_T 0; x₁ × x₃ the interaction | order x₁, x₃, x₂, x₄; S_T 0.737 / 0.028 / 0.314 / 0.0; x₁ × x₃ by 4 of 5 measures |
+| Results drawn on the finite-element mesh (365,000 tetrahedra) | the six RVE faces covered exactly; the potential 0 and 1 on the faces, also across the periodic boundary | 100.05 % covered; 0.981 and −0.011 |
 | FANS elasticity against PuMA (corrected) | same discretisation | 3.5e-9 |
 | Dilute rigid sphere in a viscous liquid | Einstein [η] = 2.5 | within 15 % (voxelised sphere) |
-| Thermal stress of a through via (axisymmetric FEM) | concentric cylinders (Lamé); FEniCSx (DOLFINx) | 0.31 %; 16 values within 0.32 % |
 | Particle dynamics, frictionless spheres at 50 vol% | Krieger–Dougherty with random close packing, 11.4 | 12.6 (200 spheres, strain 2) |
 | Particle dynamics of cubes (rigid multi-sphere particles) | dissipated power = shear stress × rate | within 0.1 % |
 | Anisotropic conduction: rotated tensor; tilted anisotropic laminate | exact; laminate formula | 2e-15; 2.6 % at 16 cells per layer (first order) |
 | Maximum packing of bidisperse spheres | Farr–Groot simulations, 27 cases | within 0.011 |
 | Impermeable sphere, moisture diffusion | Maxwell 2/(2+φ) | within 2 % |
 | Calibration of R_int and filler k from two particle sizes | known values 2e-7 m²K/W, 2.0 W/m·K | 2.0e-7, 2.01 |
-| Through via: plated wall around a fill | DC limit; a solid wire's Bessel formula; surface resistance; two wires' capacitance | 7e-15; exact; 0.33 % at 40 GHz; exact |
 | Electrical contact resistance on a plane of contact faces | series resistance | exact |
 | Calibration of a bound resin layer from a viscosity (particle dynamics) | known value 10 nm | 10.6 nm (95 % 8.8–12.5) |
 | Blends: two sphere sizes at 55 vol%, cubes with flakes at 45 vol% | no voxel inside two particles | 0 shared voxels, none trimmed |
@@ -757,7 +720,7 @@ reference values. A selection:
 | A run stopped while it waits at the memory gate | the queue keeps answering (a killed waiter hangs a multiprocessing Event) | passed; the gate is a non-blocking flag |
 | Stopped run started again; run folder copied elsewhere; run folder ZIP | its structure reused; listed after a server restart; imported with its 3D view | passed |
 | Progressive overlap: equal spheres at 66 vol% (above random close packing) | content reached, overlap bounded by the voxels allowed | 65.96 % with ≤ 2 voxels, 2.7 % of the particle voxels shared (without: 61.3 % at the size entered) |
-| Cu spheres that may overlap with SiO₂ spheres that may not (Cu 45 + SiO₂ 10, Cu 40 + SiO₂ 20 vol%) | both loadings reached, Cu overlapping in both routes | 44.82 + 9.96 %, 39.86 + 20.00 % |
+| Spheres that may overlap beside spheres that may not (45 + 10 and 40 + 20 vol%) | both loadings reached, the first phase overlapping in both routes | 44.82 + 9.96 %, 39.86 + 20.00 % |
 | Irregular grains (3 µm, log-normal) at 60 vol% by the clump relaxation, 256³ | the loading reached, no particle shrunk (5.8.0: locked, 40.6 %) | 59.53 %, sizes within 0.3 % of the input |
 | Platelets 1:1:0.25 at 50 vol% with a share of overlap below what they need | the loading at the sizes entered (5.8.0: 42.95 %, every size 5 % small) | 49.30 %, sizes exact, the share reported |
 | Fibres of a fixed 1 µm diameter, length log-normal, by the clump relaxation | the diameter entered (5.8.0: 0.984 µm) | 1.00004 µm |
@@ -792,26 +755,24 @@ Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the 
 |---|---|---|---|---|
 | Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement) | Conductivity of Cu + diamond 50 vol% | [4] | 640 W/m·K | the paper's interface conductance 36–56 MW/m²K gives 749–777 W/m·K (+17 to +21 %); 12.5 MW/m²K reproduces the measurement (646) |
 | FEM · AlSiC, SiC 63 vol%: bonded contacts fitted to the measured expansion | Expansion of AlSiC with bonded contacts between the SiC | [3] | 8.21 ppm/K | 9.23 / 9.15 / 8.86 / 8.20 ppm/K for a neck of 0 / 0.3 / 0.45 / 0.6: a neck of 0.6 reproduces the measurement |
-| Calibration · Cu via paste 85 wt% (40 vol%), and on 12 diameters | Resistivity of a Cu paste cured at ≥ 130 °C and at 80–100 °C | [7] | 5×10⁻⁵ and 8×10⁻⁴ Ω·cm | R_c,e ≤ 2.2×10⁻¹⁴ Ω·m² (the necked network alone conducts 2.46 MS/m) and 1.08×10⁻¹² Ω·m² (192³) |
 
 *Published and exact solutions* (the presets with one particle per box are one cell of a periodic array: Domain → Periodic array)
 
 | Preset | Quantity | Ref. | Solution | MPSim |
 |---|---|---|---|---|
-| Benchmark · Rayleigh's simple cubic array of spheres (conduction) | Conductivity of a simple cubic array of spheres (15.5 vol%, 100 : 1) | [8] | 1.5324 (Rayleigh's printed coefficient 1.65: 1.5337) | FEM 1.5347 (+0.15 %); FV 1.5394 (+0.46 %) |
-| Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance (DOE) | Conductivity of dilute spheres with an interfacial resistance (5 vol%, 20 : 1) | [9] | 1.1355 / 1.0325 / 0.9976 (α 0 / 0.5 / 1) | 1.1363 / 1.0311 / 0.9960 (max 0.16 %) |
-| Benchmark · Maxwell Garnett: permittivity of dilute spheres | Permittivity of dilute spheres (5 vol%, ε 100 in 3) | [10] | 3.4320 | 3.4355 (+0.10 %) |
-| Benchmark · Einstein: viscosity of a dilute rigid sphere | Viscosity of a dilute rigid sphere (1.9 vol%) | [11] | 1.0485 ([η] 2.5) | 1.0501 ([η] 2.59, +3.44 %) |
-| Benchmark · particle dynamics against Krieger–Dougherty (frictionless spheres, 50 vol%) | Viscosity of frictionless spheres, 40 / 50 / 55 vol% | [12] | 4.80 / 11.38 / 23.07 (φ_m 0.64) | 5.70 / 11.77 / 18.55 |
-| Benchmark · Trouton: compression of a resin alone | Compression of a resin alone, sides free (axial stress) | [13] | 3ηε̇ = 3 Pa | 3 Pa (exact) |
+| Benchmark · Rayleigh's simple cubic array of spheres (conduction) | Conductivity of a simple cubic array of spheres (15.5 vol%, 100 : 1) | [7] | 1.5324 (Rayleigh's printed coefficient 1.65: 1.5337) | FEM 1.5347 (+0.15 %); FV 1.5394 (+0.46 %) |
+| Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance (DOE) | Conductivity of dilute spheres with an interfacial resistance (5 vol%, 20 : 1) | [8] | 1.1355 / 1.0325 / 0.9976 (α 0 / 0.5 / 1) | 1.1363 / 1.0311 / 0.9960 (max 0.16 %) |
+| Benchmark · Maxwell Garnett: permittivity of dilute spheres | Permittivity of dilute spheres (5 vol%, ε 100 in 3) | [9] | 3.4320 | 3.4355 (+0.10 %) |
+| Benchmark · Einstein: viscosity of a dilute rigid sphere | Viscosity of a dilute rigid sphere (1.9 vol%) | [10] | 1.0485 ([η] 2.5) | 1.0501 ([η] 2.59, +3.44 %) |
+| Benchmark · particle dynamics against Krieger–Dougherty (frictionless spheres, 50 vol%) | Viscosity of frictionless spheres, 40 / 50 / 55 vol% | [11] | 4.80 / 11.38 / 23.07 (φ_m 0.64) | 5.70 / 11.77 / 18.55 |
+| Benchmark · Trouton: compression of a resin alone | Compression of a resin alone, sides free (axial stress) | [12] | 3ηε̇ = 3 Pa | 3 Pa (exact) |
 | Benchmark · two layers: series and parallel (exact) | Two equal layers, across and along (k, ε_r) | exact | k 0.39735 / 15.1; ε 5.57956 / 6.85 | k 0.39735 / 15.1; ε 5.57956 / 6.85 (exact) |
-| Benchmark · Poiseuille: a straight cylindrical pore (flow, tortuosity, acoustic lengths) | Straight cylindrical pore, r 16 µm: permeability, tortuosity, Λ, Λ′ | [14] | K φr²/8 = 4.060e-12 m²; τ 1; Λ = Λ′ = 16 µm | K 3.914e-12 (-3.60 %); τ 1.0000; Λ 15.85, Λ′ 15.85 µm |
-| Benchmark · Maxwell: moisture diffusion around impermeable spheres | Moisture diffusivity around impermeable spheres (5 vol%) | [15] | D*/D_m = 2/(2+φ) = 0.9756 | 0.9726 (-0.31 %) |
-| PCB thermal vias · FR-4 with Cu-plated vias; Glass core substrate · Cu-filled TGVs | Conductivity through and along a laminate with straight Cu vias | exact | parallel paths 9.2851 and 36.0295 W/m·K; in the plane 0.847 and 1.31 (Maxwell, parallel cylinders) | 9.2851 and 36.0295 (to the fourth decimal); 0.848 and 1.32 |
-| Glass-core TGV · conformal Cu wall (and every via with its thermal stress) | Radial stress of the glass at the via wall, half way along the via | exact | concentric cylinders in generalized plane strain (Lamé) | 0.067 % (every via-stress run reports its deviation) |
-| Die-attach solder · SAC305 with 15 % voids | Conductivity of solder with 15 % insulating voids | [15] | below 2(1 − φ)/(2 + φ) = 79.1 % of the dense value (Maxwell's bound for insulating spheres) | 76.9 % |
+| Benchmark · Poiseuille: a straight cylindrical pore (flow, tortuosity, acoustic lengths) | Straight cylindrical pore, r 16 µm: permeability, tortuosity, Λ, Λ′ | [13] | K φr²/8 = 4.060e-12 m²; τ 1; Λ = Λ′ = 16 µm | K 3.914e-12 (-3.60 %); τ 1.0000; Λ 15.85, Λ′ 15.85 µm |
+| Benchmark · Maxwell: moisture diffusion around impermeable spheres | Moisture diffusivity around impermeable spheres (5 vol%) | [14] | D*/D_m = 2/(2+φ) = 0.9756 | 0.9726 (-0.31 %) |
+| PCB thermal vias · FR-4 with Cu-plated vias | Conductivity through and along a laminate with straight Cu vias | exact | parallel paths 9.2851 W/m·K; in the plane 0.847 (Maxwell, parallel cylinders) | 9.2851 (to the fourth decimal); 0.848 |
+| Die-attach solder · SAC305 with 15 % voids | Conductivity of solder with 15 % insulating voids | [14] | below 2(1 − φ)/(2 + φ) = 79.1 % of the dense value (Maxwell's bound for insulating spheres) | 76.9 % |
 
-*In the self-test only* (a test function, a two-layer strip, a single plate, a second code): Maximum packing of bidisperse spheres (the φ_m of the viscosity models) [16] - within 0.011; Sobol indices of the Ishigami function (DOE sensitivity) [17] - passed; Curvature of a bimetal strip (thermal stress and warpage) [18] - −20.002 1/m; Exact two-phase relation between stiffness and expansion (Levin, 1967; no DOI) - 5×10⁻⁷; Moisture uptake of a plate (Crank's series) - within 2×10⁻³; A homogeneous slab in openEMS against the exact slab transmission - within 0.001 dB; The tetrahedral FEM against FEniCSx (DOLFINx 0.11) on the same mesh: a second code, not a literature value - the same to 12 digits.
+*In the self-test only* (a test function, a two-layer strip, a single plate, a second code): Maximum packing of bidisperse spheres (the φ_m of the viscosity models) [15] - within 0.011; Sobol indices of the Ishigami function (DOE sensitivity) [16] - passed; Curvature of a bimetal strip (thermal stress and warpage) [17] - −20.002 1/m; Exact two-phase relation between stiffness and expansion (Levin, 1967; no DOI) - 5×10⁻⁷; Moisture uptake of a plate (Crank's series) - within 2×10⁻³; A homogeneous slab in openEMS against the exact slab transmission - within 0.001 dB; The tetrahedral FEM against FEniCSx (DOLFINx 0.11) on the same mesh: a second code, not a literature value - the same to 12 digits.
 
 1. J. C. Smith, “Experimental values for the elastic constants of a particulate-filled glassy polymer”, *J. Res. Natl. Bur. Stand. A* **80A** (1), 45 (1976). [doi:10.6028/jres.080A.008](https://doi.org/10.6028/jres.080A.008) — table 2.
 2. F. Boyer, É. Guazzelli, O. Pouliquen, “Unifying suspension and granular rheology”, *Phys. Rev. Lett.* **107** (18), 188301 (2011). [doi:10.1103/PhysRevLett.107.188301](https://doi.org/10.1103/PhysRevLett.107.188301) — eq. (8), μ_1 0.32, μ_2 0.7, I_0 0.005, φ_m 0.585.
@@ -819,18 +780,17 @@ Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the 
 4. Q. Wang, Z. Ye, L. Liu, J. Bai, Y. Zhao, Q. Hu, H. Liu, L. Hu, X. Guo, Y. Xiao, W. Cao, Z. Yang, “High thermal conductivity diamond–copper composites prepared via hot pressing with tungsten-coated interfacial layer optimization”, *Materials* **18** (16), 3882 (2025). [doi:10.3390/ma18163882](https://doi.org/10.3390/ma18163882).
 5. K. P. Murali, S. Rajesh, O. Prakash, A. R. Kulkarni, R. Ratheesh, “Preparation and properties of silica filled PTFE flexible laminates for microwave circuit applications”, *Composites Part A* **40** (8), 1179–1185 (2009). [doi:10.1016/j.compositesa.2009.05.007](https://doi.org/10.1016/j.compositesa.2009.05.007).
 6. Y. Sugawa, K. Ishidate, M. Sonehara, T. Sato, “Carbonyl-iron/epoxy composite magnetic core for planar power inductor used in package-level power grid”, *IEEE Trans. Magn.* **49** (7), 4172–4175 (2013). [doi:10.1109/TMAG.2013.2250925](https://doi.org/10.1109/TMAG.2013.2250925).
-7. K. Kawarai, M. Inoue, “Influence of curing temperature to electrical reliability of a phenolic-based adhesive containing copper particles treated with an aliphatic polyamine”, *Journal of Smart Processing* **7** (5), 199–206 (2018). [doi:10.7791/jspmee.7.199](https://doi.org/10.7791/jspmee.7.199).
-8. Lord Rayleigh, “On the influence of obstacles arranged in rectangular order upon the properties of a medium”, *Philos. Mag.* **34** (211), 481–502 (1892). [doi:10.1080/14786449208620364](https://doi.org/10.1080/14786449208620364).
-9. D. P. H. Hasselman, L. F. Johnson, “Effective thermal conductivity of composites with interfacial thermal barrier resistance”, *J. Compos. Mater.* **21** (6), 508–515 (1987). [doi:10.1177/002199838702100602](https://doi.org/10.1177/002199838702100602).
-10. J. C. Maxwell Garnett, “Colours in metal glasses and in metallic films”, *Philos. Trans. R. Soc. Lond. A* **203**, 385–420 (1904). [doi:10.1098/rsta.1904.0024](https://doi.org/10.1098/rsta.1904.0024).
-11. A. Einstein, “Eine neue Bestimmung der Moleküldimensionen”, *Ann. Phys.* **324** (2), 289–306 (1906), [doi:10.1002/andp.19063240204](https://doi.org/10.1002/andp.19063240204); correction: *Ann. Phys.* **339** (3), 591–592 (1911), [doi:10.1002/andp.19113390313](https://doi.org/10.1002/andp.19113390313).
-12. I. M. Krieger, T. J. Dougherty, “A mechanism for non-Newtonian flow in suspensions of rigid spheres”, *Trans. Soc. Rheol.* **3** (1), 137–152 (1959). [doi:10.1122/1.548848](https://doi.org/10.1122/1.548848).
-13. F. T. Trouton, “On the coefficient of viscous traction and its relation to that of viscosity”, *Proc. R. Soc. Lond. A* **77** (519), 426–440 (1906). [doi:10.1098/rspa.1906.0038](https://doi.org/10.1098/rspa.1906.0038).
-14. D. L. Johnson, J. Koplik, R. Dashen, “Theory of dynamic permeability and tortuosity in fluid-saturated porous media”, *J. Fluid Mech.* **176**, 379–402 (1987). [doi:10.1017/S0022112087000727](https://doi.org/10.1017/S0022112087000727).
-15. J. C. Maxwell, *A Treatise on Electricity and Magnetism*, Vol. 1, Clarendon Press, Oxford (1873), art. 314 (a book; no DOI).
-16. R. S. Farr, R. D. Groot, “Close packing density of polydisperse hard spheres”, *J. Chem. Phys.* **131** (24), 244104 (2009). [doi:10.1063/1.3276799](https://doi.org/10.1063/1.3276799).
-17. T. Ishigami, T. Homma, “An importance quantification technique in uncertainty analysis for computer models”, *Proc. First Int. Symp. on Uncertainty Modeling and Analysis*, 398–403 (1990). [doi:10.1109/ISUMA.1990.151285](https://doi.org/10.1109/ISUMA.1990.151285).
-18. S. Timoshenko, “Analysis of bi-metal thermostats”, *J. Opt. Soc. Am.* **11** (3), 233 (1925). [doi:10.1364/JOSA.11.000233](https://doi.org/10.1364/JOSA.11.000233).
+7. Lord Rayleigh, “On the influence of obstacles arranged in rectangular order upon the properties of a medium”, *Philos. Mag.* **34** (211), 481–502 (1892). [doi:10.1080/14786449208620364](https://doi.org/10.1080/14786449208620364).
+8. D. P. H. Hasselman, L. F. Johnson, “Effective thermal conductivity of composites with interfacial thermal barrier resistance”, *J. Compos. Mater.* **21** (6), 508–515 (1987). [doi:10.1177/002199838702100602](https://doi.org/10.1177/002199838702100602).
+9. J. C. Maxwell Garnett, “Colours in metal glasses and in metallic films”, *Philos. Trans. R. Soc. Lond. A* **203**, 385–420 (1904). [doi:10.1098/rsta.1904.0024](https://doi.org/10.1098/rsta.1904.0024).
+10. A. Einstein, “Eine neue Bestimmung der Moleküldimensionen”, *Ann. Phys.* **324** (2), 289–306 (1906), [doi:10.1002/andp.19063240204](https://doi.org/10.1002/andp.19063240204); correction: *Ann. Phys.* **339** (3), 591–592 (1911), [doi:10.1002/andp.19113390313](https://doi.org/10.1002/andp.19113390313).
+11. I. M. Krieger, T. J. Dougherty, “A mechanism for non-Newtonian flow in suspensions of rigid spheres”, *Trans. Soc. Rheol.* **3** (1), 137–152 (1959). [doi:10.1122/1.548848](https://doi.org/10.1122/1.548848).
+12. F. T. Trouton, “On the coefficient of viscous traction and its relation to that of viscosity”, *Proc. R. Soc. Lond. A* **77** (519), 426–440 (1906). [doi:10.1098/rspa.1906.0038](https://doi.org/10.1098/rspa.1906.0038).
+13. D. L. Johnson, J. Koplik, R. Dashen, “Theory of dynamic permeability and tortuosity in fluid-saturated porous media”, *J. Fluid Mech.* **176**, 379–402 (1987). [doi:10.1017/S0022112087000727](https://doi.org/10.1017/S0022112087000727).
+14. J. C. Maxwell, *A Treatise on Electricity and Magnetism*, Vol. 1, Clarendon Press, Oxford (1873), art. 314 (a book; no DOI).
+15. R. S. Farr, R. D. Groot, “Close packing density of polydisperse hard spheres”, *J. Chem. Phys.* **131** (24), 244104 (2009). [doi:10.1063/1.3276799](https://doi.org/10.1063/1.3276799).
+16. T. Ishigami, T. Homma, “An importance quantification technique in uncertainty analysis for computer models”, *Proc. First Int. Symp. on Uncertainty Modeling and Analysis*, 398–403 (1990). [doi:10.1109/ISUMA.1990.151285](https://doi.org/10.1109/ISUMA.1990.151285).
+17. S. Timoshenko, “Analysis of bi-metal thermostats”, *J. Opt. Soc. Am.* **11** (3), 233 (1925). [doi:10.1364/JOSA.11.000233](https://doi.org/10.1364/JOSA.11.000233).
 
 **RVE size.** The 7× and 10× criteria were determined from repeated runs on independent random structures, evaluated
 with the statistical method of Kanit et al. (2003). The random scatter of one realisation (95 % interval) was ±0.12 % /
@@ -976,9 +936,10 @@ app/
     morphology.py, poro.py, percolation.py, grains.py, filtration.py, acoustics.py, streamlines.py
     analytical.py        rigorous bounds and mean-field models
     doe.py, optimise.py, calibrate.py, links.py        studies, surrogate models, calibration, linked inputs
-    visual.py, report.py viewer data, publication figures, HTML report
+    sensitivity.py       sensitivity analysis of a study: 25 measures, interactions, consensus
+    visual.py, tetview.py, report.py   viewer data (voxels, surfaces, finite elements), figures, HTML report
     pipeline.py          one run end to end
-    data/                materials.json (68 materials), presets.json (74 presets)
+    data/                materials.json (68 materials), presets.json (62 presets)
   web/                   Flask server, job queue, workspace UI (vtk.js)
   run_web.py, run_cli.py, selftest.py
 docs/images/             the README images (the user guides are attached to the releases)

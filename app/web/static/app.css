@@ -504,3 +504,47 @@ table.grid.doetab td .bar{min-width:0}
 .vregion { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: 78%; z-index: 6;
   background: rgba(255, 244, 229, .96); border: 1px solid #e0a200; color: #7a4100; font-size: 12px; line-height: 1.4;
   padding: 5px 11px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0, 0, 0, .12); pointer-events: none; text-align: center; }
+
+/* Sensitivity Analysis (5.11.0): figure cards in the manner of a journal figure */
+.sabody{background:#f7f7f4}
+.sagrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:14px;align-items:start}
+.sacard{padding:12px 14px 10px}
+.sacard.wide{grid-column:1/-1}
+.sacard>.bt{font-size:13px;flex-wrap:wrap;row-gap:2px}
+.sacard>.bt .hint{font-weight:400;font-size:11.3px}
+.sacard .plet{font:700 15px Arial,Helvetica,sans-serif;color:#0b0b0b;margin-right:2px}
+.sacard .safig{margin:4px 0 2px}
+.sacard .safig svg text{user-select:none}
+.sacard .safig [data-tip]{cursor:crosshair}
+.sacard .sahow{font-size:11.5px;color:#52514e;line-height:1.45;border-top:1px solid #ecebe5;padding-top:6px;margin-top:4px}
+.sacard .tablewrap{max-height:none}
+.sahead{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;font-size:14px}
+.sahead .hint{font-size:12px}
+.safind{margin-bottom:14px}
+.safind ul{list-style:none;margin:2px 0 0;padding:0;columns:2 420px;column-gap:28px}
+.safind li{display:flex;gap:8px;font-size:12.3px;line-height:1.45;margin:0 0 6px;break-inside:avoid}
+.safind li i{font-style:normal;flex:0 0 16px;text-align:center;color:#0050f0;font-weight:700}
+.safind li.saf-lead i{color:#ff8c00}.safind li.saf-interaction i{color:#f02000}.safind li.saf-weak i{color:#898781}
+.big .tile .v.txt{font:600 14px var(--font);white-space:normal;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.tiles .tile .v.txt{font:600 12.5px var(--font);white-space:normal;line-height:1.25}
+.empty .btn svg{width:14px;height:14px}
+.satip{position:fixed;z-index:9999;max-width:360px;background:#1b1b1b;color:#fff;font:11.5px/1.45 Arial,Helvetica,sans-serif;padding:6px 9px;border-radius:5px;white-space:pre-line;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.sadot{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 5px 0 1px;vertical-align:-1px;flex:none}
+.safam{display:flex;gap:6px;align-items:flex-start;margin:4px 0;font-size:11.8px}
+.safam .sadot{margin-top:4px}
+.sarank{display:flex;align-items:center;gap:4px;font-size:12px;margin:3px 0}
+.sarank b{width:16px;color:var(--ink2)}.sarank span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sarank em{font:600 11px var(--mono);font-style:normal}
+.saspin{width:34px;height:34px;border:3px solid #dcdad3;border-top-color:#0050f0;border-radius:50%;animation:saspin 0.9s linear infinite}
+@keyframes saspin{to{transform:rotate(360deg)}}
+#c-sa .vtoolbar{flex-wrap:wrap;row-gap:4px}
+#saView button{padding:0 9px;font-size:11.5px}
+/* the phases of the 3D view, one row each: shown, colour, name, opacity, solo (5.11.0) */
+.phrow{display:grid;grid-template-columns:16px 12px minmax(0,1fr) 34px;grid-template-areas:"c s n b" ". . r e";align-items:center;column-gap:5px;row-gap:1px;font-size:12px;margin:4px 0 6px}
+.phrow>input[type=checkbox]{grid-area:c}.phrow>i{grid-area:s}.phrow>span{grid-area:n}.phrow>button{grid-area:b}.phrow>input[type=range]{grid-area:r}.phrow>em{grid-area:e}
+.phrow i{width:12px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,.2);display:inline-block}
+.phrow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.phrow input[type=range]{width:100%;margin:0}
+.phrow em{font:11px var(--mono);font-style:normal;color:var(--ink2);text-align:right}
+.phrow.off span,.phrow.off em{color:var(--muted);text-decoration:line-through}
+.phrow.solo span{font-weight:700}
+.phrow .btn.xs.on{background:var(--accent);color:#fff;border-color:var(--accent)}

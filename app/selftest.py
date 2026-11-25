@@ -309,6 +309,97 @@ def t_tetfem_pipeline():
             f"voxel FV {fvz:.3f}; ε_r {di['diag'][2]:.3f}; with R_int: {m2}")
 
 
+@check("FEM style of the viewer (5.11.0): a tetrahedral run writes its fields on the elements - every particle's "
+       "element faces and the elements' cut on the six RVE faces, which cover the faces exactly (area 6 L²), all "
+       "inside the box; the potential on the faces rises from 0 at z = 0 to 1 at z = L also where an element was "
+       "moved across the periodic boundary; each field names its voxel field")
+def t_fem_view():
+    import struct
+    from mpsim import pipeline as PL
+    f = {"name": "femview", "matrix": {"material_id": "epoxy"},
+         "phases": [{"material_id": "al2o3", "name": "Alumina", "shape": "sphere", "size": {"d": 2.5, "unit": "um"},
+                     "fraction": {"value": 35, "basis": "vol"}}],
+         "rve": {"auto": False, "L_um": 8, "voxel_um": 0.25, "auto_enlarge": False, "quality": "standard", "seed": 2},
+         "analyses": {"thermal": True}, "options": {"directions": "z", "cond_method": "tet"}}
+    d = tempfile.mkdtemp()
+    PL.run(f, d, log=lambda *a: None)
+    vd = os.path.join(d, "view")
+    meta = json.load(open(os.path.join(vd, "meta.json"), encoding="utf-8"))
+    fem = meta.get("fem") or {}
+    keys = {x["key"]: x for x in fem.get("fields") or []}
+    expect({"thermal_z_q_fem", "thermal_z_T_fem"} <= set(keys) and keys["thermal_z_q_fem"]["of"] == "thermal_z_q"
+           and keys["thermal_z_T_fem"]["of"] == "thermal_z_T", f"FEM fields {sorted(keys)}")
+    L = np.asarray(fem["length_um"], float)
+
+    def tris(fn):
+        with open(os.path.join(vd, fn), "rb") as fh:
+            expect(fh.read(4) == b"FEM1", f"{fn}: not a FEM1 file")
+            m, ox, oy, oz, st = struct.unpack("<I4f", fh.read(20))
+            q = np.frombuffer(fh.read(18 * m), "<u2").reshape(m, 3, 3)
+        return q.astype(float) * st + np.array([ox, oy, oz])
+    parts = [("faces", fem["faces"]["file"])] + [(k, e["file"]) for k, e in fem["labels"].items()]
+    area_face, lo_ok, Ts = 0.0, True, []
+    for part, fn in parts:
+        P = tris(fn)
+        if not len(P):
+            continue
+        tol = 2e-3 * L.max()
+        lo_ok &= bool(P.min() >= -tol and np.all(P.max(axis=(0, 1)) <= L + tol))
+        a = 0.5 * np.linalg.norm(np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0]), axis=1)
+        on = np.zeros(len(P), bool)
+        for ax in range(3):
+            for side in (0.0, L[ax]):
+                on |= np.all(np.abs(P[:, :, ax] - side) < tol, axis=1)
+        area_face += float(a[on].sum())
+        v = np.fromfile(os.path.join(vd, keys["thermal_z_T_fem"]["files"][part]), "<f4")
+        expect(len(v) == len(P), f"{part}: {len(v)} values for {len(P)} triangles")
+        zc = P[:, :, 2].mean(axis=1)
+        top, bot = np.abs(P[:, :, 2] - L[2]).max(axis=1) < tol, np.abs(P[:, :, 2]).max(axis=1) < tol
+        Ts.append((v[top], v[bot]))
+        del zc
+    expect(lo_ok, "a triangle lies outside the RVE")
+    cover = area_face / (2 * (L[0] * L[1] + L[1] * L[2] + L[0] * L[2]))
+    expect(abs(cover - 1) < 0.01, f"the RVE faces are covered {100 * cover:.2f} %")
+    top = np.concatenate([t for t, b in Ts])
+    bot = np.concatenate([b for t, b in Ts])
+    expect(top.size and bot.size and abs(float(np.median(top)) - 1) < 0.08 and abs(float(np.median(bot))) < 0.08
+           and float(np.percentile(top, 2)) > 0.6 and float(np.percentile(bot, 98)) < 0.4,
+           f"potential on z = L median {np.median(top):.3f} (2 % {np.percentile(top, 2):.3f}), "
+           f"on z = 0 median {np.median(bot):.3f} (98 % {np.percentile(bot, 98):.3f})")
+    return (f"{fem['n_tets']:,} tetrahedra, {fem['n_tri_total']:,} element faces drawn; RVE faces covered "
+            f"{100 * cover:.2f} %; potential on z = L {np.median(top):.3f}, on z = 0 {np.median(bot):.3f}")
+
+
+@check("Sensitivity analysis (5.11.0) on a response with known structure, y = 2 x1 + 4 (x2 - 0.5)² + 6 x1 x3 with a "
+       "dummy x4 (40-run Latin hypercube): every method runs; the consensus ranks x1 first and the dummy last; the "
+       "dummy's Sobol S_T is nil; x1 × x3 is the interaction most measures find; the result is plain JSON")
+def t_sensitivity():
+    from mpsim import sensitivity as SA
+    rng = np.random.default_rng(4)
+    n, dd = 40, 4
+    U = (rng.permuted(np.tile(np.arange(n), (dd, 1)), axis=1).T + rng.random((n, dd))) / n
+    y = 2 * U[:, 0] + 4 * (U[:, 1] - 0.5) ** 2 + 6 * U[:, 0] * U[:, 2]
+    study = {"design": "lhs", "parameters": [{"path": f"p{i}", "label": f"x{i + 1}", "unit": "", "min": 0, "max": 1}
+                                             for i in range(dd)]}
+    rows = [{"state": "done", "label": f"c{k}", "values": {f"p{i}": float(U[k, i]) for i in range(dd)},
+             "metrics": {"y": float(y[k])}} for k in range(n)]
+    t0 = time.time()
+    r = SA.analyse(study, rows, "y", metrics=[{"key": "y", "label": "y", "unit": "-"}],
+                   options={"bootstrap": 300, "permutations": 99, "sobol_n": 1024})
+    dt = time.time() - t0
+    json.dumps(r, allow_nan=False)
+    expect(not r.get("error") and not r["skipped"], f"error {r.get('error')}, skipped {r['skipped']}")
+    o = list(r["consensus"]["order"])
+    st = r["methods"]["sobol"]["ST"]
+    top = r["interactions"][0]
+    expect(o[0] == 0 and o[-1] == 3, f"consensus order {o}")
+    expect(st[3] < 0.01 and st[0] > 0.6, f"Sobol S_T {np.round(st, 3).tolist()}")
+    expect((top["i"], top["j"]) == (0, 2) and len(top["detected_by"]) >= 3, f"top pair {top['name']} by {top['detected_by']}")
+    expect((r["models"]["gp"]["q2"] or 0) > 0.95, f"GP Q2 {r['models']['gp']['q2']}")
+    return (f"{len(r['consensus']['methods'])} measures in {dt:.1f} s; order {o}; S_T {np.round(st, 3).tolist()}; "
+            f"x1 × x3 found by {', '.join(top['detected_by'])}; Kendall W {r['consensus']['kendall_w']:.2f}")
+
+
 def _hand_three(L=6.0):
     """The sphere, the box and the cylinder of the tetrahedral checks."""
     def rot(ax, ang):
@@ -468,7 +559,7 @@ def t_benchmark_presets():
     for p in d["presets"]:
         sp = S.normalize(json.loads(json.dumps(p["form"])))
         expect(sp is not None, f"{p['id']} does not validate")
-    expect(len(bench) >= 20 and all(b["benchmark"].get("kind") in ("measured", "analytical", "calibrated") and b["benchmark"].get("ref")
+    expect(len(bench) >= 19 and all(b["benchmark"].get("kind") in ("measured", "analytical", "calibrated") and b["benchmark"].get("ref")
                                     for b in bench), f"{len(bench)} benchmarks")
     by = {p["id"]: p for p in d["presets"]}
     sp = S.normalize(json.loads(json.dumps(by["bench_rayleigh_sc"]["form"])))

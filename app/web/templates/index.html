@@ -29,9 +29,10 @@
       <button data-tab="domain">Domain</button>
       <button data-tab="analysis">Structure Analysis</button>
       <button data-tab="simulation">Simulation</button>
-      <button data-tab="doe">DOE</button>
-      <button data-tab="optimization">Optimization</button>
       <button data-tab="calibration">Calibration</button>
+      <button data-tab="doe">DOE</button>
+      <button data-tab="sensitivity">Sensitivity Analysis</button>
+      <button data-tab="optimization">Optimization</button>
       <button data-tab="results">Results</button>
     </div>
     <div class="rbar" id="rbar"></div>
@@ -48,9 +49,10 @@
       <div class="ctabs" id="ctabs">
         <button data-c="vis" class="on"></button>
         <button data-c="res"></button>
-        <button data-c="doe"></button>
-        <button data-c="opt"></button>
         <button data-c="cal"></button>
+        <button data-c="doe"></button>
+        <button data-c="sa"></button>
+        <button data-c="opt"></button>
         <button data-c="rep"></button>
         {% if ai %}<button data-c="ai"></button>{% endif %}
         <div class="grow"></div>
@@ -125,6 +127,20 @@
         <div class="doebody" id="doeBody"></div>
       </section>
 
+      <section class="cpage" id="c-sa">
+        <div class="vtoolbar">
+          <div class="seg" id="saView"></div>
+          <select id="saSel" title="DOE study"></select>
+          <select id="saResp" title="Response analysed"></select>
+          <button class="btn sm primary" id="saRun"></button>
+          <select id="saCmap" title="Colour map of the heat maps and the colour by value">
+            <option value="jet">Jet</option><option value="turbo">Turbo</option><option value="viridis">Viridis</option><option value="blues">Blues</option>
+          </select>
+          <span class="hint" id="saInfo"></span>
+        </div>
+        <div class="doebody sabody" id="saBody"></div>
+      </section>
+
       <section class="cpage" id="c-opt">
         <div class="vtoolbar">
           <!-- building a model you can trust and using it to search are two
@@ -176,13 +192,15 @@
         <div class="sec"><div class="sh" id="hScene"></div><div class="sb">
           <label class="chk"><span class="switch"><input type="checkbox" id="vFaces"><span></span></span> Field on the RVE faces</label>
           <label class="chk"><span class="switch"><input type="checkbox" id="vParticles" checked><span></span></span> Particle and pore surfaces</label>
-          <div class="seg sm" id="vSurfStyle" title="How particles and pores are drawn"><button data-style="voxels" class="on">Voxels</button><button data-style="smooth">Smooth</button></div>
-          <div class="hint" id="vSurfStyleHint">Voxels (default): every voxel the solver used (GPU volume rendering), each in the colour of its own value - the whole RVE at any size; crisp draws every voxel face flat at the full screen resolution, unticked the faces are shaded softly from the smoothed gradient. Smooth: a surface per particle, smoothed within a voxel of the voxel boundary; an RVE with more particles than the browser can draw so is shown as a corner region.</div>
+          <div class="seg sm" id="vSurfStyle" title="How particles and pores are drawn"><button data-style="voxels" class="on">Voxels</button><button data-style="smooth">Smooth</button><button data-style="fem" id="vStyleFem" title="The body-fitted tetrahedral mesh the run was solved on: every element face in the colour of its own element">FEM mesh</button></div>
+          <div class="hint" id="vSurfStyleHint">Voxels (default): every voxel the solver used (GPU volume rendering), each in the colour of its own value - the whole RVE at any size; crisp draws every voxel face flat at the full screen resolution, unticked the faces are shaded softly from the smoothed gradient. Smooth: a surface per particle, smoothed within a voxel of the voxel boundary; an RVE with more particles than the browser can draw so is shown as a corner region. FEM mesh (a run solved with finite elements on the body-fitted mesh): the particles' surfaces and the RVE faces as the elements themselves, each element in the colour of its own value; the section planes and 2D views stay on the voxels.</div>
+          <label class="chk" id="vFemEdgesRow"><input type="checkbox" id="vFemEdges"> Element edges (the mesh itself)</label>
           <label class="chk" id="vVoxCrispRow"><span class="switch"><input type="checkbox" id="vVoxCrisp" checked><span></span></span> Crisp voxels (flat faces, sharp edges)</label>
           <label class="chk" id="vVoxGridRow"><input type="checkbox" id="vVoxGrid"> Voxel grid lines (for a close look)</label>
           <div class="note warn" id="vRegionNote" hidden></div>
           <label class="chk"><span class="switch"><input type="checkbox" id="vColorParticles" checked><span></span></span> Colour surfaces by the field</label>
           <div class="slrow"><span class="hint" style="text-align:left">Opacity</span><input type="range" id="vOpacity" min="0.05" max="1" step="0.05" value="1"><span id="vOpacityV">1.00</span></div>
+          <div class="hint">Overall; each phase has its own under Phases.</div>
           <label class="chk" id="vVolumeRow"><span class="switch"><input type="checkbox" id="vVolume"><span></span></span> Volume rendering of the field</label>
           <label class="chk" id="vNetworkRow"><span class="switch"><input type="checkbox" id="vNetwork"><span></span></span> Pore network (balls and sticks)</label>
           <label class="chk"><span class="switch"><input type="checkbox" id="vOutline" checked><span></span></span> Bounding box</label>
@@ -190,6 +208,8 @@
           <label class="chk"><span class="switch"><input type="checkbox" id="vParallel"><span></span></span> Parallel projection</label>
           <div class="g2"><div><label class="f">Minimum</label><input type="number" step="any" id="vMin"></div><div><label class="f">Maximum</label><input type="number" step="any" id="vMax"></div></div>
         </div></div>
+        <!-- every phase on its own: shown or hidden, its opacity, alone (5.11.0) -->
+        <div class="sec"><div class="sh" id="hPhases"></div><div class="sb"><div id="vPhaseToggles"></div></div></div>
         <!-- the two new sections come after the scene controls rather than
              between them: splitting that section left the viewer showing two
              Scene-like blocks with unrelated ones wedged in the middle -->
@@ -204,7 +224,6 @@
           <label class="chk"><span class="switch"><input type="checkbox" id="vShade" checked><span></span></span> Shade the volume rendering</label>
           <label class="chk"><span class="switch"><input type="checkbox" id="vEdges"><span></span></span> Emphasise edges</label>
           <div class="hint">Higher diffuse and a little specular make the structure read as solid; ambient lifts the shadows.</div></div></div>
-        <div class="sec"><div class="sh" id="hPhases"></div><div class="sb"><div id="vPhaseToggles"></div></div></div>
         <div class="sec"><div class="sh" id="hSections"></div><div class="sb">
           <div class="hint">Section positions are shared by the 3D planes and the 2D views.</div>
           <div class="slrow"><label class="chk inline"><input type="checkbox" id="vShowX"> X</label><input type="range" id="vSx"><span id="vSxv"></span></div>
@@ -274,6 +293,7 @@
 <script src="/static/vendor/vtk.js"></script>
 <script src="/static/icons.js?v={{ version }}"></script>
 <script src="/static/charts.js?v={{ version }}"></script>
+<script src="/static/sa_charts.js?v={{ version }}"></script>
 <script src="/static/viewer.js?v={{ version }}"></script>
 <script src="/static/gif_rec.js?v={{ version }}"></script>
 <script src="/static/dem_player.js?v={{ version }}"></script>

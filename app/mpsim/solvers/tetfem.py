@@ -498,13 +498,16 @@ def supported(spec, ginfo, table):
 NO_NECKS = None
 
 
-def neck_pairs(ginfo, neck, Lg, gper):
+def neck_pairs(ginfo, neck, Lg, gper, law=None):
     """The bonded contacts of a structure: for every particle its partners and half the pair's bond width, as
     (pointers, partners, half widths), and the largest half width. Two particles are bonded where their surfaces
     are closer than the gap two touching spheres of their sizes have a distance neck x r_s from the contact,
     neck^2 r_s (r_s + r_b) / (2 r_b) (r: half the smallest dimension of a particle, s the smaller, b the larger) -
     a neck of radius neck x r_s where the two touch, smaller where a gap is left, none beyond that width.
-    The pairs listed are those whose bounding spheres come that close; the test of a point is exact."""
+    The pairs listed are those whose bounding spheres come that close; the test of a point is exact.
+    law (r_ref, p): a neck that depends on the size of the pair (sintering, 5.10.3): neck x (r_s / r_ref)^-p, at
+    most 0.9 - the neck growth laws of diffusion sintering, (x / r)^m ~ t / r^k (Kuczynski 1949), give p = k / m:
+    2/3 for grain-boundary diffusion (k 4, m 6), 4/7 for surface diffusion (4, 7), 3/5 for volume diffusion (3, 5)."""
     parts = ginfo["particles"]
     n = len(parts["codes"])
     if neck <= 0.0 or n < 2:
@@ -521,13 +524,19 @@ def neck_pairs(ginfo, neck, Lg, gper):
     rank = np.empty(n, np.int64)
     rank[order] = np.arange(n)
     ii, jj, hh = [], [], []
+    def nk_of(rs):
+        if not law:
+            return neck
+        return min(0.9, neck * (rs / float(law[0])) ** (-float(law[1])))
     for i in order:
-        wmax = neck * neck * rmin[i]                      # no pair with a smaller partner is wider than this
+        # no pair with a smaller partner is wider than this
+        wmax = (neck * neck if not law else 0.81) * rmin[i]
         for j in tree.query_ball_point(c[i], 2.0 * rc[i] + wmax):
             if rank[j] <= rank[i]:
                 continue
             rs, rb = (rmin[j], rmin[i]) if rmin[j] <= rmin[i] else (rmin[i], rmin[j])
-            w = neck * neck * rs * (rs + rb) / (2.0 * rb)
+            nx_ = nk_of(rs)
+            w = nx_ * nx_ * rs * (rs + rb) / (2.0 * rb)
             d = c[j] - c[i]
             d -= box * np.round(d / box)
             if float(np.sqrt((d * d).sum())) <= rc[i] + rc[j] + w:
@@ -578,7 +587,8 @@ def _neck_owners(owner, h, per, codes, centers, R, P, planes, nfaces, Lg, gper, 
     return changed
 
 
-def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, delta=DELTA, log=None, neck=0.0):
+def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, delta=DELTA, log=None, neck=0.0,
+               neck_law=None):
     """The body-fitted mesh of a generated structure on the lattice of its voxel corners.
 
     N, h, nz: the voxel grid (nz: a film's voxels in z). mat_of_phase[i]: the material label of generator phase
@@ -601,7 +611,7 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
     parts = ginfo["particles"]
     planes, nfaces = ginfo["planes"]
     Lg = np.array([N * h, N * h, nzv * h], float)
-    nk, grow = neck_pairs(ginfo, float(neck), Lg, gper)
+    nk, grow = neck_pairs(ginfo, float(neck), Lg, gper, neck_law)
     n_neck_nodes = 0
     if grow > 0.0:
         owner = np.ascontiguousarray(owner)
@@ -945,6 +955,8 @@ def conductivity(mesh, vals, direction, tol=1e-8, maxiter=3000, callback=None, s
         val = np.empty((len(mesh["tets"]), 4))
         _tet_fields(mesh["tets"], points, kt, u, per, L, G, val)
         out["q_tets"] = (-val[:, :3] / (mesh["cells"][d] * (float(flux_h) if flux_h else mesh["h"] * 1e-6))).astype(np.float32)
+        # the potential at every tetrahedron's centre on the scale of the voxel fields (0 .. 1 across the RVE)
+        out["u_tets"] = (val[:, 3] / L[d]).astype(np.float32)
     if fields and mesh.get("graded"):
         from . import tetelast as TE
         cells = mesh["cells"]

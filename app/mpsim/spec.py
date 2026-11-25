@@ -290,7 +290,23 @@ def _via(vo, errors):
         out["f_max"] = _num(vo.get("f_max", 4e10), "highest frequency of the via", out["f_min"] * 1.0001, 1e13)
         out["n_f"] = int(_num(vo.get("n_f", 121), "frequencies of the via", 3, 2001))
         out["f_ref"] = _num(vo.get("f_ref", 1e10), "reference frequency of the via", out["f_min"], out["f_max"])
+        # 5.10.3 (all off by default): plated caps over the fill at both ends, the wall's rms roughness, the
+        # proximity effect, the wideband (Djordjevic-Sarkar) permittivity through eps_r / tan d at f_meas, and the
+        # pad end elements (a shunt C and a series L at each end, from a 3D full-wave fit)
+        out["cap_um"] = _num(vo.get("cap_um", 0.0) or 0.0, "depth of the plated caps of the via", 0.0, 500.0 * out["length_mm"])
+        # an hourglass hole (5.10.3): the diameter at mid-depth (0 or empty = a straight hole)
+        hm = vo.get("hole_d_mid_um")
+        out["hole_d_mid_um"] = (_num(hm, "hole diameter at mid-depth (hourglass)", 1.0, out["hole_d_um"]) if hm not in (None, "", 0, "0") else None)
+        out["rough_um"] = _num(vo.get("rough_um", 0.0) or 0.0, "rms roughness of the via wall", 0.0, 100.0)
+        out["rough_model"] = "groiss" if vo.get("rough_model") == "groiss" else "hj"
+        out["proximity"] = vo.get("proximity") in (True, "on", "true", 1)
+        out["dispersion"] = "ds" if vo.get("dispersion") == "ds" else "none"
+        out["f_meas"] = _num(vo.get("f_meas") or out["f_ref"], "frequency of the measured eps_r and tan d", 1.0, 1e13)
+        out["pad_C_fF"] = _num(vo.get("pad_C_fF", 0.0) or 0.0, "pad capacitance at each via end", 0.0, 1e5)
+        out["pad_L_pH"] = _num(vo.get("pad_L_pH", 0.0) or 0.0, "pad inductance at each via end", 0.0, 1e6)
         out["stress"] = _via_stress(vo.get("stress") or {})
+        if out.get("hole_d_mid_um"):
+            out["stress"]["a_mid_um"] = 0.5 * out["hole_d_mid_um"]
     except ValueError as e:
         errors.append(str(e))
     return out
@@ -304,7 +320,7 @@ def _via_stress(so):
     hole radii wide; the conformal and fully plated vias compared at the same wall thicknesses."""
     out = {"on": bool(so.get("on")), "T_free": 150.0, "T_use": 25.0, "sub_E": 73.0, "sub_nu": 0.22, "sub_alpha": 3.8,
            "wall_E": None, "wall_nu": None, "wall_alpha": None, "core": "rve", "core_E": None, "core_nu": None,
-           "core_alpha": None, "R_factor": 10.0, "compare": True, "mesh": "standard"}
+           "core_alpha": None, "R_factor": 10.0, "compare": True, "mesh": "standard", "cap_um": 0.0}
     if not out["on"]:
         return out
     out["T_free"] = _num(so.get("T_free", 150.0), "stress-free temperature of the via", -273.0, 2000.0)
@@ -327,6 +343,8 @@ def _via_stress(so):
     out["R_factor"] = _num(so.get("R_factor", 10.0), "substrate disc around the via (hole radii)", 3.0, 100.0)
     out["compare"] = so.get("compare", True) not in (False, "off", "false", 0)
     out["mesh"] = "fine" if so.get("mesh") == "fine" else "standard"
+    # 5.10.3: a plated cap of this depth over the filled core at the via's ends
+    out["cap_um"] = _num(so.get("cap_um", 0.0) or 0.0, "depth of the plated caps of the via (stress)", 0.0, 1e4)
     return out
 
 
@@ -940,6 +958,10 @@ def normalize(form):
         # a neck of that radius where they touch (0: particles meet at points with matrix around them, a filler
         # wetted by its resin; 0.1-0.3: sintered or pressed contacts; fitted to a measurement where one exists)
         "tet_neck": float(_num(opts.get("tet_neck", 0), "neck of a bonded contact / particle radius", 0, 0.9)),
+        # the neck by the pair's size (sintering, 5.10.3): tet_neck at the radius tet_neck_ref_um of the smaller
+        # particle, neck x (r / r_ref)^-tet_neck_exp elsewhere (2/3 grain-boundary, 4/7 surface diffusion); 0 = off
+        "tet_neck_ref_um": float(_num(opts.get("tet_neck_ref_um", 0), "radius at which the neck is tet_neck (um)", 0, 1e4)),
+        "tet_neck_exp": float(_num(opts.get("tet_neck_exp", 2.0 / 3.0), "exponent of the neck's size law", 0, 2)),
         # elasticity and CTE also with the regions that have a glass transition
         # in their rubbery state (E above Tg, alpha2): the alpha2 of an EMC
         "above_tg": bool(opts.get("above_tg", False)),

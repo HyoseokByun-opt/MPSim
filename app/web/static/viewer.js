@@ -61,6 +61,11 @@
     field: "", cmap: "jet", range: "auto", vmin: null, vmax: null, log: false,
     slices: { x: 0, y: 0, z: 0 }, show: { x: false, y: false, z: false }, faces: false,
     particles: true, colorParticles: true, opacity: 1, clip: false, outline: true, outlines2d: true,
+    // the opacity of each phase (label -> 0..1), times the overall opacity: one filler of a blend seen through
+    // the others, in the structure and in a result alike (5.11.0)
+    popac: {},
+    // the FEM style: the element edges drawn over the faces
+    femEdges: false, fem: null, femLoaded: false,
     // a phase keeps its colour everywhere it is drawn, so an override is held
     // by label index and read by the 3D surfaces, the 2D pixels and the legends
     colours: {},
@@ -71,6 +76,7 @@
     vectors: false, vecScale: 1, vecDensity: 1, vecUniform: false, vecData: {}, pathKey: "", pathData: {}, pathAnim: true,
   };
   let vtkReady = false, R = null;
+  const GHOST_VOX = 6;
   const views2d = {};
   const ns = (path) => path.split(".").reduce((o, k) => (o ? o[k] : undefined), window.vtk);
   V.can = { volume: () => !!(window.vtk && ns("Rendering.Core.vtkVolume") && ns("Rendering.Core.vtkVolumeMapper")),
@@ -263,6 +269,88 @@
     if (!s.fields[key]) s.fields[key] = new Float32Array(await fetchBin(vurl(s.meta.fields[key])));
     return s.fields[key];
   }
+  // "FEM1", m, origin (3 float32), step, then m triangles of three uint16 corners each
+  function parseFem(buf) {
+    const dv = new DataView(buf);
+    const m = dv.getUint32(4, true), o0 = dv.getFloat32(8, true), o1 = dv.getFloat32(12, true), o2 = dv.getFloat32(16, true), st = dv.getFloat32(20, true);
+    const q = new Uint16Array(buf, 24, 9 * m), pts = new Float32Array(9 * m);
+    for (let i = 0; i < 9 * m; i += 3) { pts[i] = o0 + q[i] * st; pts[i + 1] = o1 + q[i + 1] * st; pts[i + 2] = o2 + q[i + 2] * st; }
+    const polys = new Uint32Array(4 * m);
+    for (let i = 0, o = 0; i < m; i++) { polys[o++] = 3; polys[o++] = 3 * i; polys[o++] = 3 * i + 1; polys[o++] = 3 * i + 2; }
+    return { m, pts, polys, fields: {} };
+  }
+  async function loadFem() {
+    const fem = S.meta.fem;
+    if (!fem || S.femLoaded) return;
+    S.fem = {};
+    for (const [lab, e] of Object.entries(fem.labels || {})) S.fem[lab] = parseFem(await fetchBin(vurl(e.file)));
+    if (fem.faces && fem.faces.n_tri) S.fem.faces = parseFem(await fetchBin(vurl(fem.faces.file)));
+    S.femLoaded = true;
+  }
+  async function loadFemField(part, ff) {
+    const g = S.fem && S.fem[part], fn = ff && ff.files && ff.files[part];
+    if (!g || !fn) return null;
+    if (!g.fields[ff.key]) g.fields[ff.key] = new Float32Array(await fetchBin(vurl(fn)));
+    return g.fields[ff.key];
+  }
+  // The FEM style: the faces of the elements themselves - a particle's surface as the mesh fits it, the cut of
+  // the elements on the RVE's faces - each in the colour of its element's value (or of its phase), flat shaded,
+  // the element edges on request
+  async function buildFem(ctf) {
+    const fem = S.meta.fem, on = !!fem && S.surfStyle === "fem";
+    R.fem = R.fem || {};
+    if (!on) { Object.values(R.fem).forEach((x) => x.a.setVisibility(false)); return false; }
+    await loadFem();
+    const PD = ns("Common.DataModel.vtkPolyData"), DataArray = ns("Common.Core.vtkDataArray");
+    const Mapper = ns("Rendering.Core.vtkMapper"), Actor = ns("Rendering.Core.vtkActor"), Plane = ns("Common.DataModel.vtkPlane");
+    const ff = S.field ? femFieldFor(S.field) : null;
+    const s = S.meta.spacing_um;
+    let facesShown = false;
+    for (const part of Object.keys(S.fem)) {
+      const g = S.fem[part];
+      if (!R.fem[part]) {
+        const pd = PD.newInstance();
+        pd.getPoints().setData(g.pts, 3);
+        pd.getPolys().setData(g.polys);
+        const m = Mapper.newInstance();
+        m.setInputData(pd);
+        const a = Actor.newInstance();
+        a.setMapper(m);
+        R.renderer.addActor(a);
+        R.fem[part] = { pd, m, a };
+      }
+      const { pd, m, a } = R.fem[part];
+      const isFaces = part === "faces";
+      const lab = isFaces ? S.meta.labels.find((l) => l.kind === "matrix") || S.meta.labels[0] : S.meta.labels[+part];
+      const vals = ff && (S.colorParticles || isFaces) ? await loadFemField(part, ff) : null;
+      if (vals) {
+        pd.getCellData().setScalars(DataArray.newInstance({ name: "f", numberOfComponents: 1, values: S.log ? scalarsFor(vals) : vals }));
+        m.setScalarModeToUseCellData();
+        m.setLookupTable(ctf);
+        m.setUseLookupTableScalarRange(true);
+        m.setScalarVisibility(true);
+      } else {
+        m.setScalarVisibility(false);
+        a.getProperty().setColor(...hex2rgb(S.colours[lab.value] || lab.color));
+      }
+      const P = a.getProperty(), L = S.light;
+      P.setInterpolationToFlat();
+      P.setAmbient(Math.max(L.ambient, vals ? 0.35 : 0.22)); P.setDiffuse(vals ? Math.min(L.diffuse, 0.75) : L.diffuse);
+      P.setSpecular(Math.min(L.specular, 0.2)); P.setSpecularPower(L.power);
+      // the element edges: the mesh itself, as a finite-element post-processor draws it
+      P.setEdgeVisibility(!!S.femEdges);
+      P.setEdgeColor(0.32, 0.35, 0.38);
+      P.setLineWidth(0.5);
+      const vis = isFaces ? (!!S.faces && (!S.field || !!ff)) : (S.particles && !S.hidden[part] && opOf(+part) > 0);
+      if (isFaces && vis) facesShown = true;
+      P.setOpacity(isFaces ? 1 : opOf(+part));
+      a.setVisibility(vis);
+      m.removeAllClippingPlanes();
+      if (S.clip) m.addClippingPlane(Plane.newInstance({ origin: [0, 0, (S.slices.z + 0.5) * s], normal: [0, 0, -1] }));
+      pd.modified();
+    }
+    return facesShown;
+  }
   async function loadNetwork() {
     if (S.network || !S.meta.network) return S.network;
     const r = await fetch(vurl(S.meta.network.file));
@@ -287,7 +375,26 @@
     return S.pathData[key];
   }
 
-  function fieldMeta() { return S.field ? S.meta.fields.find((f) => f.key === S.field) : null; }
+  // the opacity a phase is drawn with: its own times the overall one
+  function opOf(key) {
+    const p = S.popac[key];
+    return Math.max(0, Math.min(1, S.opacity * (p === undefined || p === null ? 1 : +p)));
+  }
+  V.opOf = opOf;
+  // the finite-element field of the quantity shown (its voxel field's key in `of`), when the run solved it on a
+  // body-fitted mesh
+  function femFieldFor(key) {
+    const fem = S.meta && S.meta.fem;
+    if (!fem || !key) return null;
+    return (fem.fields || []).find((f) => f.of === key) || (fem.fields || []).find((f) => f.key === key) || null;
+  }
+  V.femFieldFor = femFieldFor;
+  // in the FEM style the colour range, units and label are those of the finite-element field
+  function fieldMeta() {
+    if (!S.field) return null;
+    if (S.surfStyle === "fem") { const ff = femFieldFor(S.field); if (ff) return ff; }
+    return S.meta.fields.find((f) => f.key === S.field);
+  }
   // the arrows belong to the displayed quantity: a magnitude and its direction
   function vectorFor(field) {
     const vs = (S.meta && S.meta.vectors) || [];
@@ -437,8 +544,10 @@
     // six outer faces: at the solver's resolution where the run wrote them,
     // otherwise as slices of the browser volume
     if (!R.faces) R.faces = [["x", 0], ["x", nx - 1], ["y", 0], ["y", ny - 1], ["z", 0], ["z", nz - 1]].map(([ax, idx]) => newSlice(ax, idx));
-    const fine = S.faces ? await buildFaces(ctf) : (hideFaces(), false);
-    R.faces.forEach((f) => styleSlice(f.actor, ctf, !!S.faces && !fine));
+    // the FEM style draws the RVE faces from the elements when the quantity has a finite-element field
+    const femFaces = await buildFem(ctf);
+    const fine = S.faces && !femFaces ? await buildFaces(ctf) : (hideFaces(), false);
+    R.faces.forEach((f) => styleSlice(f.actor, ctf, !!S.faces && !fine && !femFaces));
     // optional section planes
     ["x", "y", "z"].forEach((ax) => {
       if (!R.slices[ax]) R.slices[ax] = newSlice(ax, S.slices[ax]);
@@ -528,8 +637,12 @@
       LP.setEdgeVisibility(!!L.edges);
       LP.setEdgeColor(0.16, 0.19, 0.22);
       LP.setLineWidth(1);
-      a.getProperty().setOpacity(S.opacity);
-      a.setVisibility(S.particles && !S.hidden[key] && !(S.surfStyle === "voxels" && (S.meta.voxel_style || S.meta.voxel_volume)));
+      a.getProperty().setOpacity(opOf(key));
+      // the smooth skins also stand in for a style the run has no data for (a run before the voxel files or
+      // without a finite-element mesh)
+      const smoothShown = S.surfStyle === "smooth" || (S.surfStyle === "voxels" && !(S.meta.voxel_style || S.meta.voxel_volume))
+        || (S.surfStyle === "fem" && !S.meta.fem);
+      a.setVisibility(S.particles && !S.hidden[key] && opOf(key) > 0 && smoothShown);
       m.removeAllClippingPlanes();
       if (S.clip) m.addClippingPlane(Plane.newInstance({ origin: [0, 0, (S.slices.z + 0.5) * s], normal: [0, 0, -1] }));
       pd.modified();
@@ -574,8 +687,8 @@
       LP.setSpecular(Math.min(L.specular, 0.15)); LP.setSpecularPower(L.power);
       LP.setEdgeVisibility(!!L.edges);
       LP.setEdgeColor(0.16, 0.19, 0.22);
-      LP.setOpacity(S.opacity);
-      a.setVisibility(S.particles && !S.hidden[key] && S.surfStyle === "voxels");
+      LP.setOpacity(opOf(key));
+      a.setVisibility(S.particles && !S.hidden[key] && opOf(key) > 0 && S.surfStyle === "voxels");
       m.removeAllClippingPlanes();
       if (S.clip) m.addClippingPlane(Plane.newInstance({ origin: [0, 0, (S.slices.z + 0.5) * s], normal: [0, 0, -1] }));
       pd.modified();
@@ -655,8 +768,10 @@
       // vtk.js lights along the gradient of the scalar, which points into
       // the body: the normal of a face points inwards, away from its open side
       const n = [0, 1, 2].map((k) => (k === axis ? (sgn > 0 ? "-1.0" : "1.0") : "0.0")).join(", ");
+      // a face where the neighbour is clearly more transparent - relative, so that a translucent phase (a small
+      // opacity per sample) keeps its crisp faces too
       return `    ox = getOpacityFromTexture(getTextureValue(posIS ${sgn > 0 ? "+" : "-"} ${v})[${cOp}], ${cOp}, hS);
-    if (o0 - ox > 0.02 && ${dist} < best) { best = ${dist}; nIS = vec3(${n}); }`;
+    if (o0 > 1e-4 && ox < 0.5 * o0 && ${dist} < best) { best = ${dist}; nIS = vec3(${n}); }`;
     };
     return `
     float hS = volume.transferFunctionsSampleHeight[${cOp}];
@@ -689,7 +804,7 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
 
   async function buildVoxVolume() {
     const vv = S.meta.voxel_volume;
-    const want = !!vv && S.particles && S.surfStyle === "voxels";
+    const want = !!vv && S.particles && S.surfStyle === "voxels" && S.meta.labels.some((l) => !(l.kind === "matrix" || l.kind === "interphase") && !S.hidden[l.value] && opOf(l.value) > 0);
     if (!want) { if (R.vvol) R.vvol.actor.setVisibility(false); return; }
     const lab = await loadVoxVolume();
     if (!lab) return;
@@ -761,12 +876,13 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
       mapper.modified();
       R.vvol.key = key;
     }
-    // opacity by phase: the matrix and hidden phases transparent
+    // opacity by phase: the matrix and hidden phases transparent, every other phase at its own opacity
     const op = PWF.newInstance(), lc = CTF.newInstance();
     S.meta.labels.forEach((l) => {
       // no matrix is drawn as voxels; a further matrix shows as its slab (buildSlabs)
       const drawn = !(l.kind === "matrix" || l.kind === "interphase") && !S.hidden[l.value];
-      op.addPoint(l.value - 0.45, drawn ? S.opacity : 0); op.addPoint(l.value + 0.45, drawn ? S.opacity : 0);
+      const a = drawn ? opOf(l.value) : 0;
+      op.addPoint(l.value - 0.45, a); op.addPoint(l.value + 0.45, a);
       const c = hex2rgb(S.colours[l.value] || l.color);
       lc.addRGBPoint(l.value - 0.45, ...c); lc.addRGBPoint(l.value + 0.45, ...c);
     });
@@ -784,11 +900,13 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
       const zero = PWF.newInstance(); zero.addPoint(0, 0); zero.addPoint(255, 0);
       pr.setRGBTransferFunction(0, fc); pr.setScalarOpacity(0, zero);
       pr.setRGBTransferFunction(1, lc); pr.setScalarOpacity(1, op);
-      pr.setScalarOpacityUnitDistance(1, 0.1 * h);
+      pr.setScalarOpacityUnitDistance(1, GHOST_VOX * h);
     } else {
       pr.setRGBTransferFunction(0, lc); pr.setScalarOpacity(0, op);
     }
-    pr.setScalarOpacityUnitDistance(0, 0.1 * h);
+    // an opacity is reached through GHOST_VOX voxels of a phase: 1 stays solid at the first voxel, 0.3 lets a
+    // particle of ten voxels show what is behind it (at 0.1 voxel, as before 5.11.0, anything above 0.05 was solid)
+    pr.setScalarOpacityUnitDistance(0, GHOST_VOX * h);
     pr.setInterpolationTypeToNearest();
     pr.setShade(true);
     const L = S.light;
@@ -875,7 +993,8 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
   function buildRegion() {
     const PD = ns("Common.DataModel.vtkPolyData"), Mapper = ns("Rendering.Core.vtkMapper"), Actor = ns("Rendering.Core.vtkActor");
     const vox = S.surfStyle === "voxels" && (S.meta.voxel_style || S.meta.voxel_volume);
-    const reg = vox ? (S.meta.voxel_volume ? null : S.meta.voxel_style.region_um) : (S.meta.surface_region || {}).um;
+    const femS = S.surfStyle === "fem" && S.meta.fem;
+    const reg = femS ? S.meta.fem.region_um : vox ? (S.meta.voxel_volume ? null : S.meta.voxel_style.region_um) : (S.meta.surface_region || {}).um;
     if (R.region) { R.renderer.removeActor(R.region); R.region = null; }
     if (!reg || !S.particles) return;
     const [X, Y, Z] = reg;
@@ -899,6 +1018,13 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
     if (!S.meta) return "";
     const fmtN = (n) => Number(n).toLocaleString("en-US");
     const dims = (r) => r.map((v) => fmtLen(v)).join(" × ");
+    if (S.surfStyle === "fem" && S.meta.fem) {
+      const fe = S.meta.fem, ff = S.field ? femFieldFor(S.field) : null;
+      const txt = [];
+      if (fe.region_um) txt.push(`The mesh has ${fmtN(fe.n_tri_total)} element faces on its surfaces, more than the 3D view draws: it shows the corner region ${dims(fe.region_um)} µm. Results use the whole RVE.`);
+      if (S.field && !ff) txt.push("This quantity was not solved on the mesh: the mesh is drawn in the phase colours; the Voxels style shows the quantity.");
+      return txt.join(" ");
+    }
     if (S.surfStyle === "voxels" && !S.meta.voxel_volume && S.meta.voxel_style && S.meta.voxel_style.region_um) {
       const vs = S.meta.voxel_style;
       return `The whole RVE has ${fmtN(vs.n_faces_total)} voxel faces, more than the 3D view draws: it shows the solver's own voxels in the corner region ${dims(vs.region_um)} µm (outlined). Smooth draws the whole RVE; 2D sections, the TIFF stack and every result use all of it.`;
@@ -1648,7 +1774,7 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
   // what a view offers; it changes while a run adds analyses to the same view
   V.metaSig = (m) => (m ? [m.built || 0, (m.fields || []).map((f) => f.key).join(","),
     (m.vectors || []).map((v) => v.key).join(","), (m.paths || []).map((p) => p.key).join(","),
-    (m.surfaces || []).length, m.network ? 1 : 0].join("|") : "");
+    (m.surfaces || []).length, m.network ? 1 : 0, ((m.fem || {}).fields || []).map((f) => f.key).join(",")].join("|") : "");
 
   V.open = async function (jobId) {
     // meta.json is read every time. A run opened here before it finished - a
@@ -1661,13 +1787,18 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
     const meta = await r.json();
     if (S.jobId === jobId && S.meta && V.metaSig(S.meta) === V.metaSig(meta)) return S.meta;
     const keep = S.jobId === jobId ? S.field : null;
+    const sameRun = S.jobId === jobId;
     // load the labels before publishing the new meta: a refresh running in
     // between would otherwise pair the new grid with old (or no) labels
     const labels = new Uint8Array(await fetchBin(`/api/jobs/${jobId}/view/labels.u8?v=${meta.built || 0}`));
     Object.assign(S, { jobId, meta, labels, fields: {}, surfaces: {}, surfLoaded: false, voxels: {}, voxLoaded: false,
                        faceData: {}, lslices: {}, fslices: {}, vvolLab: null, vvolField: null,
-                       hidden: {}, network: null,
+                       hidden: sameRun ? S.hidden : {}, popac: sameRun ? S.popac : {}, network: null,
+                       fem: null, femLoaded: false,
                        vecData: {}, pathData: {}, pathKey: "", vectors: false });
+    // a run solved on a body-fitted mesh opens in the FEM style: its results are shown on the elements they
+    // were computed on; the Voxels and Smooth styles stay a click away
+    if (!sameRun) S.surfStyle = meta.fem && (meta.fem.fields || []).length ? "fem" : (S.surfStyle === "fem" ? "voxels" : S.surfStyle);
     meta.vectors = meta.vectors || [];
     meta.paths = meta.paths || [];
     S.slices = { x: Math.floor(meta.shape[0] / 2), y: Math.floor(meta.shape[1] / 2), z: Math.floor(meta.shape[2] / 2) };
@@ -1698,12 +1829,13 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
       if (R.vvol) R.renderer.removeVolume(R.vvol.actor);
       Object.values(R.surf).forEach((o) => R.renderer.removeActor(o.a));
       Object.values(R.vox || {}).forEach((o) => R.renderer.removeActor(o.a));
+      Object.values(R.fem || {}).forEach((o) => R.renderer.removeActor(o.a));
       if (R.outline) R.renderer.removeActor(R.outline);
       if (R.net) { R.renderer.removeActor(R.net.balls); R.renderer.removeActor(R.net.sticks); }
       if (R.volume) R.renderer.removeVolume(R.volume.actor);
       if (R.cube) R.renderer.removeActor(R.cube);
       Object.assign(R, { image: null, slices: {}, faces: null, ffaces: [], fsec: {}, region: null, vvol: null,
-                         surf: {}, vox: {}, outline: null, net: null, volume: null,
+                         surf: {}, vox: {}, fem: {}, outline: null, net: null, volume: null,
                          cube: null, vec: null, path: null, animId: null });
     }
     return meta;
@@ -1828,13 +1960,17 @@ ${[0, 1, 2].map((a) => side(a, 1) + "\n" + side(a, -1)).join("\n")}
     ["x", "y", "z"].forEach((ax) => { if (S.show[ax]) slices[ax] = S.slices[ax]; });
     const vm = S.vectors ? vectorFor(S.field) : null;
     return {
-      mode: f ? "field" : (S.networkOn && S.meta.network ? "network" : "structure"), field: f ? f.key : null, colormap: S.cmap,
+      // the voxel field's key: the FEM style names its finite-element field in fem_field
+      mode: f ? "field" : (S.networkOn && S.meta.network ? "network" : "structure"), field: f ? S.field : null, colormap: S.cmap,
       vectors: vm ? vm.key : null, vector_scale: S.vecScale, vector_every: vm ? vecEvery(Math.max(...S.meta.shape)) : null,
       vector_uniform: !!S.vecUniform,
       paths: S.pathKey || null,
       vmin: f ? lo : null, vmax: f ? hi : null, log: S.log, slices, box_faces: S.faces,
       show_particles: S.particles, particle_opacity: S.opacity, color_particles: S.colorParticles, show_network: S.networkOn,
       surface_style: S.surfStyle,
+      // each phase's own opacity (0 for a hidden one), times particle_opacity
+      phase_opacity: Object.fromEntries((S.meta.labels || []).map((l) => [l.value, S.hidden[l.value] ? 0 : (S.popac[l.value] === undefined ? 1 : +S.popac[l.value])])),
+      fem_field: S.surfStyle === "fem" ? (femFieldFor(S.field) || {}).key || null : null, fem_edges: !!S.femEdges,
       camera: cameraState(), width: 1800, height: 1400, background: "white",
       axis: S.axis2d || "z", index: S.slices[S.axis2d || "z"], outlines: S.outlines2d,
     };

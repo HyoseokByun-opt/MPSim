@@ -1704,6 +1704,69 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         out["study"] = {"id": s["id"], "name": s["name"], "design": s["design"]}
         return jsonify(out)
 
+    # the analyses of a study already made, keyed by what they were made from: switching between responses and
+    # back does not repeat them, and a study that gains a finished case is analysed afresh
+    sa_cache = {}
+
+    def _sa_key(sid, rows, body):
+        done = [(r["job_id"], sorted((r.get("metrics") or {}).items()), sorted((r.get("values") or {}).items()))
+                for r in rows if r.get("state") == "done"]
+        return json.dumps([sid, body.get("response"), body.get("inputs"), body.get("realised", True),
+                           body.get("options"), done], sort_keys=True, default=str)
+
+    @app.post("/api/doe/<sid>/sensitivity")
+    def api_doe_sensitivity(sid):
+        """Every sensitivity measure of one response of a study (mpsim/sensitivity.py)."""
+        s = app.doe.get(sid)
+        if s is None:
+            abort(404, "DOE study not found")
+        body = request.get_json(force=True, silent=True) or {}
+        response = body.get("response")
+        if not response:
+            return jsonify({"ok": False, "error": "No response quantity was chosen"}), 400
+        rows, metrics = app.doe.rows(s, app.queue)
+        key = _sa_key(sid, rows, body)
+        out = sa_cache.get(key)
+        was = out is not None
+        if out is None:
+            from mpsim import sensitivity as SA
+            try:
+                out = SA.analyse(s, rows, response, metrics=metrics, inputs=body.get("inputs") or None,
+                                 realised=bool(body.get("realised", True)), options=body.get("options") or None)
+            except Exception as e:                              # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+            out["ok"] = not out.get("error")
+            out["study"] = {"id": s["id"], "name": s["name"], "design": s["design"]}
+            if len(sa_cache) > 24:
+                sa_cache.pop(next(iter(sa_cache)))
+            sa_cache[key] = out
+        return jsonify(dict(out, metrics=metrics, cached=was))
+
+    @app.post("/api/doe/<sid>/sensitivity/overview")
+    def api_doe_sensitivity_overview(sid):
+        """Which input drives which response: a light pass over every response of the study."""
+        s = app.doe.get(sid)
+        if s is None:
+            abort(404, "DOE study not found")
+        body = request.get_json(force=True, silent=True) or {}
+        rows, metrics = app.doe.rows(s, app.queue)
+        key = _sa_key(sid, rows, dict(body, response="*overview*"))
+        out = sa_cache.get(key)
+        if out is None:
+            from mpsim import sensitivity as SA
+            try:
+                # a realised content or size is what an input became, not a property: left out unless asked for
+                ms = [m for m in metrics if not m.get("realised")] if body.get("properties_only", True) else metrics
+                out = SA.overview(s, rows, ms, inputs=body.get("inputs") or None,
+                                  realised=bool(body.get("realised", True)))
+            except Exception as e:                              # noqa: BLE001
+                return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+            out["ok"] = True
+            sa_cache[key] = out
+        return jsonify(out)
+
     @app.post("/api/doe/<sid>/cases")
     def api_doe_add_cases(sid):
         """Further cases of a study at chosen points (the points an

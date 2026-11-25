@@ -67,15 +67,25 @@ def lame(E, nu):
 class Model:
     """Mesh, solve, evaluate. mats: dict region -> (E MPa, nu, alpha 1/K); regions 'core' (or None), 'wall', 'sub'."""
 
-    def __init__(self, a, H, t_end, throw, R, mats, core, h_min=0.15, q=1.2, h_max=25.0):
+    def __init__(self, a, H, t_end, throw, R, mats, core, h_min=0.15, q=1.2, h_max=25.0, cap=0.0, a_mid=None):
         self.a, self.H, self.t_end, self.throw, self.R = a, H, t_end, throw, R
+        # an hourglass hole (5.10.3): radius a_mid at mid-depth (z = 0), a at the face (z = H), linear between
+        self.a_mid = a if a_mid is None else float(a_mid)
         self.core = core
         self.mats = mats
+        self.cap = float(cap) if core else 0.0
         t_top = t_end
         # z (element corners), fine at the top
         zt = _graded(H, h_min, q, h_max)                        # distance below the top
         self.z_e = np.sort(H - zt)
         self.z_e[0] = 0.0
+        if 0.0 < self.cap < H:
+            # a plated cap over the core (5.10.3): an element edge at its depth, and the mesh refined towards it
+            zc = H - self.cap
+            zb = H - np.sort(_graded(self.cap, h_min, q, h_max))[::-1]          # fine at the top, as before
+            below = zc - _graded(zc, h_min, q, h_max)                         # fine at the cap's bottom
+            self.z_e = np.unique(np.round(np.concatenate([below, zb, [0.0, zc, H]]), 9))
+            self.z_e = self.z_e[(self.z_e >= 0.0) & (self.z_e <= H)]
         # columns: parametric edges
         cols = []
         if core:
@@ -92,12 +102,17 @@ class Model:
 
     # ---------------------------------------------------------------- mesh
     def _rmap(self, region, s, z):
-        b = self.a - wall_profile(self.t_end, self.throw, z, self.H)
+        a = self.a_at(z)
+        b = a - wall_profile(self.t_end, self.throw, z, self.H)
         if region == "core":
             return s * b
         if region == "wall":
-            return b + s * (self.a - b)
-        return self.a + s * (self.R - self.a)
+            return b + s * (a - b)
+        return a + s * (self.R - a)
+
+    def a_at(self, z):
+        """Hole radius at the height z above the mid-plane."""
+        return self.a_mid + (self.a - self.a_mid) * np.clip(np.asarray(z, float) / self.H, 0.0, 1.0)
 
     def _mesh(self):
         # node columns at element corners and mid-points
@@ -129,7 +144,10 @@ class Model:
         a_, b_ = np.meshgrid(np.arange(3), np.arange(3), indexing="ij")
         a_, b_ = a_.ravel(), b_.ravel()                        # local node k = 3 a + b
         self.conn = ((2 * ie[:, None] + a_[None, :]) * nj + 2 * je[:, None] + b_[None, :])
-        self.eregion = np.array(elem_region)[ie]
+        self.eregion = np.array(elem_region, dtype="<U4")[ie]
+        if self.cap > 0.0:
+            zmid = 0.5 * (self.z_e[je] + self.z_e[je + 1])
+            self.eregion[(self.eregion == "core") & (zmid > self.H - self.cap)] = "cap"
         self.ie, self.je = ie, je
         self.la, self.lb = a_, b_
 
@@ -383,26 +401,32 @@ TOP_D = [1.0, 2.0, 5.0, 10.0, 20.0]
 DEPTHS = np.r_[np.geomspace(0.05, 30.0, 60), np.linspace(32.0, 880.0, 40)]
 
 
-def solve_case(a, H, t_end, throw, R, core, mats, dT, h_min=0.15):
-    """One via: core in ('fill', 'cu', 'none'); mats: wall, sub, fill as (E MPa, nu, alpha 1/K)."""
+def solve_case(a, H, t_end, throw, R, core, mats, dT, h_min=0.15, cap=0.0, a_mid=None):
+    """One via: core in ('fill', 'cu', 'none'); mats: wall, sub, fill (and cap) as (E MPa, nu, alpha 1/K).
+    cap: the depth of a plated cap over a filled core at the via's end (the cap's material mats['cap'], else the
+    wall's)."""
     m = {"wall": mats["wall"], "sub": mats["sub"]}
     if core == "fill":
         m["core"] = mats["fill"]
     elif core == "cu":
         m["core"] = mats["wall"]
-    mod = Model(a, H, t_end, throw, R, m, core != "none", h_min=h_min).solve(dT)
+    if cap > 0.0 and core != "none":
+        m["cap"] = mats.get("cap", mats["wall"])
+    mod = Model(a, H, t_end, throw, R, m, core != "none", h_min=h_min, cap=cap if core != "none" else 0.0, a_mid=a_mid).solve(dT)
     t_mid = throw * t_end
-    out = {"t_um": t_end, "t_mid_um": t_mid, "core": core, "n_dofs": mod.n_dofs, "n_elem": mod.n_elem, "time_s": mod.time_s}
-    s_mid = mod.stress([a], [0.0], prefer="sub")[0]
+    am = mod.a_mid
+    out = {"t_um": t_end, "t_mid_um": t_mid, "core": core, "n_dofs": mod.n_dofs, "n_elem": mod.n_elem, "time_s": mod.time_s,
+           "a_mid_um": am}
+    s_mid = mod.stress([am], [0.0], prefer="sub")[0]
     out["mid"] = {"rr": float(s_mid[0]), "tt": float(s_mid[2]), "zz": float(s_mid[1])}
     st = mod.stress(a + np.array(TOP_D), np.full(len(TOP_D), H), prefer="sub")
     out["top_p1"] = principal(st).tolist()
     out["top_d_um"] = TOP_D
-    sd = mod.stress(np.full(len(DEPTHS), a), H - DEPTHS, prefer="sub")
+    sd = mod.stress(mod.a_at(H - DEPTHS), H - DEPTHS, prefer="sub")
     out["depth_um"] = DEPTHS.tolist()
     out["depth_p1"] = principal(sd).tolist()
     out["depth_rz"] = sd[:, 3].tolist()
-    sw = mod.stress([a - 0.5 * t_mid], [0.0], prefer="wall")
+    sw = mod.stress([am - 0.5 * t_mid], [0.0], prefer="wall")
     out["wall_mises_mid"] = float(mises(sw)[0])
     rs = np.linspace(0.0 if core != "none" else a - t_end, a, 40)[1:-1]
     uz = mod.displacement(rs, np.full(len(rs), H), prefer="wall" if core == "none" else None)[:, 1]
@@ -412,12 +436,12 @@ def solve_case(a, H, t_end, throw, R, core, mats, dT, h_min=0.15):
     # the generalized plane strain solution at mid-height
     lay = []
     if core != "none":
-        lay.append((0.0, a - t_mid) + tuple(m["core"]))
-        lay.append((a - t_mid, a) + tuple(m["wall"]))
+        lay.append((0.0, am - t_mid) + tuple(m["core"]))
+        lay.append((am - t_mid, am) + tuple(m["wall"]))
     else:
-        lay.append((a - t_mid, a) + tuple(m["wall"]))
-    lay.append((a, R) + tuple(m["sub"]))
-    ana = lame_cylinders(lay, dT)(np.array([a + 1e-9]))
+        lay.append((am - t_mid, am) + tuple(m["wall"]))
+    lay.append((am, R) + tuple(m["sub"]))
+    ana = lame_cylinders(lay, dT)(np.array([am + 1e-9]))
     out["lame_mid_rr"] = float(ana["rr"][0])
     out["_model"] = mod
     return out
@@ -442,7 +466,9 @@ def analyse(so, a_um, length_um, t_end, throw, sweep, fill_props, wall_props, lo
         c = dict(c)
         c.pop("_model", None)
         return c
-    main = solve_case(a_um, H, t_end, throw, R, core, mats, dT, h)
+    cap = float(so.get("cap_um") or 0.0)
+    am = so.get("a_mid_um")
+    main = solve_case(a_um, H, t_end, throw, R, core, mats, dT, h, cap=cap, a_mid=am)
     mod = main["_model"]
     out = {"dT": dT, "T_free": so["T_free"], "T_use": so["T_use"], "R_um": R, "core": core,
            "materials": {k: {"E_GPa": v[0] / 1000.0, "nu": v[1], "alpha_ppm": v[2] * 1e6} for k, v in mats.items()},
@@ -457,14 +483,14 @@ def analyse(so, a_um, length_um, t_end, throw, sweep, fill_props, wall_props, lo
             comp[lab] = []
             if lab == "cu":
                 # a fully plated via is copper whatever the wall: one solve, shown at every wall thickness
-                one = strip(main) if so.get("core") == "cu" else strip(solve_case(a_um, H, t_end, throw, R, "cu", mats, dT, h))
+                one = strip(main) if so.get("core") == "cu" else strip(solve_case(a_um, H, t_end, throw, R, "cu", mats, dT, h, cap=cap, a_mid=am))
                 comp[lab] = [dict(one, t_um=t, t_mid_um=throw * t) for t in sweep]
                 continue
             for t in sweep:
                 if lab == "fill" and t == t_end:
                     comp[lab].append(strip(main))
                     continue
-                comp[lab].append(strip(solve_case(a_um, H, t, throw, R, kind, mats, dT, h)))
+                comp[lab].append(strip(solve_case(a_um, H, t, throw, R, kind, mats, dT, h, cap=cap, a_mid=am)))
     out["compare"] = comp
     if map_png:
         try:

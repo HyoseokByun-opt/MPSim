@@ -170,9 +170,10 @@
     domain: ["auto", "Domain", "Voxel size, RVE size and the criteria behind them"],
     analysis: ["morphology", "Structure analysis", "Image-based analyses of the generated structure"],
     simulation: ["solver", "Simulation", "Effective properties from full-field solves"],
-    doe: ["preset", "DOE", "Parameter studies: ranges, queued runs, collected results"],
-    optimization: ["optimize", "Optimization", "Key design factors, a surrogate model and the optimum"],
     calibration: ["calibrate", "Calibration", "Unknown material values from measurements"],
+    doe: ["preset", "DOE", "Parameter studies: ranges, queued runs, collected results"],
+    sensitivity: ["sensitivity", "Sensitivity Analysis", "Which inputs move a response, alone and together: statistics and machine learning on a DOE study"],
+    optimization: ["optimize", "Optimization", "A surrogate model and the optimum"],
     results: ["table", "Results", "Runs, downloads and figures"],
   };
 
@@ -194,6 +195,9 @@
       options: { kernel: "matern52", noise: "", restarts: 4 },
       multi: { responses: [], goals: {}, pop: 64, generations: 60, data: null, busy: false },
     },
+    // the Sensitivity Analysis tab (5.11.0): one response of a DOE study through every method
+    sa: { response: "", inputs: null, realised: true, view: "summary", data: null, busy: false, overview: null, ovBusy: false,
+          cmap: "jet", options: { bootstrap: 600, sobol_n: 2048, permutations: 299, seed: 0, surrogate: "auto", explainer: "auto" } },
     settings: null,
     openDoe: {},
   };
@@ -492,6 +496,12 @@
         { group: "Design", items: [RB("doeAdd", "plus", "Add parameter"), RB("doeClear", "delete", "Clear parameters")] },
         { group: "Study", items: [RB("doeCreate", busy ? "plus" : "play", busy ? "Add DOE study" : "Create and queue", { primary: true, tip: busy ? "Adds the study's cases to the queue behind the runs under way: they start when a place and their memory are free" : "Creates the study and queues its cases" }), RB("c:doe", "preset", "DOE results")] },
       ],
+      sensitivity: [
+        { group: "Study", items: [RB("c:sa", "sensitivity", "Sensitivity", { on: state.center === "sa" }), RB("c:doe", "preset", "DOE results")] },
+        { group: "Analysis", items: [RB("saRun", "play", "Analyse response", { primary: true, tip: "Every method on the chosen response: statistics of the runs, machine-learning models, variance-based and screening indices, interactions" }),
+                                     RB("saAll", "table", "All responses", { tip: "Which input drives which response: Spearman ρ and the total Sobol index of every response of the study" })] },
+        { group: "Export", items: [RB("saJson", "json", "Result JSON", { dis: !state.sa.data || !!state.sa.data.error }), RB("saCsv", "table", "Measures CSV", { dis: !state.sa.data || !!state.sa.data.error, tip: "Every measure of every input in one table" })] },
+      ],
       optimization: [
         { group: "Study", items: [RB("c:opt", "optimize", "Optimization", { on: state.center === "opt" }), RB("c:doe", "preset", "DOE results")] },
         { group: "Model", items: [RB("optRun", "surrogate", "Fit and optimise", { primary: true }),
@@ -630,6 +640,10 @@
       case "calApply": calApply(); break;
       case "doeCreate": doeCreate(); break;
       case "optRun": setCenter("opt"); runOptimize(); break;
+      case "saRun": setCenter("sa"); runSA(); break;
+      case "saAll": setCenter("sa"); state.sa.view = "all"; runSAOverview(); break;
+      case "saJson": if (state.sa.data) download(`sensitivity_${(state.sa.data.response || {}).key || "response"}.json`, new Blob([JSON.stringify(state.sa.data, null, 1)], { type: "application/json" })); break;
+      case "saCsv": saCsv(); break;
       case "optQueue": queueOptPoint("optimum"); break;
       case "generate": submit(true); break;
       case "refresh": state.forceRedraw = true; schedulePlan(0); toast("Planned again with the values of this panel."); break;
@@ -658,6 +672,10 @@
     if (tab === "ai") setCenter("ai");
     if (tab === "doe") loadDoeCatalogue().then(() => { if (state.tab === "doe") renderLeft(); });
     if (tab === "calibration") { CAL(); loadDoeCatalogue().then(() => { if (state.tab === "calibration") renderLeft(); }); calLoadTheory(); }
+    if (tab === "sensitivity") {
+      setCenter("sa");
+      loadDoeList().then(() => { if (state.doeId && !state.doeData) openDoe(state.doeId); });
+    }
     renderRibbon();
     renderLeft();
   }
@@ -690,6 +708,7 @@
     if (c === "res") renderResults();
     if (c === "doe") { renderDoe(); if (state.doeId && !state.doeData) openDoe(state.doeId); }
     if (c === "opt") renderOpt();
+    if (c === "sa") { renderSA(); if (state.doeId && !state.doeData) openDoe(state.doeId); }
     if (c === "cal") renderCal();
     if (c === "rep") renderReport();
     if (c === "ai") {
@@ -726,7 +745,7 @@
     $("#lhead").innerHTML = `${I(icon)}<div><b>${title}</b><small title="${String(sub).replace(/"/g, "&quot;")}">${sub}</small></div>`;
     const body = $("#lbody");
     const top = body.scrollTop;
-    body.innerHTML = { home: leftHome, ai: leftAI, material: leftMaterial, structure: leftStructure, domain: leftDomain, analysis: leftAnalysis, simulation: leftSimulation, doe: leftDoe, optimization: leftOptimization, calibration: leftCalibration, results: leftResults }[state.tab]();
+    body.innerHTML = { home: leftHome, ai: leftAI, material: leftMaterial, structure: leftStructure, domain: leftDomain, analysis: leftAnalysis, simulation: leftSimulation, doe: leftDoe, sensitivity: leftSensitivity, optimization: leftOptimization, calibration: leftCalibration, results: leftResults }[state.tab]();
     fillInputs(body);
     body.scrollTop = top;
     if (state.tab === "structure") { renderComposition(); requestAnimationFrame(drawPsd); requestAnimationFrame(drawImageHist); }
@@ -4443,16 +4462,19 @@
   async function loadDoeList() {
     try { state.doeList = await api("GET", "/api/doe"); } catch (e) { return; }
     if (!state.doeId && state.doeList.length) state.doeId = state.doeList[0].id;
-    if (state.tab === "doe" || state.tab === "optimization") renderLeft();
+    if (state.tab === "doe" || state.tab === "optimization" || state.tab === "sensitivity") renderLeft();
     if (state.center === "opt") renderOpt();
+    if (state.center === "sa") renderSA();
   }
   async function openDoe(id) {
     if (!id) return;
+    if (id !== state.doeId) { state.sa.data = null; state.sa.overview = null; state.sa.inputs = null; }
     try { state.doeData = await api("GET", "/api/doe/" + id); state.doeId = id; }
     catch (err) { toast("The study could not be loaded: " + err.message); return; }
     if (state.center === "doe") renderDoe();
     if (state.center === "opt") renderOpt();
-    if (state.tab === "doe" || state.tab === "optimization") renderLeft();
+    if (state.center === "sa") renderSA();
+    if (state.tab === "doe" || state.tab === "optimization" || state.tab === "sensitivity") renderLeft();
   }
   async function pollDoe() {
     if (!state.doeId || !state.doeData) return;
@@ -4621,6 +4643,332 @@
         series.push({ x: sub.map((r) => r.values[p0.path]), y: sub.map((r) => r.metrics[m.key]), color: CH.PALETTE[0], marker: true, label: m.label });
       }
       CH.line(cv, { series, xlabel: `${p0.label}${p0.unit ? ` [${p0.unit}]` : ""}`, ylabel: m.unit && m.unit !== "-" ? m.unit : "" });
+    });
+  }
+
+  /* ================================================================ sensitivity analysis (5.11.0) */
+  const SAX = () => window.MPSSA;
+  const SA_VIEWS = [["summary", "Summary"], ["stats", "Statistics"], ["ml", "Machine learning"], ["var", "Variance & screening"],
+                    ["inter", "Interactions"], ["all", "All responses"], ["data", "Data"]];
+  const SA_FAMILY_TEXT = [
+    ["Correlation", "Pearson, Spearman, Kendall; partial (PCC) and partial rank (PRCC) correlation, bootstrap intervals"],
+    ["Regression", "standardised (rank) regression coefficients SRC/SRRC; ANOVA of a quadratic response surface; LASSO path"],
+    ["Dependence", "correlation ratio; mutual information; distance correlation; HSIC — any shape, permutation p-values"],
+    ["Machine learning", "Gaussian process (ARD), random forest (impurity, permutation), gradient boosting; SHAP; PD/ICE; ALE"],
+    ["Variance-based", "Sobol S₁, S_T, S₂ (Saltelli); polynomial chaos expansion; eFAST"],
+    ["Screening", "Morris elementary effects (μ*, σ); derivative-based measures (DGSM)"],
+    ["Moment-independent", "PAWN (Kolmogorov–Smirnov over the whole distribution)"],
+  ];
+  function saMetrics() {
+    const d = state.doeData;
+    return (d && d.metrics) || [];
+  }
+  // the response offered first: a property the study was run for, not a realised content or the density
+  const saDefaultResponse = (metrics) => (metrics.find((m) => !m.realised && m.key !== "density") || metrics.find((m) => !m.realised) || metrics[0]).key;
+  function leftSensitivity() {
+    const sa = state.sa, d = state.doeData, X = SAX();
+    const studies = state.doeList.map((s) => {
+      const c = s.counts || {};
+      const st = c.running ? "running" : (c.done === s.n_cases ? "done" : (c.failed ? "failed" : "queued"));
+      return `<div class="run ${s.id === state.doeId ? "on" : ""}" data-saopen="${s.id}"><i class="dot ${st}"></i>
+        <div class="nm">${esc(s.name)}<small>${s.n_cases} cases · ${c.done || 0} finished</small></div><div class="acts"></div></div>`;
+    }).join("") || '<div class="hint">No study yet. A study is created on the DOE tab from the current case; its finished cases are the data of this analysis.</div>';
+    const metrics = saMetrics();
+    if (metrics.length && !metrics.some((m) => m.key === sa.response)) sa.response = saDefaultResponse(metrics);
+    const ready = d ? d.rows.filter((x) => x.state === "done").length : 0;
+    const params = (d && d.parameters) || [];
+    const realOf = (p) => metrics.some((m) => m.key === "real_" + p.path);
+    const inputs = params.map((p, i) => `<label class="chk" style="margin:2px 0"><input type="checkbox" data-sainp="${esc(p.path)}" ${!sa.inputs || sa.inputs.includes(p.path) ? "checked" : ""}>
+        <i class="sadot" style="background:${X ? X.inputColor(i) : "#888"}"></i>${esc(p.label)}${p.unit ? ` <span class="hint">[${esc(p.unit)}]</span>` : ""}${realOf(p) ? ' <span class="hint">· realised</span>' : ""}</label>`).join("");
+    const o = sa.options, r = sa.data;
+    const res = !r ? '<div class="hint">Nothing analysed yet: choose a response and press Analyse.</div>'
+      : r.error ? `<div class="note warn">${esc(r.error)}</div>`
+      : `<div class="tiles">
+          <div class="tile"><div class="v txt">${esc((r.inputs[r.consensus.order[0]] || {}).name || "—")}</div><div class="l">Leading input</div><div class="d">consensus ${r.consensus.score[r.consensus.order[0]].toFixed(2)}</div></div>
+          <div class="tile"><div class="v">${r.consensus.kendall_w !== null && r.consensus.kendall_w !== undefined ? r.consensus.kendall_w.toFixed(2) : "—"}</div><div class="l">Agreement (Kendall W)</div><div class="d">${r.consensus.methods.length} measures</div></div>
+        </div>
+        ${r.consensus.order.slice(0, 5).map((i, k) => `<div class="sarank"><b>${k + 1}</b><i class="sadot" style="background:${X.inputColor(i)}"></i><span>${esc(r.inputs[i].name)}</span><em>${r.consensus.score[i].toFixed(2)}</em></div>`).join("")}`;
+    return `<div class="sec"><div class="sh">${I("sensitivity")}Sensitivity analysis</div><div class="sb">
+        <div class="hint">The finished cases of a DOE study are asked, by every family of method in common use, which inputs move the chosen response — alone, through curvature, and together with other inputs. A finding rests on their agreement; every model-based measure carries the cross-validated Q² of its model and is weighted by it.</div>
+        <div class="note ${ready < 4 ? "warn" : ""}">${ready} finished case${ready === 1 ? "" : "s"}${ready < 4 ? " — at least four are needed" : ""}${d ? ` in ${esc(d.name)}` : ""}.</div>
+      </div></div>
+      <div class="sec"><div class="sh">${I("table")}Response and inputs</div><div class="sb">
+        <label class="f">Response</label>
+        <select data-saresp>${metrics.map((m) => `<option value="${esc(m.key)}" ${m.key === sa.response ? "selected" : ""}>${esc(m.label)}${m.unit && m.unit !== "-" ? ` [${esc(m.unit)}]` : ""}</option>`).join("") || '<option value="">No finished case yet</option>'}</select>
+        <label class="f">Inputs (the study's parameters)</label>
+        ${inputs || '<div class="hint">The study varies no parameter.</div>'}
+        <label class="chk" style="margin-top:6px"><input type="checkbox" data-sareal ${sa.realised ? "checked" : ""}> Use the realised values where a case recorded them</label>
+        <div class="hint">A content the packing fell short of, or a size realised, is then the input rather than the value asked for (the DOE page marks such cases ▲).</div>
+        <button class="btn primary" data-saact="run" style="margin-top:8px" ${sa.busy || !metrics.length ? "disabled" : ""}>${I("play")}${sa.busy ? "Analysing…" : "Analyse"}</button>
+      </div></div>
+      <div class="sec"><div class="sh">${I("checks")}Methods</div><div class="sb">
+        ${SA_FAMILY_TEXT.map(([f, t]) => `<div class="safam"><i class="sadot" style="background:${X ? X.familyColor(f) : "#888"}"></i><div><b>${f}</b><br><span class="hint">${t}</span></div></div>`).join("")}
+        <details class="optprops"><summary>Settings <span class="hint">(defaults suit most studies)</span></summary>
+          <div class="g2" style="margin-top:6px">
+            <div><label class="f">Bootstrap resamples</label><input type="number" min="100" max="5000" step="100" data-saopt="bootstrap" value="${o.bootstrap}"></div>
+            <div><label class="f">Permutations</label><input type="number" min="49" max="2000" step="50" data-saopt="permutations" value="${o.permutations}"></div>
+            <div><label class="f">Sobol base samples</label><select data-saopt="sobol_n">${[512, 1024, 2048, 4096, 8192].map((n) => `<option value="${n}" ${+o.sobol_n === n ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+            <div><label class="f">Random seed</label><input type="number" min="0" step="1" data-saopt="seed" value="${o.seed}"></div>
+            <div><label class="f">Surrogate (variance-based)</label><select data-saopt="surrogate">${[["auto", "Auto: best smooth model"], ["gp", "Gaussian process"], ["pce", "Polynomial chaos"], ["quadratic", "Quadratic surface"]].map(([k, l]) => `<option value="${k}" ${o.surrogate === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+            <div><label class="f">Model explained (SHAP, PD)</label><select data-saopt="explainer">${[["auto", "Auto: best model"], ["gp", "Gaussian process"], ["rf", "Random forest"], ["gbm", "Gradient boosting"], ["pce", "Polynomial chaos"]].map(([k, l]) => `<option value="${k}" ${o.explainer === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+          </div>
+          <div class="hint">Auto takes the model with the best cross-validated Q²; the variance-based indices need a smooth one (a forest's steps have no derivative).</div>
+        </details>
+      </div></div>
+      <div class="sec"><div class="sh">${I("sensitivity")}Result</div><div class="sb">${res}</div></div>
+      <div class="sec"><div class="sh">${I("runs")}Studies</div><div class="sb">${studies}</div></div>`;
+  }
+  function onSAField(e) {
+    const t = e.target, sa = state.sa;
+    if (t.dataset.saresp !== undefined) { sa.response = t.value; sa.data = null; renderSA(); renderLeft(); renderRibbon(); return true; }
+    if (t.dataset.sainp !== undefined) {
+      const all = ((state.doeData && state.doeData.parameters) || []).map((p) => p.path);
+      const on = $$("[data-sainp]", $("#lbody")).filter((c) => c.checked).map((c) => c.dataset.sainp);
+      sa.inputs = on.length === all.length ? null : on;
+      sa.data = null; renderSA(); renderRibbon(); return true;
+    }
+    if (t.dataset.sareal !== undefined) { sa.realised = t.checked; sa.data = null; sa.overview = null; renderSA(); renderRibbon(); return true; }
+    if (t.dataset.saopt) {
+      const k = t.dataset.saopt;
+      sa.options[k] = ["surrogate", "explainer"].includes(k) ? t.value : Number(t.value);
+      return true;
+    }
+    return false;
+  }
+  async function runSA() {
+    const sa = state.sa;
+    if (!state.doeId) { toast("No DOE study is selected."); return; }
+    if (!sa.response) { toast("No response is available yet; the study needs finished cases."); return; }
+    if (sa.inputs && !sa.inputs.length) { toast("Choose at least one input."); return; }
+    sa.busy = true; sa.t0 = Date.now(); renderSA(); renderLeft();
+    const tick = setInterval(() => { const el = $("#saElapsed"); if (el) el.textContent = `${((Date.now() - sa.t0) / 1000).toFixed(0)} s`; }, 500);
+    try {
+      const opt = Object.assign({}, sa.options);
+      if (opt.surrogate === "auto") delete opt.surrogate;
+      if (opt.explainer === "auto") delete opt.explainer;
+      sa.data = await api("POST", `/api/doe/${state.doeId}/sensitivity`, { response: sa.response, inputs: sa.inputs, realised: sa.realised, options: opt });
+      if (sa.data.error) toast(sa.data.error, 7000);
+      else if (sa.view === "all") sa.view = "summary";
+    } catch (err) { toast("The sensitivity analysis failed: " + err.message, 8000); sa.data = null; }
+    finally { clearInterval(tick); sa.busy = false; renderSA(); renderLeft(); renderRibbon(); }
+  }
+  async function runSAOverview() {
+    const sa = state.sa;
+    if (!state.doeId) { toast("No DOE study is selected."); return; }
+    sa.ovBusy = true; renderSA();
+    try { sa.overview = await api("POST", `/api/doe/${state.doeId}/sensitivity/overview`, { inputs: sa.inputs, realised: sa.realised, properties_only: true }); }
+    catch (err) { toast("The overview failed: " + err.message, 7000); sa.overview = null; }
+    finally { sa.ovBusy = false; renderSA(); }
+  }
+  function saCsv() {
+    const r = state.sa.data;
+    if (!r || r.error) return;
+    const M = r.methods, d = r.d, head = ["measure", "family", "model"].concat(r.inputs.map((x) => x.name));
+    const lines = [head];
+    const info = {};
+    (r.method_info || []).forEach((m) => (info[m.id] = m));
+    const row = (lab, fam, model, vals) => lines.push([lab, fam, model || ""].concat(vals.map((v) => (v === null || v === undefined ? "" : v))));
+    [["pearson", "value"], ["spearman", "value"], ["kendall", "value"], ["pcc", "value"], ["prcc", "value"], ["src", "value"], ["srrc", "value"],
+     ["corr_ratio", "value"], ["mi", "value"], ["dcor", "value"], ["hsic", "value"], ["gp_ard", "value"], ["rf_mdi", "value"], ["rf_perm", "value"], ["gbm_perm", "value"], ["shap", "value"]]
+      .forEach(([k, s]) => { if (M[k] && M[k][s]) row((info[k] || {}).label || k, (info[k] || {}).family || "", (info[k] || {}).model, M[k][s]); });
+    ["pearson", "spearman", "kendall", "pcc", "prcc", "mi", "dcor", "hsic"].forEach((k) => { if (M[k] && M[k].p) row(`${(info[k] || {}).label || k} p-value`, (info[k] || {}).family || "", null, M[k].p); });
+    if (M.anova) row("ANOVA share (η², main + quadratic + half of interactions)", "Regression", null, M.anova.share);
+    if (M.lasso) row("LASSO entry penalty", "Regression", null, M.lasso.enter);
+    [["sobol", "S1"], ["sobol", "ST"], ["pce", "S1"], ["pce", "ST"], ["efast", "S1"], ["efast", "ST"]].forEach(([k, s]) => { if (M[k]) row(`${k} ${s}`, "Variance-based", M[k].model || (k === "pce" ? "pce" : ""), M[k][s]); });
+    if (M.morris) { row("Morris mu*", "Screening", M.morris.model, M.morris.mu_star); row("Morris sigma", "Screening", M.morris.model, M.morris.sigma); }
+    if (M.dgsm) { row("DGSM nu", "Screening", M.dgsm.model, M.dgsm.nu); row("DGSM bound on ST", "Screening", M.dgsm.model, M.dgsm.bound); }
+    if (M.pawn) row("PAWN median KS", "Moment-independent", M.pawn.model, M.pawn.median);
+    if (M.h_stat) row("H-statistic total", "Interaction", r.surrogate.explainer, M.h_stat.total);
+    row("CONSENSUS score", "", "", r.consensus.score);
+    row("CONSENSUS mean rank", "", "", r.consensus.mean_rank);
+    lines.push([]);
+    lines.push(["pair", "Sobol S2", "Sobol S2 lo", "Sobol S2 hi", "PCE S2", "SHAP interaction share", "H2", "ANOVA eta2", "ANOVA p", "found by"]);
+    (r.interactions || []).forEach((p) => lines.push([p.name, p.sobol_s2, (p.sobol_s2_ci || [])[0], (p.sobol_s2_ci || [])[1], p.pce_s2, p.shap_int, p.h2, p.anova_eta2, p.anova_p, (p.detected_by || []).join(" + ")].map((v) => (v === undefined || v === null ? "" : v))));
+    void d;
+    const csv = lines.map((l) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    download(`sensitivity_${r.response.key}.csv`, new Blob(["﻿" + csv], { type: "text/csv" }));
+  }
+  // one figure card: a panel letter, a title, the model or method behind it, the figure, how to read it
+  function saCard(id, letter, title, sub, svgStr, how, wide) {
+    return `<div class="box sacard ${wide ? "wide" : ""}" data-fig="${id}"><div class="bt"><b class="plet">${letter}</b><span>${title}</span>${sub ? `<span class="hint">${sub}</span>` : ""}<div class="grow"></div>
+        ${svgStr ? `<button class="btn xs" data-saexp="svg:${id}" title="Download as SVG (vector, for a publication)">SVG</button><button class="btn xs" data-saexp="png:${id}" title="Download as PNG at four times the screen size">PNG</button>` : ""}</div>
+      <div class="safig">${svgStr || '<div class="hint" style="padding:18px 4px">Not available for this analysis (see the notes).</div>'}</div>${how ? `<div class="sahow">${how}</div>` : ""}</div>`;
+  }
+  const qtxt = (q) => (q === null || q === undefined ? "—" : `Q² ${fmt(q)}`);
+  function renderSA() {
+    const sel = $("#saSel"), resp = $("#saResp"), body = $("#saBody"), info = $("#saInfo");
+    if (!body) return;
+    const sa = state.sa, d = state.doeData, X = SAX();
+    if (X) X.setCmap(sa.cmap);
+    const opts = state.doeList.map((s) => `<option value="${s.id}" ${s.id === state.doeId ? "selected" : ""}>${esc(s.name)} (${s.n_cases})</option>`).join("") || '<option value="">No study</option>';
+    if (sel && sel._html !== opts) { sel.innerHTML = opts; sel._html = opts; }
+    const metrics = saMetrics();
+    if (metrics.length && !metrics.some((m) => m.key === sa.response)) sa.response = saDefaultResponse(metrics);
+    const ropts = metrics.map((m) => `<option value="${esc(m.key)}" ${m.key === sa.response ? "selected" : ""}>${esc(m.label)}${m.unit && m.unit !== "-" ? ` [${esc(m.unit)}]` : ""}</option>`).join("") || '<option value="">No finished case yet</option>';
+    if (resp && resp._html !== ropts) { resp.innerHTML = ropts; resp._html = ropts; }
+    $$("#saView button").forEach((b) => b.classList.toggle("on", b.dataset.v === sa.view));
+    const run = $("#saRun");
+    if (run) { run.disabled = sa.busy || !metrics.length; run.innerHTML = `${I(sa.busy ? "reset" : "play")}${sa.busy ? "Analysing…" : "Analyse"}`; }
+    const r = sa.data;
+    if (info) info.textContent = r && !r.error ? `${r.n} runs · ${r.d} inputs · ${r.consensus.methods.length} measures · ${fmt(r.timing.total)} s${r.cached ? " (kept)" : ""}` : "";
+    if (!X) { body.innerHTML = '<div class="empty">The figure module (sa_charts.js) is missing; reload the page.</div>'; return; }
+    if (!d) {
+      body.innerHTML = `<div class="empty">${I("sensitivity")}<div><b>No DOE study is selected.</b><br>A study is created on the DOE tab; when some of its cases have finished, they are analysed here.</div></div>`;
+      return;
+    }
+    if (sa.view === "all") { renderSAOverviewPage(body); return; }
+    if (sa.busy) {
+      body.innerHTML = `<div class="empty"><div class="saspin"></div><div><b>Analysing ${esc((metrics.find((m) => m.key === sa.response) || {}).label || sa.response)}</b> <span id="saElapsed"></span><br>
+        <span class="hint">correlations and bootstrap intervals · ANOVA · dependence tests · six models scored by cross-validation · SHAP · Sobol, PCE, eFAST, Morris, DGSM, PAWN — usually 5–30 s</span></div></div>`;
+      return;
+    }
+    if (!r) {
+      const ready = d.rows.filter((x) => x.state === "done").length;
+      body.innerHTML = `<div class="empty">${I("sensitivity")}<div><b>${esc(d.name)}</b> · ${ready} finished case${ready === 1 ? "" : "s"}<br>Choose the response above and press <b>Analyse</b>: every method in the left panel runs on it, and the views above compare them.</div>
+        <button class="btn primary" data-saact="run" ${ready < 4 ? "disabled" : ""}>${I("play")}Analyse</button></div>`;
+      return;
+    }
+    if (r.error) { body.innerHTML = `<div class="empty">${I("warn")}<div><b>${esc(r.error)}</b></div></div>`; return; }
+    const keep = body.scrollTop;
+    const views = { summary: saSummary, stats: saStats, ml: saML, var: saVar, inter: saInter, data: saData };
+    body.innerHTML = (views[sa.view] || saSummary)(r);
+    body.scrollTop = sa._lastView === sa.view ? keep : 0;
+    sa._lastView = sa.view;
+    X.bindTips(body);
+  }
+  function saHead(r) {
+    const u = r.response.unit && r.response.unit !== "-" ? ` [${esc(r.response.unit)}]` : "";
+    const notes = (r.notes || []).map((n) => `<div class="note warn">${esc(n)}</div>`).join("");
+    const skipped = Object.entries(r.skipped || {}).map(([k, v]) => `<div class="note">${esc(k)}: ${esc(v)}</div>`).join("");
+    return `<div class="sahead"><div><b>${esc(r.response.label)}</b>${u}<span class="hint"> · ${esc(r.study ? r.study.name : "")} · ${r.n} runs · ${r.d} inputs</span></div></div>${notes}${skipped}`;
+  }
+  function saSummary(r) {
+    const X = SAX(), lead = r.consensus.order[0], tile = (l, v, dd) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${dd || ""}</div></div>`;
+    const sur = r.surrogate || {};
+    const ICON = { lead: "★", important: "▲", weak: "○", shape: "∿", interaction: "⇄", share: "◐", agreement: "≡" };
+    const findings = (r.findings || []).map((f) => `<li class="saf-${f.kind}"><i>${ICON[f.kind] || "•"}</i><span>${esc(f.text)}</span></li>`).join("");
+    const ttile = (l, v, dd) => `<div class="tile"><div class="l">${l}</div><div class="v txt" title="${v}">${v}</div><div class="d">${dd || ""}</div></div>`;
+    return saHead(r) + `<div class="big">
+        ${ttile("Leading input", esc(r.inputs[lead].name), `consensus ${r.consensus.score[lead].toFixed(2)} · first in ${r.consensus.top_count[lead]} of ${r.consensus.methods.length}`)}
+        ${tile("Agreement of the methods", r.consensus.kendall_w !== null && r.consensus.kendall_w !== undefined ? r.consensus.kendall_w.toFixed(2) : "—", "Kendall's W (1 = identical rankings)")}
+        ${ttile("Global surrogate", esc((r.models[sur.global] || {}).label || "—"), qtxt(sur.global_q2) + " (cross-validated)")}
+        ${ttile("Model explained", esc((r.models[sur.explainer] || {}).label || "—"), qtxt(sur.explainer_q2) + " · SHAP, PD, ALE, H")}
+        ${tile("Through interactions", r.interaction_share !== undefined && r.interaction_share !== null ? `${(100 * r.interaction_share).toFixed(0)} %` : "—", "of the variance: 1 − ΣS₁ (Sobol)")}
+      </div>
+      <div class="box safind"><div class="bt">${I("sensitivity")}Findings<span class="hint">each with the evidence behind it</span></div><ul>${findings}</ul></div>
+      <div class="sagrid">
+        ${saCard("strip", "a", "Consensus importance", "every measure as a dot, the weighted consensus as a bar", X.consensusStrip(r), "Each dot is one method's importance of that input, scaled so the method's strongest input is 1; its colour is the family. The bar and ◆ are the consensus: the mean weighted by the Q² of the model behind each method, shared within a family. ↑ ↓: the response rises or falls with the input; ∩ ∪: an optimum inside the range.")}
+        ${saCard("bump", "b", "Rank by family of methods", "flat lines: the families agree", X.bump(r), "Each line is an input, each column a family of methods. A line that stays at the top is important by every criterion; one that climbs at Variance-based or Machine learning has a non-linear or interacting effect the trend statistics miss.")}
+        ${saCard("heat", "c", "Every method × every input", "normalised importance, rows grouped by family", X.consensusHeatmap(r), "Read a column to see whether all methods agree on an input; read a row for one method's ranking. The grey bar at the right of a row is that method's weight in the consensus.", true)}
+        ${saCard("models", "d", "Model accuracy", "cross-validated Q² of every model", X.modelQuality(r), "Measures taken from a model are only as good as its prediction of runs it never saw. Above 0.5 (dashed) the model is trusted; below, its measures are weighted down and its interaction flags not counted. S: the global surrogate (Sobol, eFAST, Morris, DGSM, PAWN); E: the model explained (SHAP, PD, ALE, H).")}
+        ${saCard("net", "e", "Interaction network", "inputs that act together", X.network(r), "Node area: the input's total Sobol index. An edge joins two inputs whose effects depend on each other; its width is the interaction consensus and its colour how many of five measures found it (Sobol S₂, PCE S₂, SHAP interaction, H², ANOVA).")}
+      </div>`;
+  }
+  function saStats(r) {
+    const X = SAX(), M = r.methods, an = M.anova;
+    const anRows = an ? an.terms.slice().sort((a, b) => (a.p ?? 1) - (b.p ?? 1)).map((t) => [esc(t.name), t.kind, fmt(t.coef), fmt(t.se), fmt(t.t), fmt(t.F), `<b>${fmt(t.p)}</b> ${t.p !== null && t.p < 0.05 ? "*" : ""}`, fmt(t.eta2 !== null ? 100 * t.eta2 : null)]) : [];
+    return saHead(r) + `<div class="sagrid">
+        ${saCard("forest", "a", "Correlation coefficients", "Pearson · Spearman · Kendall · PCC · PRCC", X.forest(r), "Pearson reads a straight-line trend, Spearman and Kendall any monotonic one; PCC and PRCC hold the other inputs fixed, so a factor varied together with a stronger one is not credited with its effect. Filled: p < 0.05. An input near zero here may still matter through an optimum or an interaction (see Variance & screening).")}
+        ${saCard("src", "b", "Standardised regression coefficients", "SRC (values) and SRRC (ranks)", X.srcBars(r), "The change of the response, in standard deviations, per standard deviation of the input with the others fixed. Their squares add up to R² when the inputs are independent; a low R² means a linear model misses much of the response.")}
+        ${saCard("pareto", "c", "Pareto chart of standardised effects", an ? `ANOVA of a ${{ full: "full quadratic", inter: "two-factor", quad: "quadratic", main: "linear" }[an.model]} surface · R² ${fmt(an.r2)} · adj. ${fmt(an.adj_r2)} · Q² ${fmt(an.q2)}` : "", X.paretoEffects(r), "The classic design-of-experiments view: every main, quadratic and two-factor term of the response surface on coded inputs (−1…1), by |t|. Beyond the red line a term is significant at 5 %; a quadratic term there means curvature, a two-factor term an interaction. + / −: the sign of the coefficient.")}
+        ${saCard("donut", "d", "Where the variation comes from", "ANOVA η² of the response surface", X.varianceDonut(r), "The share of the total variation of the runs carried by each input's main and quadratic terms, by all interaction terms together, and left unexplained (residual: noise of the random structures, or effects the surface cannot shape).")}
+        ${saCard("dep", "e", "Dependence of any shape", "correlation ratio · mutual information · distance correlation · HSIC", X.dependenceBars(r), "These detect a dependence whatever its form — a peak, a step — where a correlation coefficient sees nothing. Faded bars are not significant (permutation test, 5 %). An input high here and low in panel a has a non-monotonic effect.")}
+        ${saCard("lasso", "f", "LASSO path", "standardised coefficients as the penalty weakens", X.lassoPath(r), "Moving right, the penalty falls and inputs enter the model one after the other: the first to leave zero is the strongest linear effect. The red line is the penalty chosen by cross-validation; an input still at zero there adds nothing a linear model can use.")}
+        ${an ? `<div class="box sacard wide"><div class="bt"><b class="plet">g</b>ANOVA table<span class="hint">Type III sums of squares${an.lenth ? " · saturated design: Lenth's pseudo standard error" : ` · ${an.df_resid} residual degrees of freedom`}</span></div>
+          ${tbl(["Term", "Kind", "Coefficient (coded)", "Std. error", "t", "F", "p", "η² [%]"], anRows)}</div>` : ""}
+      </div>`;
+  }
+  function saML(r) {
+    const X = SAX(), sh = r.methods.shap, ex = (r.models[r.surrogate.explainer] || {}).label || "";
+    return saHead(r) + `<div class="sagrid">
+        ${saCard("parity", "a", "Cross-validated predictions", "every model, on the runs it did not see", X.parity(r), "Each point is a run predicted by a model fitted without it (leave-one-out up to 12 runs, five folds above). Points on the dashed line: the model generalises. Grey points: Q² below 0.5 — the measures of that model are weighted down.", true)}
+        ${saCard("perm", "b", "Permutation importance", "random forest and gradient boosting, held-out runs", X.permBox(r), "How much worse a model predicts the held-out runs when one input's values are shuffled, as a share of the response's variance: box 25–75 %, whiskers 5–95 % over folds and repeats. At the right, the forest's impurity importance (biased towards inputs with many distinct values).")}
+        ${saCard("bee", "c", "SHAP summary", `${esc(ex)} · ${sh && sh.exact ? "exact Shapley values" : "sampled Shapley values"}`, X.beeswarm(r), "One dot per run: how much that input moved the model's prediction for that run away from the average. Colour: the input's value in that run (blue low, red high). Red dots on the right: raising the input raises the response; mixed colours on both sides: the effect depends on the other inputs.")}
+        ${saCard("shapdep", "d", "SHAP dependence of the leading input", "coloured by its strongest interaction partner", X.shapDependence(r), "The leading input's contribution against its value. A single thin curve is a clean main effect; a vertical spread sorted by colour is an interaction with the partner shown in the colour bar.")}
+        ${saCard("effects", "e", "Effect of each input", `partial dependence and ICE of the ${esc(ex.toLowerCase())}, ALE, and the runs' means`, X.effects(r), "The thick line is the average prediction as one input moves across its range (partial dependence); thin lines are the same for each run (ICE) — fanning lines mean interaction. Dashed: accumulated local effects, which stay honest when inputs are correlated. Black: the mean of the runs at each level ± standard error.", true)}
+      </div>`;
+  }
+  function saVar(r) {
+    const X = SAX(), M = r.methods, sur = (r.models[r.surrogate.global] || {}).label || "";
+    const rows = r.inputs.map((it, i) => [esc(it.name), M.sobol ? `${fmt(M.sobol.S1[i])} <span class="hint">[${fmt(M.sobol.S1_ci ? M.sobol.S1_ci[i][0] : null)}, ${fmt(M.sobol.S1_ci ? M.sobol.S1_ci[i][1] : null)}]</span>` : "—",
+      M.sobol ? `${fmt(M.sobol.ST[i])} <span class="hint">[${fmt(M.sobol.ST_ci ? M.sobol.ST_ci[i][0] : null)}, ${fmt(M.sobol.ST_ci ? M.sobol.ST_ci[i][1] : null)}]</span>` : "—",
+      M.pce ? fmt(M.pce.S1[i]) : "—", M.pce ? fmt(M.pce.ST[i]) : "—", M.efast ? fmt(M.efast.S1[i]) : "—", M.efast ? fmt(M.efast.ST[i]) : "—",
+      M.morris ? fmt(M.morris.mu_star[i]) : "—", M.morris ? fmt(M.morris.sigma[i]) : "—", M.dgsm ? fmt(M.dgsm.bound[i]) : "—", M.pawn ? fmt(M.pawn.median[i]) : "—"]);
+    return saHead(r) + `<div class="sagrid">
+        ${saCard("sobol", "a", "Sobol indices, three estimators", `${esc(sur)} (${qtxt(r.surrogate.global_q2)}) · PCE degree ${M.pce ? M.pce.degree : "—"}, ${qtxt((r.models.pce || {}).q2)}`, X.sobolBars(r), "The share of the response's variance an input explains alone (S₁, solid) and in everything it takes part in (S_T, solid + hatched); the hatched part is its interactions. Three independent estimators — Monte Carlo on the surrogate (Saltelli, with the 95 % bootstrap interval of S_T), the polynomial chaos expansion in closed form, and eFAST — should agree; where they do not, the surrogate's Q² decides.")}
+        ${saCard("morris", "b", "Morris screening", `elementary effects on the ${esc(sur.toLowerCase())}`, X.morris(r), "Right: the input changes the response strongly (μ*). Up: its effect differs from place to place — curvature or interaction (σ). Below the σ/μ* = 0.1 line an input acts linearly; above 1 its effect is dominated by non-linearity or by the other inputs.")}
+        ${saCard("dgsm", "c", "Derivative-based measures", "DGSM bound against the Sobol total index", X.dgsm(r), "The mean squared derivative ν bounds the total index from above (ST ≤ ν/π²V for a uniform input). A bar near zero proves an input negligible; ◆ well inside the bar is normal.")}
+        ${saCard("pawn", "d", "PAWN, moment-independent", "how far the whole distribution moves", X.pawn(r), "The Kolmogorov–Smirnov distance between the response's distribution and its distribution with the input held in one tenth of its range: it reads changes of spread and shape, not only of the mean. Inside the grey band the shift is within sampling noise.")}
+        <div class="box sacard wide"><div class="bt"><b class="plet">e</b>Indices<span class="hint">Sobol with 95 % bootstrap intervals · PCE · eFAST · Morris · DGSM · PAWN</span></div>
+          ${tbl(["Input", "Sobol S₁", "Sobol S_T", "PCE S₁", "PCE S_T", "eFAST S₁", "eFAST S_T", "Morris μ*", "Morris σ", "DGSM bound", "PAWN"], rows)}</div>
+      </div>`;
+  }
+  function saInter(r) {
+    const X = SAX(), pairs = r.interactions || [];
+    const rows = pairs.map((p) => [esc(p.name), fmt(p.sobol_s2) + (p.sobol_s2_ci ? ` <span class="hint">[${fmt(p.sobol_s2_ci[0])}, ${fmt(p.sobol_s2_ci[1])}]</span>` : ""), fmt(p.pce_s2), fmt(p.shap_int), fmt(p.h2),
+      p.anova_p !== undefined ? `${fmt(p.anova_eta2)} <span class="hint">p ${fmt(p.anova_p)}</span>` : "—", fmt(p.score), p.detected_by.length ? `<b>${p.detected_by.length}</b> · ${esc(p.detected_by.join(", "))}` : "—"]);
+    const p2 = (r.pdp2 || []).map((p, k) => saCard("pdp2_" + k, String.fromCharCode(99 + k), `Joint effect of ${esc(r.inputs[p.i].name)} and ${esc(r.inputs[p.j].name)}`, "two-dimensional partial dependence with the runs", X.pdp2(r, k), "The model's prediction over the plane of the two inputs, the others averaged out. Parallel straight contours: the two act separately. Bent or fanning contours: the best value of one depends on the other — optimise them together.")).join("");
+    const top = pairs[0];
+    return saHead(r) + `<div class="sagrid">
+        ${saCard("ih", "a", "Interaction strength by five measures", "every pair of inputs", X.interHeatmaps(r), "Sobol S₂ and PCE S₂: the share of variance only the pair explains together. SHAP interaction: the part of the Shapley values that belongs to the pair. Friedman's H²: the share of the pair's joint partial dependence that is not the sum of the two single ones. ANOVA η²: the two-factor term of the response surface. Each is scaled to its own largest pair.", true)}
+        ${saCard("net2", "b", "Interaction network", "", X.network(r), "As in the Summary: node area is the total Sobol index, edges are interactions, coloured by how many measures found them.")}
+        ${p2}
+        ${top ? saCard("iplot", String.fromCharCode(99 + (r.pdp2 || []).length), `Interaction plot of the runs: ${esc(top.name)}`, "the response against one input at low and high levels of the other", X.interactionPlot(r, top), "Straight from the runs, no model: the mean response at each level of the first input, for each level of the second. Parallel lines: no interaction; lines that diverge or cross: the effect of one depends on the other.") : ""}
+        <div class="box sacard wide"><div class="bt"><b class="plet">${String.fromCharCode(100 + (r.pdp2 || []).length)}</b>Pairs<span class="hint">a pair counts as found by a model-based measure only when that model's Q² ≥ 0.5</span></div>
+          ${tbl(["Pair", "Sobol S₂ [95 %]", "PCE S₂", "SHAP interaction", "H²", "ANOVA η²", "Consensus", "Found by"], rows)}</div>
+      </div>`;
+  }
+  function saData(r) {
+    const head = ["#"].concat(r.inputs.map((x) => `${x.symbol} ${x.name}${x.unit ? ` [${x.unit}]` : ""}${x.realised ? " (realised)" : ""}`), [`${r.response.label}${r.response.unit && r.response.unit !== "-" ? ` [${r.response.unit}]` : ""}`]);
+    const rows = r.data.X.map((x, k) => [`<span title="${esc(r.data.labels[k])}">${k + 1}</span>`].concat(x.map(fmt), [`<b>${fmt(r.data.y[k])}</b>`]));
+    const cor = r.input_corr ? tbl([""].concat(r.inputs.map((x) => x.symbol)), r.input_corr.map((row, i) => [r.inputs[i].symbol].concat(row.map((v) => fmt(v))))) : "";
+    const tm = Object.entries(r.timing || {}).map(([k, v]) => [esc(k), fmt(v)]);
+    return saHead(r) + `<div class="sagrid">
+        <div class="box sacard wide"><div class="bt"><b class="plet">a</b>The runs analysed<span class="hint">${r.n} finished cases with this response</span></div>${tbl(head, rows)}</div>
+        ${cor ? `<div class="box sacard"><div class="bt"><b class="plet">b</b>Correlation between the inputs<span class="hint">0 for a design with independent factors</span></div>${cor}</div>` : ""}
+        <div class="box sacard"><div class="bt"><b class="plet">${cor ? "c" : "b"}</b>Computing time<span class="hint">seconds per step</span></div>${tbl(["Step", "s"], tm)}</div>
+      </div>`;
+  }
+  function renderSAOverviewPage(body) {
+    const sa = state.sa, X = SAX(), ov = sa.overview;
+    if (sa.ovBusy) { body.innerHTML = `<div class="empty"><div class="saspin"></div><div><b>Every response of the study</b><br><span class="hint">a Gaussian process and its Sobol indices per response</span></div></div>`; return; }
+    if (!ov) {
+      body.innerHTML = `<div class="empty">${I("table")}<div><b>Which input drives which response</b><br>A light pass over every response of the study: Spearman's ρ and the total Sobol index of a Gaussian process fitted to each.</div>
+        <button class="btn primary" data-saact="all">${I("play")}Analyse all responses</button></div>`;
+      return;
+    }
+    const svgS = X.overview(ov);
+    body.innerHTML = `<div class="sagrid">${saCard("overview", "a", "Every response × every input", "total Sobol index of a Gaussian process per response; ▲ ▼ the sign of Spearman's ρ", svgS,
+      "Read a column to see every property an input moves — the inputs that matter for one response and not for another are where a trade-off can be made. Q² at the right: how well that response's model predicts its held-out runs (below 0.5 the row is uncertain). The realised contents and sizes are left out: they are what the inputs became, not properties. Choose a response above and Analyse for its full analysis.", true)}</div>`;
+    X.bindTips(body);
+  }
+  function bindSA() {
+    const page = $("#c-sa");
+    if (!page) return;
+    $("#saView").innerHTML = SA_VIEWS.map(([k, l]) => `<button data-v="${k}" class="${state.sa.view === k ? "on" : ""}">${l}</button>`).join("");
+    $("#saView").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-v]"); if (!b) return;
+      state.sa.view = b.dataset.v;
+      renderSA();
+      if (b.dataset.v === "all" && !state.sa.overview && !state.sa.ovBusy && state.doeData) runSAOverview();
+    });
+    $("#saSel").addEventListener("change", (e) => openDoe(e.target.value));
+    $("#saResp").addEventListener("change", (e) => { state.sa.response = e.target.value; state.sa.data = null; renderSA(); if (state.tab === "sensitivity") renderLeft(); renderRibbon(); });
+    $("#saRun").addEventListener("click", runSA);
+    $("#saCmap").addEventListener("change", (e) => { state.sa.cmap = e.target.value; renderSA(); });
+    document.body.addEventListener("click", (e) => {
+      const ex = e.target.closest("[data-saexp]");
+      if (ex) {
+        const [kind, id] = ex.dataset.saexp.split(":");
+        const el = $(`[data-fig="${id}"] svg`);
+        const name = `${(state.sa.data && state.sa.data.response ? state.sa.data.response.key : "sensitivity")}_${id}`.replace(/[^\w.-]+/g, "_");
+        if (el) (kind === "svg" ? SAX().exportSvg : SAX().exportPng)(el, name);
+        return;
+      }
+      const a = e.target.closest("[data-saact]");
+      if (a) { if (a.dataset.saact === "run") runSA(); else if (a.dataset.saact === "all") runSAOverview(); return; }
+      const o = e.target.closest("[data-saopen]");
+      if (o) { openDoe(o.dataset.saopen).then(() => renderLeft()); }
     });
   }
 
@@ -4865,8 +5213,12 @@
     $("#vParticles").checked = S.particles;
     $$("#vSurfStyle button").forEach((b) => b.classList.toggle("on", b.dataset.style === S.surfStyle));
     const hasVox = S.meta && (S.meta.voxel_style || S.meta.voxel_volume);
-    const vsb = $("#vSurfStyle"); if (vsb) vsb.style.display = hasVox ? "" : "none";
-    const vsh = $("#vSurfStyleHint"); if (vsh) vsh.style.display = hasVox ? "" : "none";
+    const hasFem = !!(S.meta && S.meta.fem && (S.meta.fem.fields || []).length);
+    const vsb = $("#vSurfStyle"); if (vsb) vsb.style.display = hasVox || hasFem ? "" : "none";
+    const vsh = $("#vSurfStyleHint"); if (vsh) vsh.style.display = hasVox || hasFem ? "" : "none";
+    const fb = $("#vStyleFem"); if (fb) fb.style.display = hasFem ? "" : "none";
+    const fer = $("#vFemEdgesRow"); if (fer) fer.style.display = hasFem && S.surfStyle === "fem" ? "" : "none";
+    const fe = $("#vFemEdges"); if (fe) fe.checked = !!S.femEdges;
     // a large RVE whose particles are drawn in a corner region says so
     const rn = $("#vRegionNote");
     if (rn) { const t = V.regionNote ? V.regionNote() : ""; rn.textContent = t; rn.hidden = !t; }
@@ -4886,6 +5238,7 @@
     $$("#vAxis2d button").forEach((b) => b.classList.toggle("on", b.dataset.a === S.axis2d));
     const op = $("#vOpacity");
     if (op) { op.value = S.opacity; $("#vOpacityV").textContent = S.opacity.toFixed(2); }
+    renderPhaseRows();
     // the phase list belongs to the loaded run, so the swatches are rebuilt
     // whenever the controls are synchronised rather than once at start-up
     renderColourSwatches();
@@ -5003,7 +5356,7 @@
           + (meta.press && meta.press.steps3d ? `<optgroup label="Compression"><option value="@press">The compression step by step (the whole box)</option></optgroup>` : "");
         $("#vDemSec").style.display = meta.dem ? "" : "none";
         $("#vPressSec").style.display = meta.press && meta.press.steps3d ? "" : "none";
-        $("#vPhaseToggles").innerHTML = meta.surfaces.map((sf) => { const l = meta.labels[sf.label]; return `<label class="phtog"><input type="checkbox" data-hide="${sf.label}" checked><i style="background:${l.color}"></i>${esc(l.name)}</label>`; }).join("") || '<div class="hint">No surfaces.</div>';
+        renderPhaseRows();
         $("#vNetworkRow").style.display = meta.network ? "" : "none";
         $("#vVolumeRow").style.display = V.can.volume() ? "" : "none";
         const paths = meta.paths || [], vecs = meta.vectors || [];
@@ -5083,6 +5436,63 @@
     } catch (err) { toast("Rendering failed: " + err.message.slice(0, 400), 7000); }
     finally { btn.disabled = false; btn.innerHTML = I("image"); }
   }
+  /* Every phase drawn in 3D on its own row (5.11.0): shown or hidden, its own opacity (times the overall one),
+     and Solo - the others turned to ghosts - so that one filler of a blend can be looked at through the rest, in
+     the structure and with a result alike. */
+  const GHOST = 0.1;
+  function renderPhaseRows() {
+    const box = $("#vPhaseToggles");
+    if (!box) return;
+    const S = V.state, meta = S.meta;
+    if (!meta) { box.innerHTML = '<div class="hint">Open a run to see its phases.</div>'; return; }
+    const shown = new Set([...(meta.surfaces || []).map((s) => s.label), ...Object.keys((meta.fem || {}).labels || {}).map(Number),
+      ...meta.labels.filter((l) => !(l.kind === "matrix" || l.kind === "interphase") && l.vf > 0).map((l) => l.value)]);
+    const rows = meta.labels.filter((l) => shown.has(l.value));
+    if (!rows.length) { box.innerHTML = '<div class="hint">No particle or pore phase in this run.</div>'; return; }
+    const solo = S._solo;
+    box.innerHTML = rows.map((l) => {
+      const p = S.popac[l.value] === undefined ? 1 : +S.popac[l.value];
+      return `<div class="phrow ${S.hidden[l.value] ? "off" : ""} ${solo === l.value ? "solo" : ""}" title="${esc(l.name)}${l.vf !== undefined ? ` · ${(100 * l.vf).toFixed(1)} vol%` : ""}">
+          <input type="checkbox" data-hide="${l.value}" ${S.hidden[l.value] ? "" : "checked"} title="Show or hide this phase">
+          <i style="background:${S.colours[l.value] || l.color}"></i><span>${esc(l.name)}</span>
+          <input type="range" min="0" max="1" step="0.05" value="${p}" data-popac="${l.value}" title="This phase's opacity (times the overall opacity)">
+          <em>${p.toFixed(2)}</em>
+          <button class="btn xs ${solo === l.value ? "on" : ""}" data-solo="${l.value}" title="This phase alone: the others become faint ghosts (again: everything back)">Solo</button></div>`;
+    }).join("") + `<div class="row gap" style="margin-top:4px"><button class="btn xs" data-phreset>All shown, opaque</button>
+        <button class="btn xs" data-phghost title="Every phase translucent (0.3): the inside of the packing shows">All translucent</button></div>
+      <div class="hint">The opacity reaches its value through about six voxels of a phase (Voxels style) or on each surface (Smooth, FEM mesh); a field is coloured on whatever stays visible.</div>`;
+  }
+  function onPhaseRows(e) {
+    const S = V.state, t = e.target;
+    if (t.dataset.popac !== undefined) {
+      S.popac[t.dataset.popac] = +t.value;
+      const em = t.nextElementSibling; if (em) em.textContent = (+t.value).toFixed(2);
+      if (e.type === "input") { clearTimeout(S._popT); S._popT = setTimeout(() => V.refresh(true), 60); } else V.refresh(true);
+      return true;
+    }
+    if (t.dataset.hide !== undefined && e.type === "change") {
+      S.hidden[t.dataset.hide] = !t.checked; renderPhaseRows(); V.refresh(true); return true;
+    }
+    return false;
+  }
+  function onPhaseClick(e) {
+    const S = V.state, b = e.target.closest("[data-solo],[data-phreset],[data-phghost]");
+    if (!b || !S.meta) return;
+    const labs = S.meta.labels.map((l) => l.value);
+    if (b.dataset.solo !== undefined) {
+      const k = +b.dataset.solo;
+      if (S._solo === k) { S._solo = null; S.popac = S._soloBefore || {}; S.hidden = S._soloHidden || {}; }
+      else {
+        if (S._solo === null || S._solo === undefined) { S._soloBefore = Object.assign({}, S.popac); S._soloHidden = Object.assign({}, S.hidden); }
+        S._solo = k;
+        labs.forEach((v) => { S.popac[v] = v === k ? 1 : GHOST; });
+        S.hidden = {};
+      }
+    } else if (b.dataset.phreset !== undefined) { S.popac = {}; S.hidden = {}; S._solo = null; S.opacity = 1; }
+    else if (b.dataset.phghost !== undefined) { labs.forEach((v) => { S.popac[v] = 0.3; }); S._solo = null; }
+    renderPhaseRows(); syncViewerControls(); V.refresh(true);
+  }
+
   /* One swatch per phase. The colour belongs to the phase, not to the view, so
      it is taken from the labels of the loaded run and applies at once to the 3D
      surfaces, the 2D sections and every legend. */
@@ -5197,7 +5607,10 @@
       syncViewerControls(); V.refresh(true);
     });
     $("#vOpacity").addEventListener("input", (e) => { S.opacity = +e.target.value; $("#vOpacityV").textContent = S.opacity.toFixed(2); V.refresh(true); });
-    $("#vPhaseToggles").addEventListener("change", (e) => { const l = e.target.dataset.hide; if (l !== undefined) { S.hidden[l] = !e.target.checked; V.refresh(true); } });
+    $("#vPhaseToggles").addEventListener("change", onPhaseRows);
+    $("#vPhaseToggles").addEventListener("input", onPhaseRows);
+    $("#vPhaseToggles").addEventListener("click", onPhaseClick);
+    tog("vFemEdges", "femEdges");
     $$("[data-cam]").forEach((b) => b.addEventListener("click", () => V.camera(b.dataset.cam)));
     $("#vShot").addEventListener("click", screenshot);
     $("#vGif").addEventListener("click", recordGif);
@@ -5244,6 +5657,9 @@
     $("#ctabs [data-c=doe]").innerHTML = `${I("preset")}DOE`;
     const optTab = $("#ctabs [data-c=opt]");
     if (optTab) optTab.innerHTML = `${I("optimize")}Optimization`;
+    const saTab = $("#ctabs [data-c=sa]");
+    if (saTab) saTab.innerHTML = `${I("sensitivity")}Sensitivity`;
+    bindSA();
     $("#ctabs [data-c=rep]").innerHTML = `${I("report")}Report`;
     if ($("#ctabs [data-c=ai]")) $("#ctabs [data-c=ai]").innerHTML = `${I("ai")}AI`;
     $("#ctabs [data-c=cal]").innerHTML = `${I("calibrate")}Calibration`;
@@ -5302,7 +5718,7 @@
       await showPressInView(e.target.checked);
       $("#vField").value = state.pressShown ? "@press" : V.state.field;
     });
-    $("#hPhases").innerHTML = `${I("grains")}Surfaces`;
+    $("#hPhases").innerHTML = `${I("grains")}Phases: visibility and opacity`;
     $("#hSections").innerHTML = `${I("matrix")}Section planes`;
     // guarded like #hVectors: a page held in an old cache will not have these
     const hCol = $("#hColours");
@@ -5392,6 +5808,7 @@
     });
     lb.addEventListener("change", (e) => {
       const t = e.target;
+      if (state.tab === "sensitivity" && onSAField(e)) return;
       if (t.dataset.lk) onLibField(e);
       else if (t.dataset.laniso !== undefined) {
         // anisotropic thermal conductivity on: every axis starts at k; off: k in every direction
