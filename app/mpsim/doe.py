@@ -71,6 +71,30 @@ def levels(p):
     return [float(x) for x in np.linspace(lo, hi, n)]
 
 
+def check_ranges(parameters):
+    """Every parameter has its levels: a list of values, or a minimum and a maximum that are numbers."""
+    out = []
+    for p in parameters:
+        name = p.get("label") or p.get("path")
+        if p.get("values"):
+            try:
+                v = [float(x) for x in p["values"]]
+            except (TypeError, ValueError):
+                out.append(f"{name}: the values must be numbers")
+                continue
+            if not all(math.isfinite(x) for x in v):
+                out.append(f"{name}: the values must be numbers")
+            continue
+        try:
+            lo, hi = float(p.get("min")), float(p.get("max"))
+        except (TypeError, ValueError):
+            out.append(f"{name}: give a minimum and a maximum, or a list of values")
+            continue
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            out.append(f"{name}: give a minimum and a maximum, or a list of values")
+    return out
+
+
 def _from_unit(p, u):
     if p.get("values"):
         v = [float(x) for x in p["values"]]
@@ -209,6 +233,15 @@ def apply_case(base_form, case, index=None, parameters=None):
     values = dict(case["values"])
     for path, value in linked(parameters, case["values"]).items():
         values.setdefault(path, value)
+    if any(".props." in p for p in values):
+        # a material value varied: the material's other values from the library first - a form may name its
+        # material by id only, and props holding the varied value alone would leave the rest missing
+        from . import materials as M
+        from . import spec as S
+        lib = M.library_by_id()
+        for obj in [form.get("matrix")] + list(form.get("phases") or []):
+            if isinstance(obj, dict):
+                S._fill_from_library(obj, lib)
     for path, value in values.items():
         if path.startswith("mix."):
             mix.append((int(path.split(".")[1]), value))

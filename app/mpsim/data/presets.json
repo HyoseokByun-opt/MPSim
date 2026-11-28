@@ -838,7 +838,7 @@
   {
    "id": "muf_cured",
    "name": "MUF · from flow to the cured part (silica 15 + 3 µm 55 vol%, after shear flow)",
-   "description": "The MUF of the viscosity example, cured where its flow leaves it: the packing is sheared in the resin by particle dynamics to a strain of 10 (Domain → Particle arrangement → After shear flow), flow along x and its gradient through z - across the gap the compound fills. The viscosity, flow curve, filling time and settling come from the particle dynamics; thermal conductivity, CTE and modulus, Dk/Df and moisture uptake are solved on that one cured structure (60 µm, 240³ voxels). Computed with touching particles: k 0.596 W/m·K through the gap (0.576 for the random packing it started from), CTE 16.5 ppm/K, E 15.0 GPa, Dk 3.84, Df 0.0068, 0.77 wt% moisture at saturation; the flow raised the close pairs of particles from 1.7 to 3.8 per sphere. The shear takes minutes on an NVIDIA GPU and about 17 minutes on 14 CPU cores; the solves need about 6 GB (the three conduction directions side by side).",
+   "description": "The MUF of the viscosity example, cured where its flow leaves it: the packing is sheared in the resin by particle dynamics to a strain of 10 (Domain → Particle arrangement → After shear flow), flow along x and its gradient through z - across the gap the compound fills. The viscosity, flow curve, filling time and settling come from the particle dynamics; thermal conductivity, CTE and modulus, Dk/Df and moisture uptake are solved on that one cured structure (60 µm, 240³ voxels). Computed with touching particles (5.10.2, the thermal conductivity on the finite volume): k 0.596 W/m·K through the gap (0.576 for the random packing it started from), CTE 16.5 ppm/K, E 15.0 GPa, Dk 3.84, Df 0.0068, 0.77 wt% moisture at saturation; the flow raised the close pairs of particles from 1.7 to 3.8 per sphere. The shear takes minutes on an NVIDIA GPU and about 17 minutes on 14 CPU cores; the solves need about 6 GB (the three conduction directions side by side). Since 5.12.0 the thermal conductivity is solved on the tetrahedral FEM by default, about 60 GB at 240³; Simulation → Solver settings → Thermal conductivity → Periodic finite volume on the voxels runs it as computed here.",
    "form": {
     "name": "MUF · cured after shear flow, silica 15 + 3 µm 55 vol%",
     "matrix": {
@@ -1047,8 +1047,8 @@
   },
   {
    "id": "cal_muf_al2o3",
-   "name": "Calibration · MUF Al₂O₃ 250 nm 55 vol%: interface and contact resistance from k = 1.4 W/m·K",
-   "description": "A calibration, ready in the Calibration tab: a moulded underfill of 250 nm alumina spheres at 55 vol% in the MUF epoxy, measured at 1.4 W/m·K (± 5 %). The unknowns are the filler-resin interfacial resistance R_int and the contact resistance R_c on the faces where the touching particles meet (gap 0), each searched from 1e-10 to 1e-6 m²K/W. Computed on 70³ voxels of 25 nm (14 solves, about 12 s on 18 threads): the contacts carry most of the heat, so this one measurement fixes R_c ≈ 9.4e-9 m²K/W (95 % 8.1e-10 – 2.3e-8) and leaves R_int open - with R_c at 1e-8, R_int from 1e-10 to 1e-8 moves k only from 1.46 to 1.36. A second sample in which the contacts weigh differently, a lower content or another particle size, separates the two. Linking R_c = 2·R_int instead (one unknown) gives R_int = 5.1e-9 (95 % 3.5e-9 – 7.3e-9) from this measurement, with the factor 2 as an assumption; R_int alone, with contacts free of resistance, moves k only from 3.00 to 2.16 and never reaches 1.4. The values are effective ones for this grid, since touching spheres meet over whole voxel faces; compare samples on the same voxel size.",
+   "name": "Calibration · MUF Al₂O₃ 250 nm 55 vol%: interface and contact resistance from k = 0.54 W/m·K",
+   "description": "A calibration, ready in the Calibration tab: a moulded underfill of 250 nm alumina spheres at 55 vol% in the MUF epoxy. The measurement, 0.54 W/m·K (± 5 %), is reproducible: it is this RVE's own result on the FEM (0.537) for R_int = 1e-7 m²K/W - the phonon-mismatch (DMM) value of a perfect epoxy-alumina interface, 9.6e-8 - and R_c = 2e-7, so the answer can be checked. The unknowns are the filler-resin interfacial resistance R_int and the contact resistance R_c, in series with the resin film where two touching particles meet, each searched from 1e-10 to 1e-6 m²K/W. Computed on the tetrahedral FEM (70³ lattice of 25 nm, 4.8 million tetrahedra built once; 14 parameter sets, about 7 min on 18 threads): without resistance the compound conducts 1.23 W/m·K; R_int acts on every particle-resin surface and R_c only on the films, so this one measurement narrows R_int to 5.4e-8 - 3.6e-7 (estimate 1.4e-7) and leaves R_c open - it fixes the combination ln R_int + 0.26 ln R_c, on which the true pair lies. A second sample in which the contacts weigh differently, a lower content or another particle size, separates the two. Linking R_c = 2·R_int instead (one unknown) gives R_int = 9.9e-8 (95 % 7.6e-8 - 1.24e-7), with the factor 2 as an assumption; R_int alone, with contacts free of resistance, gives 2.4e-7, standing for the contacts as well (guide 30.9).",
    "form": {
     "name": "MUF · Al₂O₃ 250 nm 55 vol%",
     "matrix": {
@@ -1089,14 +1089,14 @@
     }
    },
    "cal": {
-    "name": "MUF · Al₂O₃ 250 nm 55 vol% · R_int and R_c from k = 1.4",
+    "name": "MUF · Al₂O₃ 250 nm 55 vol% · R_int and R_c from k = 0.54",
     "measurements": [
      {
       "label": "MUF 55 vol%",
       "set": [],
       "property": "k",
       "direction": "iso",
-      "value": 1.4,
+      "value": 0.54,
       "unc": 5
      }
     ],
@@ -1183,10 +1183,10 @@
   },
   {
    "id": "dense_overlap",
-   "name": "Highly filled · epoxy + silica 66 vol%, one size (above random close packing: progressive overlap)",
-   "description": "66 vol% of equal silica spheres, above the random close packing of equal spheres (about 64 %): no arrangement without overlap reaches it. With progressive overlap (Structure → Gap between particles, on by default) the packing is made again with an overlap of 1 voxel allowed, then 2, two tries at each step, until the content is reached; the RVE checks report the overlap the structure needed. Untick it to see the earlier behaviour: every sphere drawn smaller until they fit, and the content short of the target.",
+   "name": "Highly filled · epoxy + silica 64 vol%, one size (at random close packing: grown in place)",
+   "description": "64 vol% of equal silica spheres, at the random close packing of equal spheres (64.3 %, Farr-Groot). The packing stops just short of full size; the overlap Auto (Structure → Gap between particles) draws the spheres at their full size where they stand, because the rest is within 2 % of their size: touching neighbours then overlap by at most that much - the depth of roughness and squeezed-out resin between real particles - and the tetrahedral FEM separates them again at a face with a resin film. The RVE checks report the growth. Set 66 vol% to see a loading beyond the rule: no arrangement of equal spheres holds it without overlaps deeper than real particles have, so the structure is packed with less content and the run stops before the solves; a broader size distribution packs denser. Overlap → Voxel steps reaches 66 vol% with whole voxels of overlap, for comparison with versions up to 5.11.",
    "form": {
-    "name": "Epoxy + silica 66 vol% (progressive overlap)",
+    "name": "Epoxy + silica 64 vol% (grown in place)",
     "matrix": {
      "material_id": "epoxy"
     },
@@ -1203,7 +1203,7 @@
        "type": "mono"
       },
       "fraction": {
-       "value": 66,
+       "value": 64,
        "basis": "vol"
       },
       "orientation": {
@@ -1222,20 +1222,14 @@
      "thermal": true
     },
     "options": {
-     "directions": "z",
-     "overlap_steps": {
-      "on": true,
-      "tries": 2,
-      "max_vox": 3,
-      "share": "none"
-     }
+     "directions": "z"
     }
    }
   },
   {
    "id": "film_pi_bn",
    "name": "Thin film · polyimide + h-BN platelets 25 vol%, 15 µm",
-   "description": "A 15 µm film: x and y periodic, z the real thickness, every platelet inside the film. The platelets lie in the plane, so the in-plane thermal conductivity is about 2.4 times the through-plane value that a heat-spreading film is judged by (0.69 against 0.29 W/m·K; guide 6.5).",
+   "description": "A 15 µm film: x and y periodic, z the real thickness, every platelet inside the film. The platelets lie in the plane, so the in-plane thermal conductivity is about 2.3 times the through-plane value that a heat-spreading film is judged by (0.62 against 0.27 W/m·K; guide 6.5).",
    "form": {
     "name": "Film · polyimide + h-BN 25 vol%, 15 µm",
     "matrix": {
@@ -1454,7 +1448,7 @@
   {
    "id": "cu_diamond",
    "name": "Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement)",
-   "description": "Cu/diamond for high-power, GaN and SiC devices. Wang et al. (Materials 18 (2025) 3882, doi:10.3390/ma18163882) hot-pressed 400 µm diamond (1717 W/m·K) at 50 vol% in Cu (385 W/m·K) with a 200 nm W coating and measured 640 W/m·K. The RVE gives 646 W/m·K with an interface conductance of 12.5 MW/m²K (R_int 8e-8 m²K/W; touching diamonds 1.6e-7) - what the measurement says about the bonded interface. The 36-56 MW/m²K the paper estimates from effective-medium models give 749-777 W/m·K here, and a differential effective medium with the same inputs 775: the difference lies in the model's assumptions, not in the solve. The Calibration tab finds R_int from a measurement of your own.",
+   "description": "Cu/diamond for high-power, GaN and SiC devices. Wang et al. (Materials 18 (2025) 3882, doi:10.3390/ma18163882) hot-pressed 400 µm diamond (1717 W/m·K) at 50 vol% in Cu (385 W/m·K) with a 200 nm W coating and measured 640 W/m·K. On the tetrahedral FEM the RVE gives 640 W/m·K with an interface conductance of 10.6 MW/m²K (R_int 9.4e-8 m²K/W; touching diamonds 1.88e-7) - what the measurement says about the bonded interface. The 36-56 MW/m²K the paper estimates from effective-medium models give 767-794 W/m·K here, and a differential effective medium with the same inputs 775: the difference lies in the model's assumptions, not in the solve. The Calibration tab finds R_int from a measurement of your own.",
    "form": {
     "name": "Cu/diamond · 50 vol% 400 µm",
     "matrix": {
@@ -1493,8 +1487,8 @@
       "orientation": {
        "mode": "iso"
       },
-      "r_int": 8e-08,
-      "r_contact": 1.6e-07
+      "r_int": 9.4e-08,
+      "r_contact": 1.88e-07
      }
     ],
     "rve": {
@@ -1519,7 +1513,7 @@
   {
    "id": "alsic_baseplate",
    "name": "Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC)",
-   "description": "AlSiC for IGBT and SiC module baseplates and lids: a CTE near the ceramic substrate with the conductivity of aluminium. Guo et al. (J. Univ. Sci. Technol. Beijing 36 (2014) 489-495, doi:10.13374/j.issn1001-053x.2014.04.011; tabulated in Lai et al., Micromachines 14 (2023) 1491, Table 2) measured pseudo-semi-solid thixoformed SiCp/Al at 63 vol%: 178 W/m·K and 8.21 ppm/K (56 vol%: 176 W/m·K, 9.25 ppm/K); this case gives 189 W/m·K and 8.85 ppm/K (+6 %, +8 %). Bimodal SiC grit (60 + 20 µm, 3:1) as needed for such loadings, Al/SiC interface 1e-8 m²K/W, one fixed grid of 140³.",
+   "description": "AlSiC for IGBT and SiC module baseplates and lids: a CTE near the ceramic substrate with the conductivity of aluminium. Guo et al. (J. Univ. Sci. Technol. Beijing 36 (2014) 489-495, doi:10.13374/j.issn1001-053x.2014.04.011; tabulated in Lai et al., Micromachines 14 (2023) 1491, Table 2) measured pseudo-semi-solid thixoformed SiCp/Al at 63 vol%: 178 W/m·K and 8.21 ppm/K (56 vol%: 176 W/m·K, 9.25 ppm/K); this case gives 195 W/m·K (the tetrahedral FEM with the interface resistance on the true surfaces; 189 on the voxels) and 8.85 ppm/K (+10 %, +8 %). Bimodal SiC grit (60 + 20 µm, 3:1) as needed for such loadings, Al/SiC interface 1e-8 m²K/W, one fixed grid of 140³.",
    "form": {
     "name": "AlSiC · SiC 63 vol%",
     "matrix": {
@@ -1753,7 +1747,7 @@
   {
    "id": "inductor_cip",
    "name": "Package-level power inductor · epoxy + carbonyl iron 54 vol%",
-   "description": "Magnetic core of a planar inductor for package-level power delivery. Sugawa et al. (IEEE Trans. Magn. 49 (2013) 4172-4175, doi:10.1109/TMAG.2013.2250925) report μr 7.5 for a screen-printed 54 vol% carbonyl-iron/epoxy core; spheres of iron (μr 50) in this case, touching where they meet, give 5.98. The resin gaps between the particles, not the iron, set the permeability: a printed paste has particle chains and agglomerates along which the flux crosses fewer gaps - try a higher content, flake-like particles or permitted overlap to see how fast μr rises.",
+   "description": "Magnetic core of a planar inductor for package-level power delivery. Sugawa et al. (IEEE Trans. Magn. 49 (2013) 4172-4175, doi:10.1109/TMAG.2013.2250925) report μr 7.5 for a screen-printed 54 vol% carbonyl-iron/epoxy core; spheres of iron (μr 50) in this case, touching where they meet, give 5.97. The resin gaps between the particles, not the iron, set the permeability: a printed paste has particle chains and agglomerates along which the flux crosses fewer gaps - try a higher content, flake-like particles or permitted overlap to see how fast μr rises.",
    "form": {
     "name": "Epoxy + carbonyl iron 54 vol%",
     "matrix": {
@@ -2488,7 +2482,7 @@
   {
    "id": "fem_tim_alumina_bn",
    "name": "FEM · alumina + BN compound on a tetrahedral mesh fitted to the particles",
-   "description": "The conduction solved by finite elements on a tetrahedral mesh fitted to the particles (Simulation → Solver settings → Conduction → Finite elements on a tetrahedral mesh fitted to the particles), with the finite volume on the voxels beside it ('Also solve with the other method'). Alumina spheres (4 µm, log-normal) 45 vol% with BN platelets (3 × 3 × 0.6 µm) 5 vol% in epoxy, 16 µm RVE, 64³ voxels of 0.25 µm; thermal conductivity and permittivity along z (k 30 / 60 / 0.2 W/m·K, library values). Result (about 1 min): the mesh holds 2.89 million tetrahedra; 7,522 lattice edges run from one particle straight into another through a film of resin thinner than a voxel (median 0.11 µm), carried as interface elements. k_z 2.49 W/m·K by the FEM against 4.13 W/m·K by the finite volume; ε_r 6.02 against 6.00. The two differ where the contrast is high and the particles are close: on the voxels two particles conduct into each other wherever two of their voxels touch, on the fitted mesh they are the exact shapes with the resin films between them. Another structure of this recipe drawn on finer and finer grids (guide 7.2): the finite volume 4.34 → 3.22 W/m·K from 32³ to 128³ and still falling, the FEM 1.75 → 1.90. The permittivity, of low contrast, agrees within 1 %. Which value fits a material depends on its contacts: fillers wetted by the resin are nearer the FEM, fillers pressed or sintered into each other nearer the finite volume (or the finite volume with a contact resistance calibrated on a measurement). Method: conformal decomposition finite elements (D. R. Noble, E. P. Newren, J. B. Lechman, Int. J. Numer. Meth. Fluids 63 (2010) 725, doi:10.1002/fld.2095); films as thin-gap conduction (G. K. Batchelor, R. W. O'Brien, Proc. R. Soc. Lond. A 355 (1977) 313, doi:10.1098/rspa.1977.0100); the same values as FEniCSx on the same mesh (self-test).",
+   "description": "The conduction solved by finite elements on a tetrahedral mesh fitted to the particles (Simulation → Solver settings → Thermal conductivity, the default since 5.12.0, and Other conduction properties for the permittivity), with the finite volume on the voxels beside it ('Also solve with the other method'). Alumina spheres (4 µm, log-normal) 45 vol% with BN platelets (3 × 3 × 0.6 µm) 5 vol% in epoxy, 16 µm RVE, 64³ voxels of 0.25 µm; thermal conductivity and permittivity along z (k 30 / 60 / 0.2 W/m·K, library values). Result (about 1 min): the mesh holds 2.89 million tetrahedra; 8,770 lattice edges run from one particle straight into another through a film of resin thinner than a voxel (median 0.12 µm), carried as interface elements, and 137 pairs that the packing left overlapping by less than a voxel are met as touching particles (Overlapping particles → Separated, the default since 5.12.0). k_z 1.57 W/m·K by the FEM against 4.13 W/m·K by the finite volume; ε_r 6.02 against 6.00. With the overlaps merged into necks, as up to 5.11, k_z is 2.49. The two differ where the contrast is high and the particles are close: on the voxels two particles conduct into each other wherever two of their voxels touch, on the fitted mesh they are the exact shapes with the resin films between them. The same particles drawn on finer and finer grids (guide 7.2): the finite volume 4.69 → 3.64 W/m·K from 32³ to 128³ and still falling, the FEM 1.66 → 1.55. The permittivity, of low contrast, agrees within 1 %. Which value fits a material depends on its contacts: fillers wetted by the resin are nearer the FEM, fillers pressed or sintered into each other nearer the finite volume (or the finite volume with a contact resistance calibrated on a measurement). Method: conformal decomposition finite elements (D. R. Noble, E. P. Newren, J. B. Lechman, Int. J. Numer. Meth. Fluids 63 (2010) 725, doi:10.1002/fld.2095); films as thin-gap conduction (G. K. Batchelor, R. W. O'Brien, Proc. R. Soc. Lond. A 355 (1977) 313, doi:10.1098/rspa.1977.0100); the same values as FEniCSx on the same mesh (self-test).",
    "form": {
     "name": "TIM · alumina + BN on a tetrahedral mesh (FEM)",
     "matrix": {
@@ -2550,7 +2544,7 @@
   {
    "id": "fem_emc_elastic",
    "name": "FEM · EMC stiffness and CTE on a tetrahedral mesh fitted to the particles",
-   "description": "Elasticity and thermal expansion solved by finite elements on a tetrahedral mesh fitted to the particles (Simulation → Solver settings → Elasticity and CTE → Finite elements on a tetrahedral mesh fitted to the particles), with the voxel finite elements (FANS) beside it ('Also solve with the other method'). Fused silica spheres (4 µm, log-normal) 60 vol% in epoxy, 16 µm RVE, 48³ voxels of 0.33 µm. Result (about 1 min): 1.59 million tetrahedra; 6,170 edges cross a film of resin between two spheres thinner than the mesh (median 0.14 µm), carried as interface elements. E 16.8 GPa and α 14.9 ppm/K by the FEM against E 21.4 GPa and α 11.9 ppm/K by the voxel elements on the same structure. The voxel value is not converged at this grid: two spheres are bonded wherever two of their voxels touch, and that stiff path thins as the grid is refined. The same recipe drawn on finer and finer grids (guide 12.2): voxel elements 25.0 → 22.2 → 20.9 → 19.2 → 18.3 → 17.4 GPa from 32³ to 192³ and still falling, the FEM 16.2 → 15.9 → 15.7 GPa from 32³ to 64³; α 10.1 → 14.6 ppm/K against 15.2 → 15.6. Against a measurement the FEM is the nearer one: glass spheres in epoxy at 23 to 50 vol% (Smith 1976; preset 'Measured benchmark') within −7 to +5 %, the voxel elements of the same grid 15 to 35 % high. Particles bonded over an area take a neck (Bonded contacts, guide 12.2). The Result Viewer shows the thermal stress in 3D on the mesh itself beside the voxel field. Interfaces are bonded (a cured compound at small strain). On the same mesh FEniCSx gives the same stiffness and thermal stress to twelve digits (self-test).",
+   "description": "Elasticity and thermal expansion solved by finite elements on a tetrahedral mesh fitted to the particles (Simulation → Solver settings → Elasticity and CTE → Finite elements on a tetrahedral mesh fitted to the particles), with the voxel finite elements (FANS) beside it ('Also solve with the other method'). Fused silica spheres (4 µm, log-normal) 60 vol% in epoxy, 16 µm RVE, 48³ voxels of 0.33 µm. Result (about 1 min): 1.63 million tetrahedra; 6,041 edges cross a film of resin between two spheres thinner than the mesh (median 0.19 µm), carried as interface elements. E 14.8 GPa and α 16.5 ppm/K by the FEM against E 21.7 GPa and α 11.8 ppm/K by the voxel elements on the same structure. The voxel value is not converged at this grid: two spheres are bonded wherever two of their voxels touch, and that stiff path thins as the grid is refined. The same recipe drawn on finer and finer grids (guide 12.2): voxel elements 24.8 → 21.8 → 20.1 → 18.2 → 17.2 → 16.2 GPa from 32³ to 192³ and still falling, the FEM 15.4 → 15.0 → 14.8 GPa from 32³ to 64³; α 10.3 → 15.6 ppm/K against 16.0 → 16.6. Extrapolated to an infinitely fine grid the two meet: 14.1-14.2 GPa and about 17 ppm/K. Against a measurement the FEM is the nearer one: glass spheres in epoxy at 23 to 50 vol% (Smith 1976; preset 'Measured benchmark') within −7 to +5 %, the voxel elements of the same grid 15 to 35 % high. Particles bonded over an area take a neck (Bonded contacts, guide 12.2). The Result Viewer shows the thermal stress in 3D on the mesh itself beside the voxel field. Interfaces are bonded (a cured compound at small strain). On the same mesh FEniCSx gives the same stiffness and thermal stress to twelve digits (self-test).",
    "form": {
     "name": "EMC · E and CTE on a tetrahedral mesh (FEM)",
     "matrix": {
@@ -2595,7 +2589,7 @@
   {
    "id": "fem_graded_fibres",
    "name": "FEM · grains with thin fibres on a graded tetrahedral mesh",
-   "description": "A blend of very different sizes on the graded mesh (Simulation → Solver settings → Tetrahedral mesh → Graded): irregular alumina grains (3 µm) 50 vol% with copper fibres 0.3 µm thick and 3 µm long, 1 vol%, in epoxy; 9 µm RVE, 60³ voxels of 0.15 µm - a fibre is two voxels thick. The graded mesh halves its cells where a particle's surface runs through them until they are a quarter of that particle's smallest dimension: 0.075 µm at the fibres (finer than the voxel), up to 0.6 µm inside the grains and in open resin; 3.70 million tetrahedra (about 1 min with the finite volume beside it). k_z 3.26 W/m·K by the FEM against 4.81 W/m·K by the finite volume on the voxels, which sees a fibre as a two-voxel staircase and conducts wherever two voxels touch. What the graded mesh saves depends on where the fine particles are (guide 7.2): grains with 0.6 vol% fibres 20 times thinner needed 3.6 times fewer tetrahedra than the lattice mesh of the same finest cell and 14 times fewer one level finer - a resolution the lattice mesh did not reach on a 16 GB computer; a dense blend whose fines fill the gaps between the coarse particles everywhere saved 15 to 30 %, since there the surfaces are everywhere.",
+   "description": "A blend of very different sizes on the graded mesh (Simulation → Solver settings → Tetrahedral mesh → Graded): irregular alumina grains (3 µm) 50 vol% with copper fibres 0.3 µm thick and 3 µm long, 1 vol%, in epoxy; 9 µm RVE, 60³ voxels of 0.15 µm - a fibre is two voxels thick. The graded mesh halves its cells where a particle's surface runs through them until they are a quarter of that particle's smallest dimension: 0.075 µm at the fibres (finer than the voxel), up to 0.6 µm inside the grains and in open resin; 3.70 million tetrahedra (about 1 min with the finite volume beside it). k_z 1.88 W/m·K by the FEM against 4.81 W/m·K by the finite volume on the voxels, which sees a fibre as a two-voxel staircase and conducts wherever two voxels touch. The 327 pairs that the packing left overlapping by less than a voxel are met as touching particles (Overlapping particles → Separated, the default since 5.12.0); merged into necks, as up to 5.11, they give 3.25. What the graded mesh saves depends on where the fine particles are (guide 7.2): grains with 0.6 vol% fibres 20 times thinner needed 3.6 times fewer tetrahedra than the lattice mesh of the same finest cell and 14 times fewer one level finer - a resolution the lattice mesh did not reach on a 16 GB computer; a dense blend whose fines fill the gaps between the coarse particles everywhere saved 15 to 30 %, since there the surfaces are everywhere.",
    "form": {
     "name": "Grains with thin fibres on a graded tetrahedral mesh (FEM)",
     "matrix": {
@@ -2738,7 +2732,7 @@
      "crosscheck": true
     }
    },
-   "description": "Which value is right? J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy filled with glass spheres of 1 to 30 µm, coated with an aminosilane, in tension at 24 °C: 7.94 ± 0.12 GPa and 0.354 at a volume fraction of 0.396 (unfilled 3.01 GPa, 0.394; glass 76 GPa, 0.23, as the paper states). This case is that compound - spheres of 10 µm (log-normal), 60 µm RVE, 48³ voxels - solved by the tetrahedral FEM with the voxel elements beside it. Result (about 1 min): E 8.22 GPa by the FEM (+3.5 % against the measurement), 10.68 GPa by the voxel elements on the same grid (+34.6 %). Over the paper's loadings 0.225 / 0.3025 / 0.396 / 0.496 the measurement is 5.08 / 6.01 / 7.94 / 12.09 GPa, the FEM 5.13 / 6.32 / 8.22 / 11.22 (+0.9 / +5.2 / +3.5 / -7.2 %), the voxel elements 5.82 / 7.62 / 10.68 / 16.16 at 48³ (+15 / +27 / +35 / +34 %), 5.36 / 6.79 / 9.09 / 13.14 at 96³ and 5.22 / 6.52 / 8.61 / 12.13 at 144³, still falling towards the FEM's. Spheres wetted by the resin meet at points with resin around them, which is the structure the FEM solves; the voxel elements bond every pair of touching voxels. At 0.496 the FEM is 7 % below the measurement (two seeds and equal spheres within 1 % of each other). Bonded contacts stay at 0 here.",
+   "description": "Which value is right? J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy filled with glass spheres of 1 to 30 µm, coated with an aminosilane, in tension at 24 °C: 7.94 ± 0.12 GPa and 0.354 at a volume fraction of 0.396 (unfilled 3.01 GPa, 0.394; glass 76 GPa, 0.23, as the paper states). This case is that compound - spheres of 10 µm (log-normal), 60 µm RVE, 48³ voxels - solved by the tetrahedral FEM with the voxel elements beside it. Result (about 1 min): E 8.15 GPa by the FEM (+2.6 % against the measurement), 10.68 GPa by the voxel elements on the same grid (+34.6 %). Over the paper's loadings 0.225 / 0.3025 / 0.396 / 0.496 the measurement is 5.08 / 6.01 / 7.94 / 12.09 GPa, the FEM 5.12 / 6.32 / 8.15 / 11.22 (+0.7 / +5.1 / +2.6 / -7.2 %), the voxel elements 5.82 / 7.62 / 10.68 / 16.16 at 48³ (+15 / +27 / +35 / +34 %), 5.36 / 6.79 / 9.09 / 13.14 at 96³ and 5.22 / 6.52 / 8.61 / 12.13 at 144³, still falling towards the FEM's. Spheres wetted by the resin meet at points with resin around them, which is the structure the FEM solves; the voxel elements bond every pair of touching voxels. At 0.496 the FEM is 7 % below the measurement (two seeds and equal spheres within 1 % of each other). Bonded contacts stay at 0 here.",
    "benchmark": {
     "kind": "measured",
     "ref": "Smith 1976"
@@ -3059,7 +3053,7 @@
      }
     ]
    },
-   "description": "A literature solution reproduced. Spheres of 4 µm, 20 times as conducting as the matrix, at 5 vol% (one sphere per periodic cell), with an interfacial thermal resistance R on their surface. D. P. H. Hasselman and L. F. Johnson (J. Compos. Mater. 21 (1987) 508, doi:10.1177/002199838702100602) give the conductivity of dilute spheres with an interface of conductance 1/R through α = R k_m / a (a the radius). The preset is a DOE over R = 0, 1e-6 and 2e-6 m²K/W (α 0, 0.5, 1); it opens in the DOE tab. Result (seconds per case, 70³): α 0: 1.1363 against 1.1355 (+0.07 %); α 0.5: 1.0311 against 1.0325 (-0.14 %); α 1: 0.9960 against 0.9976 (-0.16 %). At α = 1 the sphere is nearly invisible, k ≈ k_m. The resistance sits on the voxel faces of the sphere, scaled by the ratio of the sphere's area to that of its staircase. Domain → Periodic array is on."
+   "description": "A literature solution reproduced. Spheres of 4 µm, 20 times as conducting as the matrix, at 5 vol% (one sphere per periodic cell), with an interfacial thermal resistance R on their surface. D. P. H. Hasselman and L. F. Johnson (J. Compos. Mater. 21 (1987) 508, doi:10.1177/002199838702100602) give the conductivity of dilute spheres with an interface of conductance 1/R through α = R k_m / a (a the radius). The preset is a DOE over R = 0, 1e-6 and 2e-6 m²K/W (α 0, 0.5, 1); it opens in the DOE tab. Result (seconds per case, 70³): α 0: 1.1357 against 1.1355 (+0.02 %); α 0.5: 1.0326 against 1.0325 (+0.01 %); α 1: 0.9977 against 0.9976 (+0.01 %). At α = 1 the sphere is nearly invisible, k ≈ k_m. The resistance sits on the sphere's own surface on the tetrahedral mesh (the thermal conductivity's default since 5.12.0; on the voxel faces with the finite volume, scaled by the ratio of the sphere's area to that of its staircase: 1.1363 / 1.0311 / 0.9960). Domain → Periodic array is on."
   },
   {
    "id": "bench_maxwell_garnett",
@@ -3570,7 +3564,7 @@
      }
     ]
    },
-   "description": "Which value is right, against a published measurement. J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy (3.01 GPa, ν 0.394) filled with glass spheres of 1 to 30 µm coated with an aminosilane (76 GPa, ν 0.23), in tension at 24 °C, 200 days after casting. This DOE runs the paper's four loadings with the tetrahedral FEM and the voxel elements on the same particles (spheres of 10 µm, log-normal; 60 µm RVE, 48³). Result (about 1 min per case): 22.51 vol%: measured 5.08 ± 0.08 GPa, FEM 5.14 (+1.09 %), voxel elements 5.83 (+14.71 %); 30.25 vol%: measured 6.01 ± 0.21 GPa, FEM 6.32 (+5.20 %), voxel elements 7.62 (+26.75 %); 39.6 vol%: measured 7.94 ± 0.12 GPa, FEM 8.22 (+3.54 %), voxel elements 10.68 (+34.57 %); 49.6 vol%: measured 12.09 ± 0.09 GPa, FEM 11.22 (-7.18 %), voxel elements 16.16 (+33.68 %). Poisson's ratio: measured 0.384 / 0.375 / 0.354 / 0.330, FEM 0.364 / 0.352 / 0.334 / 0.314. The voxel elements bond every pair of touching voxels; on finer grids they fall towards the FEM (at 39.6 vol%: 10.68 / 9.09 / 8.61 GPa at 48³ / 96³ / 144³). Two criteria fail by design at this grid: the spheres are 4.7 voxels across and the box 3 times the largest sphere - what the comparison is about; a second packing moved the FEM by 1 %, equal spheres by 1 %, a 64³ mesh by 2 %."
+   "description": "Which value is right, against a published measurement. J. C. Smith (J. Res. Natl. Bur. Stand. A 80A (1976) 45, doi:10.6028/jres.080A.008, table 2) measured Young's modulus and Poisson's ratio of an epoxy (3.01 GPa, ν 0.394) filled with glass spheres of 1 to 30 µm coated with an aminosilane (76 GPa, ν 0.23), in tension at 24 °C, 200 days after casting. This DOE runs the paper's four loadings with the tetrahedral FEM and the voxel elements on the same particles (spheres of 10 µm, log-normal; 60 µm RVE, 48³). Result (about 1 min per case): 22.51 vol%: measured 5.08 ± 0.08 GPa, FEM 5.12 (+0.70 %), voxel elements 5.83 (+14.71 %); 30.25 vol%: measured 6.01 ± 0.21 GPa, FEM 6.32 (+5.08 %), voxel elements 7.62 (+26.75 %); 39.6 vol%: measured 7.94 ± 0.12 GPa, FEM 8.15 (+2.63 %), voxel elements 10.68 (+34.57 %); 49.6 vol%: measured 12.09 ± 0.09 GPa, FEM 11.22 (-7.22 %), voxel elements 16.16 (+33.68 %). Poisson's ratio: measured 0.384 / 0.375 / 0.354 / 0.330, FEM 0.365 / 0.352 / 0.336 / 0.314. The voxel elements bond every pair of touching voxels; on finer grids they fall towards the FEM (at 39.6 vol%: 10.68 / 9.09 / 8.61 GPa at 48³ / 96³ / 144³). Two criteria fail by design at this grid: the spheres are 4.7 voxels across and the box 3 times the largest sphere - what the comparison is about; a second packing moved the FEM by 1 %, equal spheres by 1 %, a 64³ mesh by 2 %."
   },
   {
    "id": "sa_alumina_epoxy_k",
@@ -3662,7 +3656,7 @@
      }
     ]
    },
-   "description": "The example of the Sensitivity Analysis tab. Four inputs of an alumina-filled epoxy are varied together over a 24-case Latin hypercube - the alumina content (20-50 vol%), the particle diameter (6-14 µm), the filler's and the matrix's conductivity - and the thermal conductivity of every case is computed (60 µm RVE, 48³ voxels, about 9 s per case, about 2 min for the study at 4 runs side by side). Create the study on the DOE tab, then open Sensitivity Analysis, choose Thermal conductivity and press Analyse. Result (MPSim 5.11.0, guide chapter 28A): the content leads in 24 of 25 measures and takes part in 75 % of the variance (Sobol S_T on the quadratic surface, cross-validated Q² 0.94); the matrix conductivity follows (consensus 0.44), then the filler's (0.25) and the diameter (0.17), which acts weakly and downwards. Content × filler conductivity is the one interaction three of five measures find (Sobol S₂ 0.034, ANOVA p = 0.005): the filler's conductivity matters more at a high loading. Interactions carry 6 % of the variance; the 25 measures agree with Kendall's W = 0.80. The realised contents and diameters of the generated structures are the inputs (they differ from the targets by up to a few per cent)."
+   "description": "The example of the Sensitivity Analysis tab. Four inputs of an alumina-filled epoxy are varied together over a 24-case Latin hypercube - the alumina content (20-50 vol%), the particle diameter (6-14 µm), the filler's and the matrix's conductivity - and the thermal conductivity of every case is computed (60 µm RVE, 48³ voxels; the thermal conductivity on the tetrahedral FEM, about 34 s per case, 13 min for the study one case after another). Create the study on the DOE tab, then open Sensitivity Analysis, choose Thermal conductivity and press Analyse. Result (MPSim 5.12.0, guide chapter 28A): the content leads in all 25 measures and takes part in 62 % of the variance (Sobol S_T on a Gaussian process, cross-validated Q² 0.98); the matrix conductivity follows (consensus 0.73, S_T 0.39), then the diameter (0.17) and the filler's conductivity (0.14, S_T 0.02): with a filler 14-230 times the resin, the heat crosses the resin films between the particles, so the resin's conductivity counts and the filler's hardly. Content × matrix conductivity is the one interaction three of five measures find (PCE S₂ 0.014, ANOVA p = 1.3e-6): the resin's conductivity matters more at a high loading. Interactions carry 3 % of the variance; the 25 measures agree with Kendall's W = 0.88. (On the voxels, MPSim 5.11 found the filler's conductivity weighing more: consensus 0.25 against the matrix's 0.44.) The realised contents and diameters of the generated structures are the inputs (they differ from the targets by up to a few per cent)."
   },
   {
    "id": "bench_dem_kd",

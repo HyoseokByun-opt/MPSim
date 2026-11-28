@@ -434,7 +434,8 @@ def plan(phases, rve=None, props=None, limits=None):
                            "note": "Random sequential addition may not reach this fraction. "
                                    "Aligned orientation or permitted overlap should be considered."})
 
-    mem = memory_estimate(N, props, nz=Nz, elastic=rve.get("elastic_method", "fans"))
+    mem = memory_estimate(N, props, nz=Nz, elastic=rve.get("elastic_method", "fans"),
+                          thermal=rve.get("thermal_method", "tet"), cond=rve.get("cond_method", "fv"))
     # Once the ceilings are raised or switched off, the grid is no longer what
     # stops a run - memory is. So it is reported in the same place and with the
     # actual number, which leaves the decision with whoever knows the machine
@@ -451,7 +452,13 @@ def plan(phases, rve=None, props=None, limits=None):
                            + (f". This machine has {ram:.0f} GB (warning above half of it, failure above 90 %)"
                               if ram else "")
                            + ". Every solve that runs side by side needs its own share. It is counted from the "
-                             "arrays each solver allocates, not measured, so allow some margin."})
+                             "arrays each solver allocates, not measured, so allow some margin."
+                           + (" The tetrahedral FEM of the thermal conductivity is the largest: about 10 tetrahedra "
+                              "per voxel. Where the machine is short of it, Simulation → Solver settings → Thermal "
+                              "conductivity → finite volume, or a coarser level, needs far less (the finite volume of a "
+                              "dense conductive packing depends on the grid, guide 7.2)."
+                              if mem and max(mem, key=mem.get) == "conduction (tetrahedral FEM)" and peak > warn_at
+                              else "")})
     return {
         "N": int(N), "h_um": float(h), "L_um": float(L),
         "film": film, "Nz": int(Nz), "T_um": float(T),
@@ -477,7 +484,10 @@ def image_plan(rve, props, q):
     nx, ny, nz = (int(v) for v in im["shape"])
     h = float(im["h_um"])
     n = nx * ny * nz
-    mem = memory_estimate(1, props, nz=n, elastic=rve.get("elastic_method", "fans"))
+    # an image has no particle shapes: its conduction stays on the voxels (a particle list is meshed)
+    mem = memory_estimate(1, props, nz=n, elastic=rve.get("elastic_method", "fans"),
+                          thermal=rve.get("thermal_method", "tet") if im.get("kind") == "particles" else "fv",
+                          cond=rve.get("cond_method", "fv"))
     if props & {"grains", "viscosity"} and im.get("kind") != "particles":
         # its particles separated (grains.separate): about 100 bytes per voxel of the image at the peak, measured
         mem["particle separation (image)"] = n * 100 / 1e9
@@ -528,6 +538,13 @@ PUMA_ELASTIC_BYTES = 3 * 24 * 8 * 4 + 240
 
 
 TET_ELASTIC_BYTES = 19000     # body-fitted tetrahedral elasticity, lattice mesh of a dense packing (4.9 GB at 64^3)
+# body-fitted tetrahedral conduction (the thermal conductivity by default since 5.12.0): about 10 tetrahedra per voxel.
+# The peak commit of a run (psutil peak_pagefile), 10 um alumina spheres in epoxy on voxels of 0.6 um, 2026-11-28:
+# 55 vol% 1.38 / 3.85 / 8.90 GB at 64^3 / 96^3 / 128^3, 40 vol% 1.11 / 3.39 / 7.83 GB - about 4.1 and 3.6 kB per
+# voxel, the matrix's assembly and the multigrid hierarchy at the top. The 1.6 kB of the first estimate was a working
+# set read while the run paged (it held 8.8 GB of a 17 GB commit on 168^3)
+TET_COND_BYTES = 4300
+TET_COND_BASE_GB = 0.3
 
 
 def elastic_bytes(method="fans"):
@@ -537,17 +554,21 @@ def elastic_bytes(method="fans"):
     return FANS_BYTES if method in ("fans", "fft", None) else PUMA_ELASTIC_BYTES
 
 
-def memory_estimate(N, props, nz=None, elastic="fans"):
+def memory_estimate(N, props, nz=None, elastic="fans", thermal="tet", cond="fv"):
     """Rough peak memory per solver, GB. From the array counts of each
     solver, not from a probe run. nz: a film's voxels in z (N otherwise).
-    elastic: the elasticity method (options.elastic_method)."""
+    elastic, thermal, cond: the elasticity, thermal-conductivity and other conduction methods (options)."""
     n = N * N * (N if nz is None else nz)
     out = {"structure": n * (4 + 1 + 8) / 1e9}
     # the multi-core FE path adds its DOF incidence tables: ~80 bytes per
     # voxel for conduction, ~240 for elasticity. Conduction counts the larger
     # of its two methods (PuMA FE ~230 bytes per voxel, FV ~120).
-    if props & {"thermal", "electrical", "dielectric", "magnetic", "emi"}:
+    cond_props = props & {"thermal", "electrical", "dielectric", "magnetic", "emi"}
+    if cond_props:
         out["conduction"] = n * 230 / 1e9
+    if ("thermal" in props and thermal == "tet") or (cond == "tet" and cond_props - {"thermal", "emi"}):
+        # the mesh is made of the particles (an image or a network stays on the voxels: an upper bound there)
+        out["conduction (tetrahedral FEM)"] = TET_COND_BASE_GB + n * TET_COND_BYTES / 1e9
     if props & {"cte", "elastic"}:
         lab = "thermo-elasticity (FANS)" if elastic_bytes(elastic) == FANS_BYTES else "thermo-elasticity (PuMA FE)"
         out[lab] = n * elastic_bytes(elastic) / 1e9
@@ -725,8 +746,23 @@ def post_checks(plan_, gen_info, quality="standard"):
                                f"{float(lo['scale_reached']):.3f} of the particle size): the particles keep the sizes "
                                f"entered and fewer of them are drawn - packed again {int(lo.get('repacks') or 1)} "
                                f"time(s) with less content, {100 * float(lo['content_factor']):.1f} % of the target "
-                               f"content of every particle phase. The volume fraction table gives each phase's content; "
-                               f"overlap allowed (Structure - Gap between particles) or a thicker film reaches more"})
+                               f"content of every particle phase. The volume fraction table gives each phase's content. "
+                               f"The overlap Auto does not force a loading further than 2 % of the size beyond what "
+                               f"the particles pack (an overlap that deep joins particles by necks real ones do not "
+                               f"have); a broader size distribution packs denser, and voxel steps of overlap "
+                               f"(Structure - Gap between particles) reach the loading for comparison"})
+    gi = gen_info.get("grown_in_place")
+    if gi:
+        checks.append({"id": "grown_in_place", "group": "Generated structure",
+                       "label": "Particles grown in place to the full size (overlap Auto)",
+                       "value": float(gi["depth_pct"]), "target": float(gi.get("allowed_pct") or 2.0), "unit": "%",
+                       "status": "pass",
+                       "note": f"The packing stopped at {float(gi['scale']):.4f} of the particle size, within "
+                               f"{float(gi.get('allowed_pct') or 2.0):g} % of it: every particle is drawn at its full "
+                               f"size where it stands, and touching neighbours overlap by at most "
+                               f"{float(gi['depth_pct']):.2f} % of their size - the depth of the roughness and resin "
+                               f"between real particles. The tetrahedral FEM separates them at a face with a resin "
+                               f"film (Solver settings - Overlapping particles)"})
     ps = gen_info.get("pack_scale")
     if ps is not None and ps < 1.0:
         checks.append({"id": "pack", "group": "Generated structure", "label": "Particle size reached by the dense packing",

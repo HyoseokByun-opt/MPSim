@@ -49,6 +49,7 @@ import math
 
 EPS = 1.0                       # % - the change of a result the overlap may make
 RCP = 0.64                      # random close packing of equal spheres
+RCP_TOL = 1e-3                  # a loading this far (relative) above the random close packing still counts as at it
 # 50 vol%: change of k in % (6 seeds at D = 8, 4 at D = 12); the column at
 # share 0 is the 0.49 -> 0.50 growth (no voxel shared), about a fifth of the
 # change at 0.012 % for every contrast
@@ -157,6 +158,59 @@ def allowed_share(alpha, d_vox, phi=0.6, eps=EPS):
         if c1 >= eps:
             return s0 + (s1 - s0) * (eps - c0) / (c1 - c0)
     return sh[-1]
+
+
+def auto_rule(spec, plan):
+    """The overlap Auto of 5.12.0 for a run: {"pct": None, "grow_pct", "rcp", "phi", "text"}.
+
+    1. No overlap where the loading packs: the particles are packed apart (touching where the loading needs it).
+    2. A packing that stops short within GROW_PCT (2 %) of its size is drawn at its full size where it is - grown in
+       place; touching neighbours then overlap by up to that share of their size. The tetrahedral FEM meets those
+       overlaps as contacts (tet_overlap "separate"): on 60 vol% of spheres grown from 57 and 58.5 % the conductivity
+       read -8 and 0 % against packings made without overlap, where solid necks gave +55-75 % (alpha 150); on the voxels
+       the grown overlaps are below one voxel and the structure stays that of the touching particles.
+    3. A loading further off is not forced: it is packed again with less content, sizes kept, and a size
+       distribution is advised (equal spheres pack to about 64 vol%; overlapping them to more is no physical
+       compound).
+    4. A flow through the pore space (permeability, porosity): no growth - an overlap opens or closes a throat.
+    5. Spheres asked above the random close packing of their size distribution (Farr-Groot): no growth either."""
+    from . import generate as GEN
+    from . import pipeline as PL
+    from .solvers import viscosity as VI
+    a0 = spec.get("analyses") or []
+    an = {k for k, v in a0.items() if v} if isinstance(a0, dict) else set(a0)
+    phi = sum(float(ph["vf"]) for ph in spec["phases"] if not ph.get("overlap"))
+    gp = float(((spec.get("options") or {}).get("overlap_steps") or {}).get("grow_pct", GEN.GROW_PCT))
+    rcp = None
+    try:
+        sd = PL.sphere_distribution(spec["phases"])
+        if sd is not None:
+            rcp = float(VI.rcp_farr_groot(*sd))
+    except Exception:                                                # noqa: BLE001
+        rcp = None
+    pore = sorted(a for a in an if a in PORE_SPACE)
+    if pore:
+        gp = 0.0
+        text = (f"no overlap - the flow through the pore space ({', '.join(pore)}): an overlap opens or closes a "
+                f"throat; a loading that does not pack is packed with less content")
+    else:
+        text = (f"no overlap where the loading packs; a packing that stops within {gp:g} % of its size is drawn at "
+                f"its full size where it is (touching neighbours overlap by up to {gp:g} % of their size, met as "
+                f"contacts by the tetrahedral FEM); a loading further off is not forced")
+    if rcp is not None:
+        text += (f" - {100 * phi:.1f} vol% of particles, {100 * phi / rcp:.0f} % of the random close packing of these "
+                 f"spheres ({100 * rcp:.1f} vol%, Farr-Groot)")
+        if phi > rcp * (1.0 + RCP_TOL) and gp > 0.0:
+            # 5. above the random close packing of the spheres entered no arrangement of real particles holds the
+            #    loading: growing in place would reach it only with every contact overlapping (equal spheres at 66
+            #    vol% packed to 62.2 % and grown by 1.97 %), so the loading is not forced at all
+            gp = 0.0
+            text += (": above it, so not grown in place either - no random arrangement of these particles holds the "
+                     "loading without overlap; a broader size distribution packs denser")
+    tm = (spec.get("options") or {}).get("tet_overlap", "separate")
+    if tm == "merged":
+        text += "; overlaps are merged into necks on the tetrahedral mesh (tet_overlap merged), which raises k"
+    return {"pct": None, "grow_pct": gp, "rcp": rcp, "phi": phi, "text": text}
 
 
 def auto_share(spec, plan):

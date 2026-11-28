@@ -18,11 +18,11 @@ authors:
   - family-names: Byun
     given-names: Hyoseok
     website: "https://www.linkedin.com/in/hyoseok-byun-72992120a"
-version: 5.11.0
+version: 5.12.0
 doi: 10.5281/zenodo.23120194
 repository-code: "https://github.com/HyoseokByun-opt/MPSim"
 url: "https://github.com/HyoseokByun-opt/MPSim"
-date-released: 2026-11-25
+date-released: 2026-11-28
 license: MIT
 keywords:
   - MPSim

@@ -272,9 +272,11 @@ def write(out_dir, r):
                 f"{_fmt(sh.get('moved_um'))} µm (median), and {_fmt(sh.get('separation_um'))} µm on average to restore the "
                 f"packing's gap.")
         if len(pp) == 3 and fab.get("random") and fab.get("sheared"):
+            # a packing with no close pair has no tilt (None)
+            tilt = lambda f: "–" if f is None else f"{f:+.3f}"                       # noqa: E731
             stxt += (f" Close pairs (surfaces within 5 % of their radii): {_fmt(pp[0])} per sphere in the random packing, "
-                     f"{_fmt(pp[2])} after the flow; their tilt ⟨n_x n_z⟩ {fab['random'][0][2]:+.3f} → "
-                     f"{fab['sheared'][0][2]:+.3f} (0 at random, below 0 along the flow's compression axis).")
+                     f"{_fmt(pp[2])} after the flow; their tilt ⟨n_x n_z⟩ {tilt(fab['random'][0][2])} → "
+                     f"{tilt(fab['sheared'][0][2])} (0 at random, below 0 along the flow's compression axis).")
         P.append(f"<p>{stxt}</p>")
     pz = rz.get("pressed")
     if pz:
@@ -828,11 +830,13 @@ def write(out_dir, r):
         P.append("</div>")
 
     # --------------------------------------------------------------- checks
-    lab = {"pass": "passed", "warn": "warning", "fail": "failed"}
+    # "info": a criterion that does not apply (one cell of a periodic array is not a random RVE)
+    lab = {"pass": "passed", "warn": "warning", "fail": "failed", "info": "not applicable"}
     P.append("<h2>5. Verification</h2><table><tr><th>Group</th><th>Check</th><th class='n'>Value</th><th class='n'>Criterion</th><th>Status</th><th>Note</th></tr>")
     for c in r["checks"]:
-        P.append(f"<tr><td>{e(c['group'])}</td><td>{e(c['label'])}</td><td class='n'>{_fmt(c['value'])}</td>"
-                 f"<td class='n'>{_fmt(c['target'])}</td><td class='{c['status']}'>{lab[c['status']]}</td><td>{e(c.get('note', ''))}</td></tr>")
+        st = c.get("status", "")
+        P.append(f"<tr><td>{e(c['group'])}</td><td>{e(c['label'])}</td><td class='n'>{_fmt(c.get('value'))}</td>"
+                 f"<td class='n'>{_fmt(c.get('target'))}</td><td class='{e(st)}'>{lab.get(st, e(st))}</td><td>{e(c.get('note', ''))}</td></tr>")
     P.append("</table>")
 
     # -------------------------------------------------------------- methods

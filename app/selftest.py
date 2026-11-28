@@ -272,8 +272,8 @@ def t_tetfem():
 
 
 @check("Body-fitted tetrahedral FE in a run: thermal conductivity and permittivity of a filled epoxy (spheres with "
-       "platelets, 50 vol%) with the finite-volume cross-check, fields for the viewer; an interface resistance sends "
-       "the run back to the finite volume", quick=False)
+       "platelets, 50 vol%) with the finite-volume cross-check, fields for the viewer; the thermal conductivity is "
+       "solved on the FEM by default (5.12.0) and keeps an interface resistance on the true surfaces", quick=False)
 def t_tetfem_pipeline():
     from mpsim import pipeline as PL
     f = {"name": "tet", "matrix": {"material_id": "epoxy"},
@@ -296,17 +296,150 @@ def t_tetfem_pipeline():
     expect(0.2 < kz < fvz and di["stats"][0]["method"] == "tet-fe" and 3.0 < di["diag"][2] < 9.0,
            f"k {kz}, FV {fvz}, eps {di['diag'][2]}")
     expect(any(k.startswith("thermal_z") for k in (r.get("figures") or {})), "no thermal figure")
+    # the default options: thermal on the FEM, an R_int on the split particle-matrix interfaces, which lowers k
     f2 = json.loads(json.dumps(f))
-    f2["phases"][0]["r_int"] = 1e-8
+    f2["phases"][0]["r_int"] = 1e-7
     f2["analyses"] = {"thermal": True}
-    f2["options"] = {"directions": "z", "cond_method": "tet"}
+    f2["options"] = {"directions": "z"}
     d2 = tempfile.mkdtemp()
     PL.run(f2, d2, log=lambda *a: None)
     r2 = json.load(open(os.path.join(d2, "result.json"), encoding="utf-8"))
-    m2 = r2["properties"]["thermal"]["stats"][0]["method"]
-    expect(m2 == "fv-interface", f"with an interface resistance: {m2}")
+    th2 = r2["properties"]["thermal"]
+    m2, k2 = th2["stats"][0]["method"], th2["diag"][2]
+    expect(m2 == "tet-fe-interface" and th2.get("tet_mesh", {}).get("n_iface", 0) > 0 and k2 < kz,
+           f"default options with an interface resistance: {m2}, k {k2} (without {kz}), {th2.get('tet_mesh')}")
     return (f"k_z {kz:.3f} W/m·K on {th['tet_mesh']['n_tets']:,} tetrahedra ({th['tet_mesh']['n_film_edges']:,} film edges); "
-            f"voxel FV {fvz:.3f}; ε_r {di['diag'][2]:.3f}; with R_int: {m2}")
+            f"voxel FV {fvz:.3f}; ε_r {di['diag'][2]:.3f}; default options with R_int 1e-7 on the alumina: {m2}, "
+            f"k_z {k2:.3f} on {th2['tet_mesh']['n_iface']:,} interface elements")
+
+
+def _sc_cell(d, overlap_frac, h_frac_shift, permitted=False):
+    """Eight spheres of diameter d on a simple cubic lattice in a periodic cell of two spacings; the spacing is
+    d (1 - overlap_frac), so that neighbours overlap by that share of the diameter. Centres shifted off the mesh.
+    permitted: the phase's overlap is permitted (Overlap permitted)."""
+    a = d * (1.0 - overlap_frac)
+    L = 2.0 * a
+    s = np.array(h_frac_shift) * a
+    c = [[(i + 0.5) * a + s[0], (j + 0.5) * a + s[1], (k + 0.5) * a + s[2]]
+         for i in range(2) for j in range(2) for k in range(2)]
+    ph = [dict(_hand_phase("sphere", {"d": d}), overlap=bool(permitted))]
+    return ph, _hand_particles(ph, c, [np.eye(3)] * 8, [0] * 8, L), L
+
+
+@check("Tetrahedral FE, films against the exact series sum: two slab particles stacked in z with films of 50 nm between "
+       "them - the thermal R_c once per film (±1 %), and electrically a touching film a metallic contact with R_c,e in "
+       "series (±3 %), a wider film insulating (5.12.0)")
+def t_tet_slab_films():
+    from mpsim.solvers import tetfem as TF
+    L, g, km, kp = 4.0, 0.05, 0.2, 30.0
+    N = 16
+    h = L / N
+    t = L / 2 - g
+    ph = [_hand_phase("cuboid", {"d": L, "ly": L, "lz": t})]
+    z0 = 0.5 * g + 0.5 * t + 0.3 * h                      # the films between lattice nodes
+    info = _hand_particles(ph, [[L / 2 + 0.01, L / 2 + 0.02, z0], [L / 2 + 0.01, L / 2 + 0.02, z0 + L / 2]],
+                           [np.eye(3)] * 2, [0, 0], L)
+    m = TF.build_mesh(N, h, info, ph, [1], overlap="separate")
+    expect(len(m["springs"]) > 0, "no film elements")
+    out = []
+    for Rc in (0.0, 2.5e-7, 1e-6):
+        rc = np.zeros((2, 2))
+        rc[1, 1] = Rc
+        k = float(TF.conductivity(m, [km, kp], 2, tol=1e-12, maxiter=20000,
+                                  system=TF.assemble(m, [km, kp], r_c=rc if Rc > 0 else None))["k_eff"])
+        exact = L / ((L - 2 * g) / kp + 2 * g / km + 2 * Rc * 1e6)
+        expect(abs(k / exact - 1) < 0.01, f"R_c {Rc}: {k:.4f} against {exact:.4f}")
+        out.append(f"R_c {Rc:g}: {k:.3f}/{exact:.3f}")
+    sm, sp = 1e-12, 6e7
+    for rce in (0.0, 1e-12):
+        rc = np.zeros((2, 2))
+        rc[1, 1] = rce
+        k = float(TF.conductivity(m, [sm, sp], 2, tol=1e-12, maxiter=20000,
+                                  system=TF.assemble(m, [sm, sp], contact={"rc": rc, "touch_um": 1.5 * g}))["k_eff"])
+        exact = L / (L / sp + 2 * rce * 1e6)
+        expect(abs(k / exact - 1) < 0.03, f"contact R_c,e {rce}: {k:.4g} against {exact:.4g}")
+        out.append(f"contact {rce:g}: {k:.3g}/{exact:.3g}")
+    k = float(TF.conductivity(m, [sm, sp], 2, tol=1e-12, maxiter=20000,
+                              system=TF.assemble(m, [sm, sp], contact={"rc": np.zeros((2, 2)), "touch_um": 0.5 * g}))["k_eff"])
+    expect(k < 1e-3 * sp, f"a film wider than a touch conducts {k:.3g}")
+    return "; ".join(out) + f"; wider film {k:.2g} S/m"
+
+
+@check("Tetrahedral FE with resistances and overlaps (5.12.0): one sphere with an interface resistance R_int against "
+       "Hasselman & Johnson (±0.5 %); a contact resistance R_c in series with the films lowers k step by step towards "
+       "the films alone; simple cubic spheres overlapping by 2 % of their diameter, separated by a face (default), "
+       "within 15 % above the touching ones (their cell is 2 % smaller), merged into one solid 2.5 times as "
+       "conductive or more (contrast 150); the thinnest resin film Auto from the surfaces and the finest particle",
+       quick=False)
+def t_tet_resist():
+    from mpsim import pipeline as PL
+    from mpsim import spec as S
+    from mpsim.solvers import tetfem as TF
+    # 1. Hasselman & Johnson (1987): one sphere (d 4 µm, 5 vol%) in k_m 1, k_p 20, R_int 0 / 1e-6 / 2e-6 m²K/W
+    L, d, km, kp = 8.75, 4.0, 1.0, 20.0
+    phi = math.pi * d ** 3 / 6.0 / L ** 3
+    N = 31
+    h = L / N
+    ph = [_hand_phase("sphere", {"d": d})]
+    info = _hand_particles(ph, [[L / 2 + 0.17 * h, L / 2 + 0.31 * h, L / 2 + 0.23 * h]], [np.eye(3)], [0], L)
+    hj, fem = [], []
+    for R in (0.0, 1e-6, 2e-6):
+        al = R * km / (0.5 * d * 1e-6)
+        num = kp * (1 + 2 * al) + 2 * km + 2 * phi * (kp * (1 - al) - km)
+        den = kp * (1 + 2 * al) + 2 * km - phi * (kp * (1 - al) - km)
+        hj.append(km * num / den)
+        m = TF.build_mesh(N, h, info, ph, [1], split_phases={0} if R > 0 else None)
+        sysm = TF.assemble(m, [km, kp], r_int=[0.0, R] if R > 0 else None)
+        fem.append(float(TF.conductivity(m, [km, kp], 0, tol=1e-10, maxiter=20000, system=sysm)["k_eff"]))
+        expect(R == 0 or len(m["iface"]) > 0, f"R_int {R}: no interface elements")
+    expect(all(abs(a / b - 1) < 0.005 for a, b in zip(fem, hj)),
+           "Hasselman-Johnson " + ", ".join(f"{a:.4f} / {b:.4f}" for a, b in zip(fem, hj)))
+    # 2. R_c in series with the films of touching simple cubic spheres (k_m 0.2, k_p 30)
+    ph, info, L = _sc_cell(10.0, 0.0, (0.037, 0.021, 0.013))
+    N = 20
+    m = TF.build_mesh(N, L / N, info, ph, [1], overlap="separate")
+    krc = []
+    for Rc in (0.0, 1e-7, 1e-5):
+        rc = np.zeros((2, 2))
+        rc[1, 1] = Rc
+        sysm = TF.assemble(m, [0.2, 30.0], r_c=rc if Rc > 0 else None)
+        krc.append(float(TF.conductivity(m, [0.2, 30.0], 0, tol=1e-9, maxiter=20000, system=sysm)["k_eff"]) / 0.2)
+    expect(krc[0] > krc[1] > krc[2] > 1.0, f"R_c 0 / 1e-7 / 1e-5: k/k_m {krc}")
+    # 3. overlapping by 2 % of the diameter: separated (default) as touching, merged a solid neck - 20 mesh cells
+    #    across a sphere, the mean of three positions of the lattice (one position moves a contact by a few %). The
+    #    separated cell is 2 % smaller than the touching one, which by itself raises k by 2-4 %.
+    offs = [(0.037, 0.021, 0.013), (0.0123, 0.0311, 0.0457), (0.0291, 0.0067, 0.0219)]
+
+    def k_sc(ov, how, off, permitted=False):
+        ph, info, L = _sc_cell(10.0, ov, off, permitted)
+        n = int(round(L / 0.5))
+        m = TF.build_mesh(n, L / n, info, ph, [1], overlap=how)
+        return float(TF.conductivity(m, [1.0, 150.0], 0, tol=1e-9, maxiter=20000)["k_eff"]), m
+    k_touch = float(np.mean([k_sc(0.0, "separate", o)[0] for o in offs]))
+    seps = [k_sc(0.02, "separate", o) for o in offs]
+    k_sep = float(np.mean([k for k, _ in seps]))
+    n_sep = seps[0][1].get("n_separated", 0)
+    k_mer = k_sc(0.02, "merged", offs[0])[0]
+    expect(n_sep > 0 and 0.0 < k_sep / k_touch - 1 < 0.15 and k_mer > 2.5 * k_touch,
+           f"2 % overlap: separated {k_sep:.3f} ({n_sep} pairs), merged {k_mer:.3f}, touching {k_touch:.3f}")
+    # a phase whose overlap is permitted keeps its overlaps merged under "separate"
+    k_perm, m_perm = k_sc(0.02, "separate", offs[0], permitted=True)
+    expect(m_perm.get("n_separated", 0) == 0 and abs(k_perm / k_mer - 1) < 1e-6,
+           f"overlap permitted: {k_perm:.4f} ({m_perm.get('n_separated')} pairs separated), merged {k_mer:.4f}")
+    # 4. the thinnest film: Auto from the surface values and the finest particle; a value as entered
+    def t0(dmu, v=None):
+        sp = S.normalize({"name": "t0", "matrix": {"material_id": "epoxy"}, "phases": [
+            {"material_id": "al2o3", "shape": "sphere", "size": {"d": dmu, "unit": "um"}, "fraction": {"value": 30, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 10 * dmu, "voxel_um": dmu / 10}, "analyses": {"thermal": True},
+            "options": {} if v is None else {"tet_film_nm": v}})
+        phs = [_hand_phase("sphere", {"d": dmu})]
+        return PL.film_t0(sp, _hand_particles(phs, [[dmu, dmu, dmu]], [np.eye(3)], [0], 10 * dmu))[0] * 1e3
+    t_big, t_small, t_set = t0(10.0), t0(0.25), t0(10.0, 3)
+    expect(abs(t_big - 5.0) < 1e-9 and abs(t_small - 2.5) < 1e-9 and abs(t_set - 3.0) < 1e-9,
+           f"t0: 10 µm {t_big} nm, 250 nm {t_small} nm, set 3 nm {t_set}")
+    return ("Hasselman-Johnson " + ", ".join(f"{a:.4f}/{b:.4f}" for a, b in zip(fem, hj))
+            + f"; R_c 0/1e-7/1e-5: k/k_m {krc[0]:.3f}/{krc[1]:.3f}/{krc[2]:.3f}; 2 % overlap at contrast 150: separated "
+              f"{k_sep:.3f}, merged {k_mer:.3f}, touching {k_touch:.3f}; t0 Auto 10 µm {t_big:g} nm, 250 nm {t_small:g} nm")
 
 
 @check("FEM style of the viewer (5.11.0): a tetrahedral run writes its fields on the elements - every particle's "
@@ -487,7 +620,7 @@ def t_tetelast():
 
 @check("Bonded contacts on the tetrahedral mesh: without a neck two touching spheres keep their values; with a neck "
        "of 0.3 the chain is stiffer and conducts more, the same on the lattice and on the graded mesh (stiffness 2 %, conductivity 8 %); spheres a "
-       "bond width apart are not joined")
+       "bond width apart are not joined; with overlaps separated (the default) a bonded pair stays joined")
 def t_tetneck():
     from mpsim.solvers import tetelast as TE
     from mpsim.solvers import tetfem as TF
@@ -509,6 +642,13 @@ def t_tetneck():
     expect(nb0 == 0 and nb3 == 1, f"bonded pairs {nb0}, {nb3}")
     expect(c3 > 1.05 * c0 and k3 > 1.3 * k0, f"C33 {c0:.3f} -> {c3:.3f}, k {k0:.3f} -> {k3:.3f}")
     expect(abs(cg3 / c3 - 1) < 0.02 and abs(kg3 / k3 - 1) < 0.08, f"graded C33 {cg3:.3f} (lattice {c3:.3f}), k {kg3:.3f} ({k3:.3f})")
+    # the runs' default treats overlaps as touching (5.12.0): a bonded contact is joined on purpose and stays joined
+    ms = TF.build_mesh(24, L / 24, info, ph, [1], neck=0.3, overlap="separate")
+    gs = TM.build_mesh(12, L / 12, info, ph, [1], neck=0.3, refine=2, res=8, overlap="separate")
+    ks, kgs = TF.conductivity(ms, vals, 2, tol=1e-9)["k_eff"], TF.conductivity(gs, vals, 2, tol=1e-9)["k_eff"]
+    expect(ms.get("n_separated", 0) == 0 and gs.get("n_separated", 0) == 0 and abs(ks / k3 - 1) < 1e-9
+           and abs(kgs / kg3 - 1) < 1e-9, f"overlap separate: bonded pair separated ({ms.get('n_separated')}, "
+           f"{gs.get('n_separated')}), k {ks:.5f} against {k3:.5f}, graded {kgs:.5f} against {kg3:.5f}")
     # 0.3^2 x R = 0.09 µm is the bond width; spheres 0.2 µm apart keep their film
     info2 = _hand_particles(ph, [[2.13, 2.13, 0.9], [2.13, 2.13, 3.0]], [np.eye(3)] * 2, [0, 0], L)
     m2 = TF.build_mesh(24, L / 24, info2, ph, [1], neck=0.3)
@@ -1402,6 +1542,67 @@ def t_cal_contacts():
             f"γ {c['identifiability']['collinearity']:.3g}")
 
 
+@check("Calibration, a measurement out of reach: 'widen the range' only where the result still responds at that end, "
+       "otherwise 'no effect left' (the MUF of guide 30.9 at 1.4 W/m·K on the FEM)")
+def t_cal_flat_edge():
+    from mpsim import calibrate as CA
+    unk = [CA._Unknown({"path": "phases.0.r_int", "label": "R", "lo": 1e-10, "hi": 1e-6})]
+    # the parameter sets of the MUF run (R_int 1e-10 ... 1e-6 on a log scale) and the k each gave
+    U = np.array([[0.0], [0.25], [0.5], [0.75], [1.0], [0.0874]])
+    Y = np.array([[1.232], [1.22], [1.11], [0.717], [0.355], [1.2316]])
+
+    def note(value):
+        s = [{"i": 0, "m": {"label": "m", "property": "k", "value": value, "rel_unc": 0.05}}]
+        n, out = CA._bracket_notes(s, U, Y, unk, [])
+        expect(len(n) == 1 and out == {0}, f"{value}: {len(n)} notes")
+        return n[0]
+    above = note(1.4)            # above k with no resistance: R_int has nothing left to give at its lower end
+    expect("no effect left" in above and "Widen" not in above, f"1.4: {above[-160:]}")
+    below = note(0.2)            # below the upper end, where k still falls steeply: widening can reach it
+    expect("Widen the range of R beyond its upper end" in below, f"0.2: {below[-160:]}")
+    # a slope still small at the end but growing toward it (the silica CTE of 50 vol% epoxy + silica on the FEM,
+    # 0.00083 ... 1 ppm/K: its effect is linear in the value) is widened, not called flat
+    ua = [CA._Unknown({"path": "phases.0.props.alpha", "label": "A", "lo": 0.000833, "hi": 1.0})]
+    xs, ys = [0.000833, 0.0049, 0.0289, 0.17, 1.0], [17.75, 17.75, 17.8, 17.86, 18.45]
+    Ua = np.array([[math.log(x / 0.000833) / math.log(1.0 / 0.000833)] for x in xs])
+    n, _ = CA._bracket_notes([{"i": 0, "m": {"label": "m", "property": "alpha", "value": 21.1, "rel_unc": 0.05}}],
+                             Ua, np.array([[v] for v in ys]), ua, [])
+    expect(len(n) == 1 and "Widen the range of A beyond its upper end" in n[0], f"CTE: {n}")
+    return ("1.4 W/m·K: no effect left at the lower end; 0.2 W/m·K: widen beyond the upper end; a filler CTE "
+            "still rising at its upper end: widen")
+
+
+@check("Effective-medium preview with particle shapes: spheres as before (Every 1992), an aligned spheroid of aspect 1 "
+       "as a sphere, platelets and fibres inside the Wiener bounds, random orientation isotropic")
+def t_emt_shapes():
+    from mpsim import calibrate as CA
+    km, kp = 0.2, 400.0
+
+    def k_of(ph, phi, d, R=0.0):
+        return float(CA._dem_shapes(np.array([km]), [(phi, np.array([kp]), np.array([R]), *CA._phase_geometry(ph))],
+                                    d)[0])
+    sph = {"shape": "sphere", "size_um": {"d": 10.0}, "orientation": {"mode": "iso"}}
+    for phi, R in ((0.3, 0.0), (0.5, 1e-7)):
+        old = CA.dem_conductivity(km, [(phi, kp, R, 10e-6)])
+        expect(abs(k_of(sph, phi, "z", R) / old - 1) < 1e-9, f"sphere {phi}: {k_of(sph, phi, 'z', R)} vs {old}")
+        one = {"shape": "spheroid", "size_um": {"d": 10.0, "aspect": 1.0}, "orientation": {"mode": "z"}}
+        expect(abs(k_of(one, phi, "x", R) / old - 1) < 1e-6, f"aligned sphere {phi}: {k_of(one, phi, 'x', R)}")
+    phi = 0.3
+    par, ser = phi * kp + (1 - phi) * km, 1.0 / (phi / kp + (1 - phi) / km)
+    out = []
+    for shape, sz in (("spheroid", {"d": 20.0, "aspect": 0.05}), ("cylinder", {"d": 2.0, "length": 40.0})):
+        iso = [k_of({"shape": shape, "size_um": sz, "orientation": {"mode": "iso"}}, phi, d) for d in "xyz"]
+        expect(max(iso) / min(iso) - 1 < 1e-9, f"{shape} iso: {iso}")
+        al = [k_of({"shape": shape, "size_um": sz, "orientation": {"mode": "z"}}, phi, d) for d in "xyz"]
+        expect(all(ser <= v <= par for v in iso + al), f"{shape}: {iso} {al} outside {ser:.3g}-{par:.3g}")
+        expect((al[0] > al[2]) == (shape == "spheroid"), f"{shape} aligned: x {al[0]:.3g} z {al[2]:.3g}")
+        out.append(f"{shape} iso {iso[0]:.3g}, aligned x/z {al[0]:.3g}/{al[2]:.3g}")
+    # an interfacial resistance lowers every direction
+    pl = {"shape": "spheroid", "size_um": {"d": 20.0, "aspect": 0.05}, "orientation": {"mode": "z"}}
+    expect(k_of(pl, phi, "x", 1e-6) < k_of(pl, phi, "x") and k_of(pl, phi, "z", 1e-6) < k_of(pl, phi, "z"), "R_int")
+    return "spheres identical to Every 1992; " + "; ".join(out) + f" (bounds {ser:.3g}-{par:.0f})"
+
+
 @check("Calibration from a viscosity: the bound resin layer of 1 µm silica from a particle-dynamics measurement (synthetic data)", quick=False)
 def t_cal_visc():
     # a 'measured' relative viscosity made by the particle dynamics with a
@@ -1867,7 +2068,9 @@ def t_porosimetry():
     return f"through-pore {d:.2f} µm, maximum intrusion {res['max_intrusion']:.3f}, air mean free path {kn['mean_free_path_nm']:.1f} nm"
 
 
-@check("Pore network and ray casting: SNOW2 extraction and isotropic extinction of a random structure", quick=False)
+@check("Pore network and ray casting: SNOW2 extraction and isotropic extinction of a random structure; the extinction "
+       "repeats for one structure (its ray sources were unseeded up to 5.11: 1-4 % from run to run) and leaves "
+       "numpy's global generator as it was", quick=False)
 def t_network_radiation():
     from mpsim import generate as GEN
     from mpsim import poro as PO
@@ -1877,11 +2080,19 @@ def t_network_radiation():
     pores = fld <= np.quantile(fld, 0.4)
     net, view = PO.pore_network(pores, 1.0)
     expect(net["n_pores"] > 20 and 2.0 < net["coordination_mean"] < 10.0, f"network {net['n_pores']} pores, Z {net['coordination_mean']}")
+    np.random.seed(7)
+    before = np.random.random()
+    np.random.seed(7)
     rad = PB.radiation(pores.astype(np.uint8), [1], 1e-6, 150, 400)
+    after = np.random.random()
+    rad2 = PB.radiation(pores.astype(np.uint8), [1], 1e-6, 150, 400)
     b = np.asarray(rad["beta_1pm"])
     spread = (b.max() - b.min()) / b.mean()
     expect(spread < 0.10, f"extinction coefficients {b}")
-    return f"{net['n_pores']} pores, Z = {net['coordination_mean']:.2f}; β = {b.mean():.3g} 1/m, directional spread {100*spread:.1f} %"
+    expect(rad2["beta_1pm"] == rad["beta_1pm"], f"the same structure gave {rad['beta_1pm']} and {rad2['beta_1pm']}")
+    expect(after == before, "the ray casting changed numpy's global generator")
+    return (f"{net['n_pores']} pores, Z = {net['coordination_mean']:.2f}; β = {b.mean():.3g} 1/m, directional spread "
+            f"{100*spread:.1f} %; a second casting repeats it exactly")
 
 
 @check("Grain analysis: orientation of z-aligned rods from the particle list and from the PuMA structure tensor", quick=False)
@@ -2046,6 +2257,16 @@ def t_doe():
     form = DOE.apply_case(base, full[-1])
     expect(form["phases"][0]["fraction"]["value"] == 50 and form["phases"][0]["size"]["d"] == 5, f"applied {form}")
     expect(base["phases"][0]["fraction"]["value"] == 20, "the base form was modified")
+    # a parameter without its levels is named (it was a 500: the browser sent a list of values as an empty range)
+    bad = DOE.check_ranges([{"path": "phases.0.r_int", "label": "R_int", "min": None, "max": None, "steps": 3},
+                            {"path": "phases.0.size.d", "label": "d", "values": [1, 5]}])
+    expect(len(bad) == 1 and "R_int" in bad[0], f"range check {bad}")
+    # a material value varied on a form that names its material by id: the rest of the material from the library
+    base2 = {"name": "b", "matrix": {"material_id": "epoxy"},
+             "phases": [{"material_id": "al2o3", "shape": "sphere", "size": {"d": 10}, "fraction": {"value": 30}}]}
+    f2 = DOE.apply_case(base2, {"values": {"matrix.props.k": 0.3}, "label": "k 0.3"})
+    expect(abs(f2["matrix"]["props"]["k"] - 0.3) < 1e-12 and "E" in f2["matrix"]["props"]
+           and "props" not in base2["matrix"], f"props filled {f2['matrix']}")
     return f"full {len(full)}, OAT {len(oat)}, LHS {len(lhs)} cases; last case '{full[-1]['label']}'"
 
 
@@ -2132,6 +2353,54 @@ def t_cond_aniso():
     return (f"turned tensor exact ({e_hom:.0e}); laminate error {100 * errs[0]:.1f} % at 8 cells, {100 * errs[1]:.1f} % at 16 "
             f"(first order); energy balance {gapmax:.0e}; isotropic tensor = plain solve; a 4-layer stack conducts "
             f"{kz:.2f} W/m·K through its thickness; a laminate film with rods = the parallel mean")
+
+
+@check("A run continued with another analysis keeps the analyses it has and its structure (5.12.0: the overlap Auto's "
+       "resolved share made the stored inputs differ, and the continued run overwrote the earlier results)", quick=False)
+def t_continue_run():
+    import shutil
+    import tempfile
+    from mpsim import pipeline as PL
+    d = tempfile.mkdtemp(prefix="mpsim_cont_")
+    try:
+        def f(an):
+            return {"name": "cont", "matrix": {"material_id": "epoxy"},
+                    "phases": [{"material_id": "al2o3", "shape": "sphere", "size": {"d": 10, "unit": "um"},
+                                "fraction": {"value": 30, "basis": "vol"}}],
+                    "rve": {"auto": False, "L_um": 30, "voxel_um": 1.0, "quality": "fast"},
+                    "analyses": {an: True}, "options": {"directions": "z"}}
+        PL.run(f("thermal"), d, log=lambda *a: None)
+        k1 = json.load(open(os.path.join(d, "result.json"), encoding="utf-8"))["properties"]["thermal"]["diag"][2]
+        lines = []
+        f2 = f("dielectric")
+        f2["_reuse"] = {"append": True}
+        PL.run(f2, d, log=lambda *a: lines.append(" ".join(map(str, a))))
+        r = json.load(open(os.path.join(d, "result.json"), encoding="utf-8"))
+        expect(sorted(r["properties"]) == ["dielectric", "thermal"], f"properties {sorted(r['properties'])}")
+        expect(r["properties"]["thermal"]["diag"][2] == k1, "the thermal result changed")
+        expect(any("Continuing this run" in ln for ln in lines) and any("generated earlier is used" in ln for ln in lines),
+               "not continued on the same structure")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return f"thermal {k1:.4f} kept, dielectric added on the same structure"
+
+
+@check("DOE studies when their folder is gone (removed while the server runs): the list is empty instead of an error, "
+       "and the next study saves (5.12.0)")
+def t_doe_store_folder_gone():
+    import shutil
+    import tempfile
+    from web.doe import DOEStore
+    d = tempfile.mkdtemp(prefix="mpsim_doe_")
+    try:
+        st = DOEStore(d)
+        shutil.rmtree(st.dir)
+        expect(st.all() == [], "the list of a store without its folder")
+        st.save({"id": "20260101-000000-abcd", "name": "t", "cases": [], "owner": None})
+        expect(os.path.exists(st._path("20260101-000000-abcd")) and len(st.all()) == 1, "saved again")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return "an empty list, then the study saved and listed"
 
 
 @check("DOE: a filler's share with the total kept; the Domain's grid on every case, or each case's own edge on its voxel size; "
@@ -2488,7 +2757,8 @@ def t_settle():
             f"{ck['thermal_stat']['note'].split(';')[1].strip()}")
 
 
-@check("Progressive overlap in the random placement: log-normal spheroids (c/a 0.5) at 50 vol% whose placement jams "
+@check("Progressive overlap in the random placement (Voxel steps, no share limit - the overlap Auto of 5.12.0 grows in "
+       "place instead): log-normal spheroids (c/a 0.5) at 50 vol% whose placement jams "
        "2-3 % short are finished in seconds by placing the same particles with an overlap of a voxel or two (not "
        "minutes of clump relaxation), so the sizes placed stay the distribution's; the voxel overlap check finds the "
        "overlap it allowed, and none in a placement at 30 vol% that needs none", quick=False)
@@ -2505,7 +2775,7 @@ def t_rsa_overlap():
                             "size": {"d": 4.5, "aspect": 0.5, "unit": "um"}, "dist": {"type": "lognormal", "std": 1.5},
                             "fraction": {"value": vf, "basis": "vol"}}],
                 "rve": {"auto": False, "L_um": 30, "voxel_um": 0.5, "quality": "fast"}, "analyses": {"thermal": True},
-                "options": {"directions": "z"}}
+                "options": {"directions": "z", "overlap_steps": {"share": "none"}}}
         spec = S.normalize(form)
         return PL._generator_phases(spec), PL.overlap_steps(spec["options"])
 
@@ -2576,7 +2846,8 @@ def t_clump_negative_gap():
 
 
 @check("Fibres of a fixed diameter and a log-normal length packed by the clump relaxation keep the diameter entered "
-       "(up to 5.8.0 a common factor met the target volume and every diameter came out 1.6 % small)", quick=False)
+       "(up to 5.8.0 a common factor met the target volume and every diameter came out 1.6 % small); a fibre caught at "
+       "its corners is shrunk only as the RVE check reports it (5.12.0)", quick=False)
 def t_fixed_dim_kept():
     from mpsim import generate as GEN
     from mpsim import pipeline as PL
@@ -2586,7 +2857,10 @@ def t_fixed_dim_kept():
             "phases": [{"material_id": "eglass", "name": "fibres", "shape": "cylinder", "size": {"d": 1.0, "length": 6.0, "unit": "um"},
                         "dists": {"length": {"type": "lognormal", "std": 3.0}}, "fraction": {"value": 40, "basis": "vol"}}],
             "rve": {"auto": False, "L_um": 24, "voxel_um": 0.2, "quality": "standard", "seed": 1},
-            "analyses": {"thermal": True}, "options": {"directions": "z"}}
+            "analyses": {"thermal": True}, "options": {"directions": "z", "overlap_steps": {"share": "none"}}}
+    # Voxel steps: random fibres of aspect 6 at 40 vol% do not pack without overlap, and the overlap Auto (5.12.0)
+    # shrinks most of them at their corners and stops the run (31 vol% reached) - what this check guards is the
+    # common factor of 5.8.0, which voxel steps show
     spec = S.normalize(form)
     gp = PL._generator_phases(spec)
     lines = []
@@ -2595,8 +2869,16 @@ def t_fixed_dim_kept():
     parts = info["particles"]
     d = SH.particle_dims("cylinder", int(parts["codes"][0]), parts["P"])["d"]
     clump = any("clump" in str(l) for l in lines)
-    expect(clump and abs(d.mean() - 1.0) < 1e-3 and d.std() < 1e-9, f"clump {clump}, diameters {d.min():.5f}-{d.max():.5f}")
-    return f"{len(d)} fibres by the clump relaxation, every diameter {d.mean():.6f} µm, {100 * float((lab == 1).mean()):.2f} vol%"
+    # 5.12.0: a fibre caught at its corners that pushing and turning do not free is shrunk (shape kept) and reported -
+    # every other one keeps the diameter entered exactly, and the shrunk ones are the ones the generator counts
+    shr = info.get("shrunk") or {}
+    small = int(np.count_nonzero(d < 1.0 - 1e-6))
+    kept = d[d >= 1.0 - 1e-6]
+    expect(clump and len(kept) and float(np.abs(kept - 1.0).max()) < 1e-3 and float(kept.std()) < 1e-9
+           and small == int(shr.get("n", 0) or 0)
+           and small < 0.1 * len(d), f"clump {clump}, diameters {d.min():.5f}-{d.max():.5f}, {small} small, shrunk {shr}")
+    return (f"{len(d)} fibres by the clump relaxation, {len(kept)} with the diameter entered exactly, {small} shrunk at "
+            f"corners and reported, {100 * float((lab == 1).mean()):.2f} vol%")
 
 
 @check("A share of overlap below what the packing needs: platelets at 50 vol% packed with 1 voxel of overlap are not "
@@ -2663,7 +2945,8 @@ def t_thin_topup():
                         "dists": {"length": {"type": "lognormal", "std": 1.0, "d_min": 3.0, "d_max": 5.0}},
                         "fraction": {"value": 0.6, "basis": "vol"}}],
             "rve": {"auto": False, "L_um": 7.5, "voxel_um": 0.05, "quality": "standard", "seed": 1},
-            "analyses": {"thermal": True}, "options": {"directions": "z"}}
+            # Voxel steps (the overlap Auto of 5.12.0 does not force this small box's 62 vol%: 59.5 % reached)
+            "analyses": {"thermal": True}, "options": {"directions": "z", "overlap_steps": {"share": "none"}}}
     spec = S.normalize(form)
     gp = PL._generator_phases(spec)
     lines = []
@@ -2705,12 +2988,11 @@ def t_mixed_overlap():
     return "; ".join(out)
 
 
-@check("Progressive overlap: spheres at 66 vol% (above random close packing) reach the loading with an overlap of "
-       "at most the voxels allowed; off, they keep their size and are packed again with less content (the loading "
-       "falls short); "
-       "with a largest share of the particle "
-       "voxels in two particles, a structure above it is built again with less overlap; Auto allows what changes "
-       "the result by at most 1 % (contrast, particle size in voxels, loading)", quick=False)
+@check("Progressive overlap in voxel steps (a share or No limit entered): spheres at 66 vol% (above random close "
+       "packing) reach the loading with an overlap of at most the voxels allowed; off, they keep their size and are "
+       "packed again with less content (the loading falls short); with a largest share of the particle voxels in two "
+       "particles, a structure above it is built again with less overlap; Auto takes no voxel steps (grown in place "
+       "up to 2 %, none for a flow through the pores)", quick=False)
 def t_overlap_steps():
     from mpsim import generate as GEN
     ph = [{"shape": "sphere", "size_um": {"d": 4.0}, "dist": {"type": "mono"}, "vf": 0.66,
@@ -2741,33 +3023,76 @@ def t_overlap_steps():
     ol = i2.get("overlap_limit") or {}
     expect(sh1 > 2.5 and i2["overlap_vox"] < i1["overlap_vox"] and sh2 <= 2.5 and len(ol.get("builds") or []) >= 2,
            f"share limit 2.5 %: {sh1:.2f} % at {i1['overlap_vox']} voxels, then {sh2:.2f} % at {i2['overlap_vox']}, {ol}")
-    # Auto: from the analysis, the contrast, the particle size in voxels and
-    # the loading; a value as entered (0: no overlap); No limit
+    # the settings: Auto (5.12.0) grows in place up to 2 % with no voxel steps, none for a pore-space flow; a value
+    # and No limit keep the voxel steps (a value as entered, 0: no overlap)
     from mpsim import pipeline as PL
     from mpsim import rve as R
     from mpsim import spec as S
 
-    def share(mat, vf, an, o):
-        sp = S.normalize({"name": "s", "matrix": {"material_id": "epoxy"}, "phases": [
-            {"material_id": mat, "shape": "sphere", "size": {"d": 4, "unit": "um"}, "fraction": {"value": vf, "basis": "vol"}}],
+    def steps(an, o):
+        # a flow through the pores: a packed bed (matrix air)
+        sp = S.normalize({"name": "s", "matrix": {"material_id": "air" if an == "permeability" else "epoxy"}, "phases": [
+            {"material_id": "sio2", "shape": "sphere", "size": {"d": 4, "unit": "um"}, "fraction": {"value": 60, "basis": "vol"}}],
             "rve": {"auto": False, "L_um": 30, "voxel_um": 0.5}, "analyses": {an: True}, "options": {"overlap_steps": o}})
         pl = R.plan(PL._plan_phases(sp), dict(sp["rve"], contacts="keep", elastic_method="fans"), {an}, {})
         PL.resolve_overlap_share(sp, pl)
-        return (PL.overlap_steps(sp["options"]) or {}).get("max_pct")
-    a_si, a_al = share("sio2", 60, "thermal", {}), share("al2o3", 60, "thermal", {})
-    a_si50, a_die = share("sio2", 50, "thermal", {}), share("sio2", 60, "dielectric", {})
-    expect(0.5 < a_si < 1.5 and a_al < 0.1 and a_si50 < 0.05 and a_die >= a_si,
-           f"Auto: silica 60 vol% {a_si}, alumina {a_al}, silica 50 vol% {a_si50}, silica dielectric {a_die}")
-    expect(share("sio2", 60, "thermal", {"share": "value", "max_pct": 0.3}) == 0.3
-           and share("sio2", 60, "thermal", {"share": "value", "max_pct": 0}) == 0.0
-           and share("sio2", 60, "thermal", {"share": "none"}) is None, "a value is not used as entered, or No limit limits")
+        return PL.overlap_steps(sp["options"]) or {}
+    a_k, a_perm = steps("thermal", {}), steps("permeability", {})
+    expect(a_k.get("grow_pct") == 2.0 and a_k.get("max_vox") == 0 and "max_pct" not in a_k
+           and a_perm.get("grow_pct") == 0.0 and a_perm.get("max_vox") == 0,
+           f"Auto: thermal {a_k}, permeability {a_perm}")
+    s3, s0, sn = (steps("thermal", {"share": "value", "max_pct": 0.3}), steps("thermal", {"share": "value", "max_pct": 0}),
+                  steps("thermal", {"share": "none"}))
+    expect(s3.get("max_pct") == 0.3 and s0.get("max_pct") == 0.0 and "max_pct" not in sn and sn.get("max_vox") == 3
+           and not s3.get("grow_pct"), f"a value is not used as entered, or No limit limits: {s3}, {s0}, {sn}")
     return (f"off: {100 * v0:.2f} vol% (stopped at size scale {lo0['scale_reached']:.3f}, packed again with "
             f"{100 * lo0['content_factor']:.1f} % of the content), diameters {d0.min():.3f}-{d0.max():.3f} µm of 4; "
-            f"on: {100 * v1:.2f} vol% with up to "
+            f"voxel steps: {100 * v1:.2f} vol% with up to "
             f"{i1['overlap_vox']} voxel(s) of overlap (deepest {depth / 0.5:.2f} voxel), {sh1:.2f} % of the particle "
             f"voxels shared; at most 2.5 %: built again with {i2['overlap_vox']} voxel(s), {sh2:.2f} %, "
-            f"{100 * float(np.mean(lab2 == 1)):.2f} vol%; Auto (k, 8 voxels): silica 60 vol% {a_si:.2f} %, 50 vol% "
-            f"{a_si50:.3f} %, alumina {a_al:.3f} %, silica permittivity {a_die:.2f} %")
+            f"{100 * float(np.mean(lab2 == 1)):.2f} vol%; Auto: grown in place up to {a_k['grow_pct']:g} %, "
+            f"permeability {a_perm['grow_pct']:g} %")
+
+
+@check("Overlap Auto (5.12.0): equal spheres at 60 vol% stop just short of the loading and are drawn at their full "
+       "size where they stand (overlap at most 2 % of the size, the loading within 1 %); at 66 vol%, above the random "
+       "close packing of equal spheres (Farr-Groot 64.3 %), they are not grown and the loading is not forced - sizes "
+       "kept, content reduced", quick=False)
+def t_overlap_auto():
+    from mpsim import generate as GEN
+    from mpsim import pipeline as PL
+    from mpsim import spec as S
+    out = []
+    for vf, seed in ((0.60, 1), (0.66, 1)):
+        # the run's way: the Auto rule for the spec (the random close packing of these spheres), then the generator
+        sp = S.normalize({"name": "auto", "matrix": {"material_id": "epoxy"}, "phases": [
+            {"material_id": "sio2", "shape": "sphere", "size": {"d": 10, "unit": "um"},
+             "fraction": {"value": 100 * vf, "basis": "vol"}}],
+            "rve": {"auto": False, "L_um": 60, "voxel_um": 1.0, "seed": seed}, "analyses": {"thermal": True}})
+        PL.resolve_overlap_share(sp, {"N": 60, "h_um": 1.0})
+        steps = PL.overlap_steps(sp["options"])
+        expect((steps["grow_pct"] > 0) == (vf < 0.643), f"{vf}: Auto {steps}")
+        ph = [{"shape": "sphere", "size_um": {"d": 10.0}, "dist": {"type": "mono"}, "vf": vf,
+               "orientation": {"mode": "iso"}, "overlap": False, "gap_frac": 0.0, "name": "spheres"}]
+        lab, inf = GEN.generate(60, 1.0, ph, seed=seed, log=lambda *a: None, contacts="keep", gap_vox=0.0,
+                                overlap_steps=steps)
+        v = float(np.mean(lab == 1))
+        p = inf["particles"]
+        r = np.asarray(p["P"])[:, 0]
+        i, j, dd = GEN._sphere_pairs(np.asarray(p["centers"]), r, np.array([60.0, 60.0, 60.0]))
+        depth = float(np.max((r[i] + r[j] - dd) / (r[i] + r[j]))) if dd.size else 0.0
+        g, lo = inf.get("grown_in_place") or {}, inf.get("left_out") or {}
+        expect(depth <= GEN.GROW_PCT / 100.0 * 1.001 and float(np.max(np.abs(r / 5.0 - 1.0))) < 0.005,
+               f"{vf}: deepest overlap {100 * depth:.2f} % of the size, radii {r.min():.4f}-{r.max():.4f} of 5")
+        if vf < 0.64:
+            expect(g.get("depth_pct", 9) <= GEN.GROW_PCT and abs(v / vf - 1.0) < 0.01 and not lo,
+                   f"60 vol%: {g}, vf {v}, left out {lo}")
+        else:
+            expect(lo.get("content_factor", 1.0) < 1.0 and v < 0.645, f"66 vol%: left out {lo}, vf {v}")
+        out.append(f"{100 * vf:g} vol%: {100 * v:.2f} vol%, deepest overlap {100 * depth:.2f} % of the size"
+                   + (f", grown in place by {g['depth_pct']:.2f} %" if g else "")
+                   + (f", content {100 * lo['content_factor']:.1f} %" if lo else ""))
+    return "; ".join(out)
 
 
 @check("Runs: the Terminal sees the run's processes; a stopped run starts again in its own folder and uses the "
@@ -3145,7 +3470,8 @@ def t_pipeline_film():
                         "fraction": {"value": 30, "basis": "vol"}}],
             "rve": {"auto": False, "L_um": 32, "voxel_um": 1.0, "auto_enlarge": False, "quality": "fast",
                     "film": True, "T_um": 14},
-            "analyses": {"thermal": True}, "options": {"directions": "xyz"}}
+            # the film finite volume (the thermal conductivity's default is the FEM since 5.12.0, checked below)
+            "analyses": {"thermal": True}, "options": {"directions": "xyz", "thermal_method": "fv"}}
     with tempfile.TemporaryDirectory() as d:
         pipeline.run(form, d, log=lambda *a: None)
         with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
@@ -3159,7 +3485,16 @@ def t_pipeline_film():
     expect(abs(th["derived"]["thickness_mm"] - 0.014) < 1e-9, f"thickness {th['derived']['thickness_mm']}")
     kx, ky, kz = th["diag"]
     expect(0.2 < kz < min(kx, ky) * 1.05, f"k {kx:.4f} {ky:.4f} {kz:.4f}")
-    return f"32 × 32 × 14: kxx {kx:.4f}, kyy {ky:.4f}, kzz {kz:.4f} W/m·K"
+    # the default: the same film on the tetrahedral FEM, plates on its faces, z within 10 % of the finite volume
+    form["options"] = {"directions": "z"}
+    with tempfile.TemporaryDirectory() as d:
+        pipeline.run(form, d, log=lambda *a: None)
+        with open(os.path.join(d, "result.json"), encoding="utf-8") as fh:
+            t2 = json.load(fh)["properties"]["thermal"]
+    kz2 = t2["diag"][2]
+    expect(str(t2["stats"][0]["method"]).startswith("tet") and abs(kz2 / kz - 1) < 0.10,
+           f"default {t2['stats'][0]['method']} kz {kz2:.4f} against FV {kz:.4f}")
+    return f"32 × 32 × 14: kxx {kx:.4f}, kyy {ky:.4f}, kzz {kz:.4f} W/m·K (FV); kzz {kz2:.4f} on the FEM (default)"
 
 
 @check("Complete pipeline: porous RVE with flow, diffusion, acoustics, radiation, porosimetry and pore network", quick=False)
@@ -3783,9 +4118,12 @@ def t_stop_at_gate():
            "phases": [{"material_id": "al2o3", "name": "Al2O3", "shape": "sphere", "size": {"d": 4, "unit": "um"},
                        "fraction": {"value": 40, "basis": "vol"}}],
            "rve": {"auto": False, "L_um": 64, "voxel_um": 0.4, "auto_enlarge": False, "quality": "fast"},
-           "analyses": {"thermal": True, "electrical": True, "dielectric": True, "cte": True}, "options": {"directions": "xyz"}}
+           "analyses": {"thermal": True, "electrical": True, "dielectric": True, "cte": True},
+           # the gate, not the solver, is tested: FV keeps A's solves short (the FEM, thermal's default since
+           # 5.12.0, takes A past the wait below)
+           "options": {"directions": "xyz", "thermal_method": "fv"}}
     small = dict(big, name="selftest gate B", rve=dict(big["rve"], L_um=16), analyses={"thermal": True},
-                 options={"directions": "z"})
+                 options={"directions": "z", "thermal_method": "fv"})
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         # 1 GB to solve each, 1.5 GB for both: B builds its structure beside
         # A's solves, then waits at the gate

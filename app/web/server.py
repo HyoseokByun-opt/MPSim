@@ -579,7 +579,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         try:
             spec = S.normalize(copy.deepcopy(form))
             from mpsim.pipeline import _plan_phases
-            plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), needed_analyses(spec), app.config["LIMITS"])
+            plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"], thermal_method=spec["options"].get("thermal_method", "tet"), cond_method=spec["options"].get("cond_method", "fv")), needed_analyses(spec), app.config["LIMITS"])
             est_mem_gb.last_plan = plan
             mem = plan.get("memory_gb") or {"-": 0.0}
             # the structure phase: the generator's arrays, and for the
@@ -617,7 +617,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         from mpsim.pipeline import _plan_phases
         pph = _plan_phases(spec)
         rv = dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"),
-                  elastic_method=spec["options"]["elastic_method"])
+                  elastic_method=spec["options"]["elastic_method"], thermal_method=spec["options"].get("thermal_method", "tet"), cond_method=spec["options"].get("cond_method", "fv"))
         return R.plan(pph, rv, needed_analyses(spec), app.config["LIMITS"]), spec, warnings
 
     app.plan_form = plan_form
@@ -648,12 +648,12 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         from mpsim.pipeline import _plan_phases
         pph = _plan_phases(spec)
         rv = dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"),
-                  elastic_method=spec["options"]["elastic_method"])
+                  elastic_method=spec["options"]["elastic_method"], thermal_method=spec["options"].get("thermal_method", "tet"), cond_method=spec["options"].get("cond_method", "fv"))
         need = needed_analyses(spec)
         plan = R.plan(pph, rv, need, app.config["LIMITS"])
         try:
             from mpsim import overlap_share as OS
-            plan["overlap_share"] = OS.auto_share(spec, plan)
+            plan["overlap_share"] = OS.auto_rule(spec, plan)
         except Exception as e:                                       # noqa: BLE001
             plan["overlap_share"] = {"pct": None, "text": f"not available ({type(e).__name__}: {e})"}
         return jsonify({"ok": True, "plan": plan, "composition": spec.get("composition"),
@@ -750,7 +750,7 @@ def create_app(workspace=None, token=None, concurrency=1, limits=None):
         from mpsim import pipeline as P
         try:
             need = S.required_analyses(set(spec["analyses"]))
-            plan = R.plan(P._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), need,
+            plan = R.plan(P._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"], thermal_method=spec["options"].get("thermal_method", "tet"), cond_method=spec["options"].get("cond_method", "fv")), need,
                           app.config["LIMITS"])
             plan["skin"] = P.film_skin(spec, plan) if plan.get("film") else None
             key = P.structure_key(P._generator_phases(spec), plan, P.contacts_key(spec["options"]),

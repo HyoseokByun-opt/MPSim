@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.11.0-0b62c4" alt="version 5.11.0">
+  <img src="https://img.shields.io/badge/version-5.12.0-0b62c4" alt="version 5.12.0">
   <img src="https://img.shields.io/badge/python-3.11-3776ab" alt="Python 3.11">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-555555" alt="Windows 10 | 11 x64">
   <img src="https://img.shields.io/badge/license-MIT-2da44e" alt="MIT licence">
@@ -65,14 +65,20 @@ The main capabilities are listed below.
   against 3,807 s) and leaves the small spheres around the large ones within 4-9 % of the equilibrium of a hard-sphere
   mixture, where the growth at once jammed twice as many against them (k<sub>z</sub> 6 % high).
   Every structure is drawn again once built to count the voxels that lie in two particles, whatever made it. Particles
-  may touch, as in a filled compound (the default), or are kept a set number of voxels apart. A loading that cannot be
-  packed without overlap (equal spheres beyond random close packing, dense cubes) is reached with the least overlap it
-  takes, 1 voxel and then 2, rather than with every particle drawn smaller (spheres at 66 vol%: 65.96 % instead of 62.6 %);
-  a random placement that jams a little short is finished the same way in seconds instead of being packed again.
-  Where no overlap is allowed, or not enough, the particles keep the sizes entered and the structure is packed again
-  with less content (5.6.7; up to 5.6.6 every particle was drawn smaller - 3 µm alumina with few fines at 62 vol% in a
-  10 µm film came out 3.6 % small), and a DOE whose factor is a particle size shows the size each case holds beside
-  the content. A structure that misses its loading by more than the tolerance of its quality level is not solved
+  may touch, as in a filled compound (the default), or are kept a set number of voxels apart. Real particles in a resin
+  touch but do not interpenetrate, so the overlap Auto (5.12.0) allows an overlap only as far as it still stands for
+  touching particles: a loading that packs is drawn without overlap; a packing that stops within 2 % of the particles'
+  size is drawn at full size where it stands (touching neighbours then overlap by at most 2 % of their size, and the
+  tetrahedral FEM separates them again at a face with a resin film); a loading further off is not forced - the
+  particles keep the sizes entered, the structure is packed again with less content and the run stops before the solves,
+  with the random close packing of the size distribution as the reference (Farr-Groot): spheres asked above it are not
+  grown at all (equal spheres at 60 vol% are mostly compressed to full size without overlap, at 62-64 vol% grown in place
+  by 1.7-1.8 %; at 66 vol%, above their random close packing of 64.3 %, the run stops; log-normal spheres of CV 0.35
+  reach 66 vol% grown by 1.1 %). Overlaps merged into solid necks
+  raised the conductivity of 60 vol% spheres by 55-75 %; separated, they read 0 to 8 % below packings made without
+  overlap, as the arrangement differs. Overlap in whole voxels until the content is reached - the default up to 5.11 - remains a choice for
+  comparison and for particles that do merge (sintered, pressed). A DOE whose factor is a particle size shows the size
+  each case holds beside the content. A structure that misses its loading by more than the tolerance of its quality level is not solved
   (5.9.0): the run stops and says what was reached. The generator was audited at 40-70 vol% for every shape, size
   distributions of CV 0.2-0.5 and blends on 256³-400³ grids (5.9.0): irregular grains at 60 vol% that had locked in
   the dense packing and fallen back to 40 % reach 59.5 %, platelets that a share of overlap had sent to 43 % reach
@@ -211,12 +217,12 @@ of the user guide describes the workspace in detail; chapter 33 is a tutorial fo
 
 | Group | Analysis | Solver | Main results |
 |---|---|---|---|
-| Conduction | Thermal conductivity | Periodic FV (default), body-fitted tetrahedral FE, NASA PuMA FE | k tensor, directional k(n), diffusivity, area-specific resistance, bounds and mean-field models |
-| | Electrical conductivity | same | σ tensor, resistivity, sheet resistance, percolation |
-| Electromagnetics | Permittivity and loss | same | Dk tensor, Df, local field enhancement per region |
-| | Magnetic permeability | same | μr tensor |
+| Conduction | Thermal conductivity | Body-fitted tetrahedral FE (default since 5.12.0, with interface and contact resistances), periodic FV, NASA PuMA FE | k tensor, directional k(n), diffusivity, area-specific resistance, bounds and mean-field models |
+| | Electrical conductivity | Periodic FV (default), body-fitted tetrahedral FE, NASA PuMA FE | σ tensor, resistivity, sheet resistance, percolation |
+| Electromagnetics | Permittivity and loss | as the electrical conductivity | Dk tensor, Df, local field enhancement per region |
+| | Magnetic permeability | as the electrical conductivity | μr tensor |
 | | EMI shielding | Complex homogenisation → scikit-rf; openEMS FDTD check | SE(f) with reflection, absorption and multiple-reflection terms, validity limits |
-| Mechanics | Elasticity and thermal expansion | FANS voxel FE (default), NASA PuMA FE | C\*, S\*, E, G, ν, Hill moduli, anisotropy index, α tensor, thermal stress per region; optionally α2 and E above Tg |
+| Mechanics | Elasticity and thermal expansion | FANS voxel FE (default), body-fitted tetrahedral FE, NASA PuMA FE | C\*, S\*, E, G, ν, Hill moduli, anisotropy index, α tensor, thermal stress per region; optionally α2 and E above Tg |
 | | Mechanical test (tension or compression) | Effective stiffness + one FANS solve at the test load | Force-displacement line, apparent modulus, Poisson's ratio or lateral stress, von Mises and axial stress and strain fields, load at the matrix strength |
 | Multiphysics | Thermal stress and warpage (thin film) | Film FV heat flow → FANS voxel FE with a thermal eigenstrain per voxel → laminate theory | Temperature field, curvature and warpage, in-plane stress through the film, largest principal and peeling stress per region, substrate stress |
 | | Joule heating (thin film) | Film FV potential and heat solved in turn with σ(T) | Voltage, peak and face temperatures per step, runaway estimate, current-density and Joule-heat fields |
@@ -317,7 +323,8 @@ substrate side of the gap; a cut plane travels through the RVE.
 | y (vorticity) | 0.579 | 0.602 | +4.0 % |
 | z (velocity gradient, through the gap) | 0.576 | 0.596 | +3.5 % |
 
-The conductivity through the gap is 0.596 W/m·K, 3.0 times that of the resin. It lies 9.5 % above the Maxwell-Garnett
+On the finite volume (5.10.2; since 5.12.0 the thermal conductivity is solved on the tetrahedral FEM by default, about 60 GB
+for this 240³ RVE) the conductivity through the gap is 0.596 W/m·K, 3.0 times that of the resin. It lies 9.5 % above the Maxwell-Garnett
 estimate, which coincides with the lower Hashin–Shtrikman bound (0.544), and well below the Bruggeman estimate (0.685):
 at a conductivity ratio of 7 between silica and epoxy, the points where particles touch carry little of the heat, and
 the composite remains close to a dispersion of particles. The heat flux is highest in the silica and where particles
@@ -419,51 +426,58 @@ y held (a closed mould), on 60³ voxels in four steps of the three-dimensional r
 ## Application example: fine particles and close contacts, on a mesh fitted to the particles
 
 A voxel solver sees a particle as the voxels whose centres it holds: its surface is a staircase, and two particles
-conduct into each other wherever two of their voxels touch. *Simulation → Solver settings → Conduction → Finite elements
-on a tetrahedral mesh fitted to the particles (FEM)* solves the thermal and electrical conductivity, the permittivity
-and the permeability on a tetrahedral mesh that follows the particles' exact surfaces instead: the lattice of the voxel
+conduct into each other wherever two of their voxels touch. *Finite elements on a tetrahedral mesh fitted to the
+particles (FEM)* - the default for the thermal conductivity since 5.12.0, at every filler content, and a choice for the
+electrical conductivity, the permittivity and the permeability (*Simulation → Solver settings*) - solves the problem on a
+tetrahedral mesh that follows the particles' exact surfaces instead: the lattice of the voxel
 corners is cut into tetrahedra, every tetrahedron is cut where it crosses a particle (bisection on the exact shape), and a
 film of matrix between two particles that is thinner than a voxel is carried as an interface element of its width
 (conformal decomposition finite elements: D. R. Noble, E. P. Newren, J. B. Lechman, *Int. J. Numer. Meth. Fluids* **63**,
 725 (2010), [doi:10.1002/fld.2095](https://doi.org/10.1002/fld.2095); thin-gap conduction: G. K. Batchelor, R. W. O'Brien,
 *Proc. R. Soc. Lond. A* **355**, 313 (1977), [doi:10.1098/rspa.1977.0100](https://doi.org/10.1098/rspa.1977.0100)). Linear
 elements, conjugate gradients with algebraic multigrid (PyAMG: N. Bell, L. N. Olson, J. Schroder, *J. Open Source Softw.*
-**7**, 4142 (2022), [doi:10.21105/joss.04142](https://doi.org/10.21105/joss.04142)). The finite volume stays the default.
+**7**, 4142 (2022), [doi:10.21105/joss.04142](https://doi.org/10.21105/joss.04142)). Since 5.12.0 the film is never
+thinner than a physical thinnest resin film (Auto: the larger of 1 nm, twice a bound resin layer and the roughness of
+5 nm, the roughness at most 1 % of the finest particle), the interface resistance R<sub>int</sub> sits on the exact
+particle-matrix surface (one sphere against Hasselman and Johnson: within 0.03 %), the contact resistance R<sub>c</sub>
+acts in series with the film, and two particles that overlap are separated at a face with a resin film rather than merged
+into a neck.
 
 <p align="center">
   <img src="docs/images/fem3d_heat.png" alt="Heat flux of an alumina and BN compound in 3D: finite volume on the voxels beside finite elements on the tetrahedral mesh fitted to the particles, same camera and colour scale" width="100%">
 </p>
 
 The heat flux of the compound of the first table at 64³, with one camera and one colour scale: on the voxels the particles
-are staircases that conduct wherever their voxels touch (3.87 W/m·K); on the fitted mesh they are the spheres and platelets
-the generator placed, with resin between them (1.83 W/m·K). Every FEM solve adds this figure to its results (5.10.0).
+are staircases that conduct wherever their voxels touch (4.13 W/m·K); on the fitted mesh they are the spheres and platelets
+the generator placed, with resin between them (1.57 W/m·K). Every FEM solve adds this figure to its results (5.10.0).
 
 Alumina spheres (4 µm, log-normal) 45 vol% with BN platelets 5 vol% in epoxy (k 30 / 60 / 0.2 W/m·K), the same particles
 drawn on every grid, k<sub>z</sub> in W/m·K:
 
 | Grid | Finite volume on voxels | FEM on the fitted mesh | Tetrahedra | FEM solve |
 |---|---|---|---|---|
-| 32³ (sphere 8 voxels) | 4.341 | **1.746** | 0.5 M | 3 s |
-| 48³ (sphere 12 voxels) | 4.027 | **1.826** | 1.4 M | 7 s |
-| 64³ (sphere 16 voxels) | 3.872 | **1.828** | 2.9 M | 15 s |
-| 96³ (sphere 24 voxels) | 3.479 | **1.890** | 8.4 M | 39 s |
-| 128³ (sphere 32 voxels) | 3.221 | **1.896** | 18.1 M | 81 s |
+| 32³ (sphere 8 voxels) | 4.691 | **1.659** | 0.5 M | 2.1 s |
+| 48³ (sphere 12 voxels) | 4.559 | **1.620** | 1.4 M | 4.9 s |
+| 64³ (sphere 16 voxels) | 4.132 | **1.574** | 2.9 M | 10 s |
+| 96³ (sphere 24 voxels) | 3.847 | **1.571** | 8.3 M | 33 s |
+| 128³ (sphere 32 voxels) | 3.638 | **1.553** | 18.0 M | 71 s |
 
 Spheres of 4 µm (35 vol%) with spheres of 0.8 µm (15 vol%), k 100 : 1:
 
 | Grid | Finite volume on voxels | FEM on the fitted mesh | Tetrahedra | FEM solve |
 |---|---|---|---|---|
-| 36³ (small sphere 3 voxels) | 9.281 | **5.684** | 0.7 M | 3 s |
-| 48³ (small sphere 4 voxels) | 8.202 | **5.554** | 1.5 M | 7 s |
-| 72³ (small sphere 6 voxels) | 7.265 | **5.400** | 4.2 M | 17 s |
-| 96³ (small sphere 8 voxels) | 6.567 | **5.317** | 8.9 M | 37 s |
-| 144³ (small sphere 12 voxels) | 5.944 | **5.242** | 26.0 M | 123 s |
+| 36³ (small sphere 3 voxels) | 9.273 | **5.786** | 0.7 M | 3.7 s |
+| 48³ (small sphere 4 voxels) | 8.145 | **5.633** | 1.5 M | 7.1 s |
+| 72³ (small sphere 6 voxels) | 7.447 | **5.506** | 4.2 M | 18 s |
+| 96³ (small sphere 8 voxels) | 6.883 | **5.440** | 8.9 M | 32 s |
+| 144³ (small sphere 12 voxels) | 6.410 | **5.366** | 26.0 M | 90 s |
 
-- **The finite volume of a dense, high-contrast packing depends on the grid** (4.34 → 3.22, still falling): every pair of
-  touching voxels is a contact. The FEM gives the gaps between the exact shapes their width (median 0.11 µm here) and moves
-  by 9 % over the same grids.
+- **The finite volume of a dense, high-contrast packing depends on the grid** (4.69 → 3.64, still falling): every pair of
+  touching voxels is a contact. The FEM gives the gaps between the exact shapes their width (median 0.12 µm at 64³) and moves
+  by 6 % over the same grids, from above as conforming elements do. With the packing's overlaps (all less than a voxel deep)
+  merged into necks, as up to 5.11, the same particles gave 2.49 instead of 1.57 W/m·K at 64³.
 - **A filler five times finer than another** needs no finer grid with the FEM: with the small spheres 3 voxels across it
-  is within 9 % of its value on the finest grid, where the finite volume is 56 % above its own.
+  is within 8 % of its value on the finest grid, where the finite volume is 45 % above its own.
 - **Stiffness and thermal expansion on the same mesh (5.10.0).** *Solver settings → Elasticity and CTE → Finite elements
   on a tetrahedral mesh fitted to the particles*: linear displacement elements, the six strains and the thermal load
   solved together on all cores, films of matrix between particles as interface elements with the stiffness of a thin layer
@@ -471,13 +485,15 @@ Spheres of 4 µm (35 vol%) with spheres of 0.8 µm (15 vol%), k 100 : 1:
 
   | Grid | Silica 60 vol%: voxel elements | Silica 60 vol%: FEM | Alumina 45 + BN 5 vol%: voxel elements | Alumina 45 + BN 5 vol%: FEM |
   |---|---|---|---|---|
-  | 32³ | 25.0 GPa, 10.1 ppm/K | **16.2 GPa, 15.2 ppm/K** | 45.6 GPa, 12.7 ppm/K | **16.5 GPa, 21.8 ppm/K** |
-  | 64³ | 20.9, 12.3 | **15.7, 15.6** | 32.1, 15.4 | **16.2, 22.0** |
-  | 128³ | 18.3, 13.9 | | 25.0, 17.7 | 16.1, 22.1 (80³) |
-  | 192³ | 17.4, 14.6 | | 22.3, 18.8 | |
+  | 32³ | 24.8 GPa, 10.3 ppm/K | **15.4 GPa, 16.0 ppm/K** | 48.3 GPa, 13.0 ppm/K | **16.3 GPa, 22.4 ppm/K** |
+  | 64³ | 20.1, 12.9 | **14.8, 16.6** | 33.6, 15.6 | **15.7, 22.8** |
+  | 128³ | 17.2, 14.9 | | 26.5, 17.7 | |
+  | 192³ | 16.2, 15.6 | | 23.8, 18.8 | |
+  | extrapolated | 14.1–14.2, 17.0–17.1 | **14.1–14.2, 17.2** | 18.5–19.0, 20.2–20.7 | **15.0–15.2, 23.1–23.3** |
 
   The voxel values fall with every refinement and are not converged at 192³: touching particles are bonded over a patch
-  of voxel faces that shrinks with the grid. On the same mesh FEniCSx gives the FEM's stiffness and thermal stress to
+  of voxel faces that shrinks with the grid. Extrapolated to an infinitely fine grid (linear in the voxel size), the two
+  methods meet for the silica compound; for alumina + BN the voxel values are still too far from their limit. On the same mesh FEniCSx gives the FEM's stiffness and thermal stress to
   twelve digits (C<sub>11</sub> 5.474604387709 against 5.474604387705). Interfaces are bonded; the FEM takes about four
   times longer than the voxel elements (79 s against 19 s at 64³) and 4.9 GB there.
 
@@ -487,9 +503,9 @@ Spheres of 4 µm (35 vol%) with spheres of 0.8 µm (15 vol%), k 100 : 1:
 
   | Volume fraction | Measured E | FEM | Voxel elements | Voxel elements, 144³ |
   |---|---|---|---|---|
-  | 0.2251 | 5.08 GPa | **5.13** (+0.9 %) | 5.82 (+15 %) | 5.22 |
-  | 0.3025 | 6.01 | **6.32** (+5.2 %) | 7.62 (+27 %) | 6.52 |
-  | 0.3960 | 7.94 | **8.22** (+3.5 %) | 10.68 (+35 %) | 8.61 |
+  | 0.2251 | 5.08 GPa | **5.12** (+0.7 %) | 5.82 (+15 %) | 5.22 |
+  | 0.3025 | 6.01 | **6.32** (+5.1 %) | 7.62 (+27 %) | 6.52 |
+  | 0.3960 | 7.94 | **8.15** (+2.6 %) | 10.68 (+35 %) | 8.61 |
   | 0.4960 | 12.09 | **11.22** (−7.2 %) | 16.16 (+34 %) | 12.13 |
 
   Spheres wetted by their resin meet at points with resin around them - the structure the FEM solves.
@@ -538,9 +554,9 @@ Spheres of 4 µm (35 vol%) with spheres of 0.8 µm (15 vol%), k 100 : 1:
 - **Which value is right depends on the material.** The FEM solves the particles as placed - exact shapes with resin films
   between them; the finite volume solves them as voxels in contact. Fillers wetted by the resin are nearer the first,
   fillers pressed or sintered into each other nearer the second.
-- Reductions: linear elements; perfect interfaces except for the films (interface and contact resistances, anisotropic
+- Reductions: linear elements; perfect interfaces except for the films and the resistances entered (anisotropic
   fillers, coated particles, networks, images and compressed structures stay with the finite volume, and the run says
-  so); about 50 times the time of the finite volume per solve; 1.4 GB at 96³, about 3 GB at 128³.
+  so); about 15 times the time of the finite volume per solve; 1.4 GB at 96³, about 3 GB at 128³.
 - **Seen on its own elements (5.11.0).** A run solved on the mesh opens in the 3D view's FEM mesh style: the particle
   surfaces and the RVE faces are the element faces, each in the colour of its own element, with the element edges on
   request; the colour range is taken over the volume, not the element count, so that the small elements at the contacts
@@ -646,35 +662,39 @@ pressed at a constant stress creeps by ∫P/3η dt to the gel point (0.86747 aga
 A 24-case Latin hypercube varies four inputs of an alumina-filled epoxy together - the alumina content (20-50 vol%), the
 particle diameter (6-14 µm), the filler's conductivity (5-35 W/m·K) and the matrix's (0.15-0.35 W/m·K) - and the
 Sensitivity Analysis tab asks 25 measures which of them move the thermal conductivity (preset "Sensitivity · alumina
-in epoxy", about 2 min for the study and 10-40 s for the analysis).
+in epoxy", about 13 min for the study with the thermal conductivity on the tetrahedral FEM and 10-40 s for the analysis).
 
 | Input | Consensus | Sobol S₁ / S_T | Pearson r | PRCC |
 |---|---|---|---|---|
-| Alumina content | 1.00 (first in 24 of 25) | 0.70 / 0.75 | 0.85 | 0.98 |
-| Matrix conductivity | 0.44 | 0.15 / 0.18 | 0.60 | 0.91 |
-| Filler conductivity | 0.25 | 0.07 / 0.12 | 0.13 (p = 0.54) | 0.79 (p = 2×10⁻⁵) |
-| Particle diameter | 0.17 | 0.01 / 0.02 | −0.29 | −0.52 |
+| Alumina content | 1.00 (first in 25 of 25) | 0.59 / 0.62 | 0.82 | 0.97 |
+| Matrix conductivity | 0.73 | 0.36 / 0.39 | 0.72 | 0.95 |
+| Particle diameter | 0.17 | 0.003 / 0.004 | −0.32 | −0.39 |
+| Filler conductivity | 0.14 | 0.013 / 0.021 | 0.04 (p = 0.84) | 0.44 (p = 0.049) |
 
-- **Agreement.** Kendall's W over the 25 rankings is 0.80; the global surrogate (a quadratic surface) predicts runs it
-  did not see with Q² 0.94, the Gaussian process with 0.91, the random forest with 0.72.
-- **A masked input.** The filler's conductivity is invisible to a plain correlation, because the content moves k far
-  more; held fixed, the others no longer hide it (PRCC 0.79). The diameter's plain correlation is mostly the content's:
-  the two are correlated over the realised structures (r = −0.35).
-- **Interactions.** Content × filler conductivity is found by three of five measures (PCE S₂, SHAP interaction values,
-  ANOVA p = 0.005): the filler's conductivity matters more the more filler there is. All interactions together carry
-  6 % of the variance (1 − ΣS₁).
+- **Agreement.** Kendall's W over the 25 rankings is 0.88; the global surrogate (a Gaussian process) predicts runs it did
+  not see with Q² 0.98, the quadratic surface with 0.99, the random forest with 0.80.
+- **The resin, not the filler.** With a filler 14-230 times as conductive as the resin, the heat crosses the resin films
+  between the particles: the resin's conductivity moves k almost as much as the content, the filler's hardly (S_T 0.02).
+  On the voxels, where touching particles share faces, 5.11 found the filler's conductivity weighing more (0.25 against
+  0.44). The diameter's plain correlation is mostly the content's: the two are correlated over the realised structures
+  (r = −0.35).
+- **Interactions.** Content × matrix conductivity is found by three of five measures (PCE S₂, SHAP interaction values,
+  ANOVA p = 1.3 × 10⁻⁶): the resin's conductivity matters more the more filler there is. All interactions together carry
+  3 % of the variance (1 − ΣS₁).
 - The measures are those of the literature, each cited in chapter 28A of the user guide; Sobol, eFAST, Morris, DGSM,
   PAWN, the polynomial chaos expansion and the Shapley values are implemented on NumPy, the models are scikit-learn's.
 
 ## Verification
 
-`5_SELF_TEST.bat` solves **117 problems with known solutions** (75 in the quick set) and compares the results with the
+`5_SELF_TEST.bat` solves **124 problems with known solutions** (79 in the quick set) and compares the results with the
 reference values. A selection:
 
 | Check | Reference | Result |
 |---|---|---|
 | Series and parallel laminates (bulk and thin film) | 1.81818 / 5.5 | exact |
 | Interfacial thermal resistance | Hasselman–Johnson | within 0.26 % |
+| Interfacial resistance on the tetrahedral FEM (one sphere, R_int on its true surface) | Hasselman–Johnson | within 0.09 % |
+| Films on the FEM: two slabs with 50 nm films, thermal R_c and electrical contacts | exact series sum | within 0.6 % (thermal, R_c 0 to 10⁻⁶ m²K/W), 2.5 % (electrical contacts) |
 | Simple cubic sphere array, extrapolated from 256³ | converged reference | 64³: FV +0.7 %, FE +4.0 % |
 | Built-in periodic FV against PuMA's FV, same field on a three-phase grid | PuMA's operator | equal to 2e-16 |
 | Multi-core PuMA Stokes flow and tortuosity | PuMA's single-threaded path | K within 4e-10, τ within 1e-15 |
@@ -741,11 +761,11 @@ reference values. A selection:
 
 | Preset | Quantity | Ref. | Measured | MPSim |
 |---|---|---|---|---|
-| Benchmark · DOE · glass spheres in epoxy at Smith's four loadings; Measured benchmark · glass spheres 40 vol% in epoxy | Young's modulus of epoxy with glass spheres, 22.5 / 30.3 / 39.6 / 49.6 vol% | [1] | 5.08 / 6.01 / 7.94 / 12.09 GPa | FEM 5.14 / 6.32 / 8.22 / 11.22 (+1.1 %, +5.2 %, +3.5 %, -7.2 %); voxel elements 5.83 / 7.62 / 10.68 / 16.16 (+14.7 %, +26.7 %, +34.6 %, +33.7 %); 48³ |
+| Benchmark · DOE · glass spheres in epoxy at Smith's four loadings; Measured benchmark · glass spheres 40 vol% in epoxy | Young's modulus of epoxy with glass spheres, 22.5 / 30.3 / 39.6 / 49.6 vol% | [1] | 5.08 / 6.01 / 7.94 / 12.09 GPa | FEM 5.12 / 6.32 / 8.15 / 11.22 (+0.7 %, +5.1 %, +2.6 %, -7.2 %); voxel elements 5.83 / 7.62 / 10.68 / 16.16 (+14.7 %, +26.7 %, +34.6 %, +33.7 %); 48³ |
 | Benchmark · particle dynamics against Boyer et al.'s measured law (friction 0.25, 50 vol%) | Shear viscosity of non-Brownian spheres / the liquid's, 40 / 50 / 55 vol% | [2] | 7.4 / 31.9 / 145.0 | friction 0.25 (default): 6.1 / 22.9 / 104.2; friction 0.5: 6.4 / 30.3 / 408.9 |
-| Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC) | Conductivity and expansion of SiC 63 vol% in Al-Si7Mg | [3] | 178 W/m·K, 8.21 ppm/K | 189 W/m·K, 8.85 ppm/K (+6 %, +8 %; voxel solvers, interface 1e-8 m²K/W); FEM 9.23 ppm/K (+12 %) |
+| Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC) | Conductivity and expansion of SiC 63 vol% in Al-Si7Mg | [3] | 178 W/m·K, 8.21 ppm/K | 195 W/m·K (+10 %; the tetrahedral FEM, interface 1e-8 m²K/W; voxels 189), 8.85 ppm/K (+8 %, voxel elements); FEM 9.23 ppm/K (+12 %) |
 | mmWave substrate · PTFE + fused silica 60 wt% | Permittivity of PTFE with 60 wt% silica | [5] | Dk 2.9 | Dk 3.01 (+3.8 %) |
-| Package-level power inductor · epoxy + carbonyl iron 54 vol% | Permeability of a printed carbonyl-iron core | [6] | μr 7.5 | μr 5.98 (−20 %; spheres, where the printed core's particles touch and align; see the preset) |
+| Package-level power inductor · epoxy + carbonyl iron 54 vol% | Permeability of a printed carbonyl-iron core | [6] | μr 7.5 | μr 5.97 (−20 %; spheres, where the printed core's particles touch and align; see the preset) |
 
 Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the default friction 0.25 with it; that evaluation kept only μ1 of the contact term of their eq. (8). Against the law as printed no single friction coefficient follows it over the three loadings (guide 13.3); the default is still 0.25 - fit it to a measured viscosity where there is one.
 
@@ -753,7 +773,7 @@ Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the 
 
 | Preset | Quantity | Ref. | Measured | MPSim |
 |---|---|---|---|---|
-| Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement) | Conductivity of Cu + diamond 50 vol% | [4] | 640 W/m·K | the paper's interface conductance 36–56 MW/m²K gives 749–777 W/m·K (+17 to +21 %); 12.5 MW/m²K reproduces the measurement (646) |
+| Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement) | Conductivity of Cu + diamond 50 vol% | [4] | 640 W/m·K | the paper's interface conductance 36–56 MW/m²K gives 767–794 W/m·K (+20 to +24 %); 10.6 MW/m²K reproduces the measurement (640) |
 | FEM · AlSiC, SiC 63 vol%: bonded contacts fitted to the measured expansion | Expansion of AlSiC with bonded contacts between the SiC | [3] | 8.21 ppm/K | 9.23 / 9.15 / 8.86 / 8.20 ppm/K for a neck of 0 / 0.3 / 0.45 / 0.6: a neck of 0.6 reproduces the measurement |
 
 *Published and exact solutions* (the presets with one particle per box are one cell of a periodic array: Domain → Periodic array)
@@ -761,7 +781,7 @@ Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the 
 | Preset | Quantity | Ref. | Solution | MPSim |
 |---|---|---|---|---|
 | Benchmark · Rayleigh's simple cubic array of spheres (conduction) | Conductivity of a simple cubic array of spheres (15.5 vol%, 100 : 1) | [7] | 1.5324 (Rayleigh's printed coefficient 1.65: 1.5337) | FEM 1.5347 (+0.15 %); FV 1.5394 (+0.46 %) |
-| Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance (DOE) | Conductivity of dilute spheres with an interfacial resistance (5 vol%, 20 : 1) | [8] | 1.1355 / 1.0325 / 0.9976 (α 0 / 0.5 / 1) | 1.1363 / 1.0311 / 0.9960 (max 0.16 %) |
+| Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance (DOE) | Conductivity of dilute spheres with an interfacial resistance (5 vol%, 20 : 1) | [8] | 1.1355 / 1.0325 / 0.9976 (α 0 / 0.5 / 1) | 1.1357 / 1.0326 / 0.9977 (max 0.02 %) |
 | Benchmark · Maxwell Garnett: permittivity of dilute spheres | Permittivity of dilute spheres (5 vol%, ε 100 in 3) | [9] | 3.4320 | 3.4355 (+0.10 %) |
 | Benchmark · Einstein: viscosity of a dilute rigid sphere | Viscosity of a dilute rigid sphere (1.9 vol%) | [10] | 1.0485 ([η] 2.5) | 1.0501 ([η] 2.59, +3.44 %) |
 | Benchmark · particle dynamics against Krieger–Dougherty (frictionless spheres, 50 vol%) | Viscosity of frictionless spheres, 40 / 50 / 55 vol% | [11] | 4.80 / 11.38 / 23.07 (φ_m 0.64) | 5.70 / 11.77 / 18.55 |
@@ -769,7 +789,7 @@ Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the 
 | Benchmark · two layers: series and parallel (exact) | Two equal layers, across and along (k, ε_r) | exact | k 0.39735 / 15.1; ε 5.57956 / 6.85 | k 0.39735 / 15.1; ε 5.57956 / 6.85 (exact) |
 | Benchmark · Poiseuille: a straight cylindrical pore (flow, tortuosity, acoustic lengths) | Straight cylindrical pore, r 16 µm: permeability, tortuosity, Λ, Λ′ | [13] | K φr²/8 = 4.060e-12 m²; τ 1; Λ = Λ′ = 16 µm | K 3.914e-12 (-3.60 %); τ 1.0000; Λ 15.85, Λ′ 15.85 µm |
 | Benchmark · Maxwell: moisture diffusion around impermeable spheres | Moisture diffusivity around impermeable spheres (5 vol%) | [14] | D*/D_m = 2/(2+φ) = 0.9756 | 0.9726 (-0.31 %) |
-| PCB thermal vias · FR-4 with Cu-plated vias | Conductivity through and along a laminate with straight Cu vias | exact | parallel paths 9.2851 W/m·K; in the plane 0.847 (Maxwell, parallel cylinders) | 9.2851 (to the fourth decimal); 0.848 |
+| PCB thermal vias · FR-4 with Cu-plated vias | Conductivity through and along a laminate with straight Cu vias | exact | parallel paths 8.9518 W/m·K; in the plane 0.8456 (Maxwell, parallel cylinders) | 8.9517 (−0.001 %); 0.8452 (−0.05 %) |
 | Die-attach solder · SAC305 with 15 % voids | Conductivity of solder with 15 % insulating voids | [14] | below 2(1 − φ)/(2 + φ) = 79.1 % of the dense value (Maxwell's bound for insulating spheres) | 76.9 % |
 
 *In the self-test only* (a test function, a two-layer strip, a single plate, a second code): Maximum packing of bidisperse spheres (the φ_m of the viscosity models) [15] - within 0.011; Sobol indices of the Ishigami function (DOE sensitivity) [16] - passed; Curvature of a bimetal strip (thermal stress and warpage) [17] - −20.002 1/m; Exact two-phase relation between stiffness and expansion (Levin, 1967; no DOI) - 5×10⁻⁷; Moisture uptake of a plate (Crank's series) - within 2×10⁻³; A homogeneous slab in openEMS against the exact slab transmission - within 0.001 dB; The tetrahedral FEM against FEniCSx (DOLFINx 0.11) on the same mesh: a second code, not a literature value - the same to 12 digits.

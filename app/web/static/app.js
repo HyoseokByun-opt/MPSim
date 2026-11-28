@@ -62,12 +62,12 @@
   const PARTICLE_SHAPES = ["sphere", "spheroid", "cylinder", "spherocylinder", "cube", "cuboid", "superellipsoid", "polyhedron"];
   const POLY_KINDS = { tetrahedron: "Tetrahedron", octahedron: "Octahedron", dodecahedron: "Dodecahedron", icosahedron: "Icosahedron", irregular: "Irregular grains" };
   const AN = {
-    thermal: { title: "Thermal conductivity", icon: "thermal", color: "var(--c-thermal)", solver: "Periodic finite volume (default) · NASA PuMA FE on request", out: "k tensor · diffusivity · area-specific resistance · temperature and heat-flux fields" },
+    thermal: { title: "Thermal conductivity", icon: "thermal", color: "var(--c-thermal)", solver: "Finite elements on a tetrahedral mesh fitted to the particles (default) · periodic finite volume or NASA PuMA FE on request", out: "k tensor · diffusivity · area-specific resistance · temperature and heat-flux fields" },
     electrical: { title: "Electrical conductivity", icon: "electrical", color: "var(--c-electrical)", solver: "Periodic finite volume (default) · NASA PuMA FE on request", out: "σ tensor · percolation · sheet resistance · current-density field" },
     dielectric: { title: "Permittivity and loss", icon: "dielectric", color: "var(--c-diel)", solver: "Periodic finite volume (default) · NASA PuMA FE on request", out: "Dk tensor · Df · capacitance · local field enhancement" },
     magnetic: { title: "Magnetic permeability", icon: "magnetic", color: "var(--c-mag)", solver: "Periodic finite volume (default) · NASA PuMA FE on request", out: "μr tensor · field enhancement" },
     emi: { title: "EMI shielding", icon: "emi", color: "var(--c-mag)", solver: "PuMA σ, ε, μ → scikit-rf", out: "SE(f) with reflection, absorption and multiple-reflection terms" },
-    cte: { title: "Elasticity and CTE", icon: "cte", color: "var(--c-mech)", solver: "Voxel FE with an FFT preconditioner (FANS) · 6 strains + ΔT", out: "C and S matrices · E, G, ν · α tensor · thermal stress fields" },
+    cte: { title: "Elasticity and CTE", icon: "cte", color: "var(--c-mech)", solver: "Voxel FE with an FFT preconditioner (FANS, default) · tetrahedral FEM on request · 6 strains + ΔT", out: "C and S matrices · E, G, ν · α tensor · thermal stress fields" },
     mechtest: { title: "Mechanical test", icon: "cte", color: "var(--c-mech)", solver: "Testing-machine load on the effective stiffness · one FANS solve for the stress fields", out: "Force–displacement line · apparent modulus and Poisson's ratio · von Mises, axial stress and strain fields · load at the matrix strength" },
     thermomech: { title: "Thermal stress and warpage", short: "Thermal stress, warpage", icon: "cte", color: "var(--c-thermal)", solver: "Film heat flow (FV with interface resistances) → per-voxel thermal strain, α1/α2 and E by the local temperature (FANS eigenstrain) → laminate release", out: "Temperature field · curvature and warpage · stress profile through the film · von Mises, principal and peeling stress fields · substrate stress", film: true },
     joule: { title: "Joule heating", icon: "electrical", color: "var(--c-electrical)", solver: "Film potential (FV, σ at each voxel's temperature) ⇄ Joule heat ⇄ temperature (FV), repeated to 1 mK at every step", out: "I–V line · peak and sink temperature per step · thermal runaway · temperature, heat, current-density and potential fields", film: true },
@@ -104,7 +104,13 @@
   function runMethods(r) {
     const sp = r.spec || {}, o = sp.options || {}, an = new Set(sp.analyses || []), out = [];
     let puma = false;
-    if (["thermal", "electrical", "dielectric", "magnetic", "emi", "moisture"].some((k) => an.has(k))) {
+    if (an.has("thermal")) {
+      // the thermal conductivity has its own method (body-fitted tetrahedral FEM by default from 5.12.0)
+      // (a run made before 5.12.0 has no thermal_method: it followed cond_method, the periodic FV by default)
+      const tm = o.thermal_method || (o.cond_method === "tet" ? "tet" : o.cond_method === "fe" ? "fe" : "fv");
+      out.push("thermal conductivity " + ({ tet: "body-fitted tetrahedral FE", fv: "built-in periodic FV", fe: "NASA PuMA FE" }[tm] || tm));
+    }
+    if (["electrical", "dielectric", "magnetic", "emi", "moisture"].some((k) => an.has(k))) {
       if (r.backend === "puma_fv") { out.push("conduction NASA PuMA FV"); puma = true; }
       else if (o.cond_method === "fe" && r.backend !== "builtin") { out.push("conduction NASA PuMA FE"); puma = true; }
       else if (o.cond_method === "tet") out.push("conduction body-fitted tetrahedral FE");
@@ -336,7 +342,7 @@
       rve: { auto: true, quality: "standard", L_um: null, voxel_um: null, auto_enlarge: false, n_seeds: 0, seed: 1, press_contact: true, realisations: { mode: "fixed", target_pct: 2, n_min: 3, n_max: 20 }, film: false, T_um: null, L_unit: "um", h_unit: "um", T_unit: "um", arrangement: "random", shear_strain: 10, press_compression: 30, press_rate: 1, press_lateral: "xy", press_steps: null, press_cure: false, press_mold_C: 175, press_control: "rate", press_stress_Pa: 100, press_part_mm: 1, press_time_s: 600, dispersion: { mode: "uniform" } },
       analyses: { thermal: true },
       options: {
-        directions: "z", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", cond_method: "fv", elastic_method: "fans", tet_mesh: "lattice", tet_res: 4, tet_refine: "auto", tet_contact: 0, tet_neck: 0, crosscheck: false, resolution_check: false, reuse_runs: true, loading_short: "stop", backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
+        directions: "z", tol: 1e-6, delta_T: 100, thermal_bc: "constrained", particle_gap_vox: 0, parallel_solves: "auto", thermal_method: "tet", cond_method: "fv", elastic_method: "fans", tet_mesh: "lattice", tet_overlap: "separate", tet_film_nm: "auto", tet_res: 4, tet_refine: "auto", tet_contact: 0, tet_neck: 0, crosscheck: false, resolution_check: false, reuse_runs: true, loading_short: "stop", backend: "puma", contrast_cap: 1e6, thickness_mm: 1, temperature_K: 298.15, knudsen: false,
         emi: { thickness_mm: 1, f_min_hz: 1e6, f_max_hz: 1e10, method: "complex", n_freq: 10, fullwave: true },
         acoustics: { thickness_mm: 20, f_min_hz: 100, f_max_hz: 10000 },
         radiation: { temperature_K: 1000, refractive_index: 1, sources: 200, rays: 500 },
@@ -1629,11 +1635,13 @@
         <div class="hint" style="margin-top:4px">${+((f.options || {}).particle_gap_vox) > 0
           ? `Particles are moved (never trimmed) so that their surfaces stay ${fmt(+f.options.particle_gap_vox)} voxel${+f.options.particle_gap_vox === 1 ? "" : "s"} apart (from 2 voxels on, no voxel of one is even a corner neighbour of a voxel of another) wherever the loading allows - as with a dispersant or a coating. A loading too dense for the gap lets particles touch only where needed. The gap is measured in voxels, so it shrinks with the voxel size.`
           : "Particles never overlap but may touch, as they do in a filled compound. The touching voxel faces are counted and can carry a contact resistance R<sub>c</sub>; heat and current cross a contact face, so a dense, conductive filler forms paths. A value above 0 keeps the particles that many voxels apart instead."}</div>
-        <label class="chk" style="margin-top:8px"><span class="switch"><input type="checkbox" data-k="options.overlap_steps.on"><span></span></span> Allow overlap step by step when the loading does not pack</label>
-        ${(f.options.overlap_steps || {}).on !== false ? `<div class="g2"><div><label class="f">Packings per step</label><input type="number" min="1" max="50" step="1" data-k="options.overlap_steps.tries" data-num></div><div><label class="f">Largest overlap <span class="u">voxels</span></label><input type="number" min="1" max="20" step="1" data-k="options.overlap_steps.max_vox" data-num></div></div>${overlapShareHTML(f)}` : ""}
-        <div class="hint">${(f.options.overlap_steps || {}).on !== false
-          ? `On (default). When the particles cannot be packed to the loading without overlapping, the packing is made again with an overlap of 1 voxel allowed, then 2, and so on up to the largest overlap; at each step it is tried the given number of times (the first from where the last one stopped, the others from new random positions) before the next voxel is allowed. The first packing that reaches the loading is kept; a voxel two particles share belongs to one of them, and the RVE checks report the overlap that was needed. A loading that packs without overlap is not affected. Largest share: at most this percentage of the particle voxels may lie in two particles - a structure above it is built again with one voxel less of overlap, down to none (as with the option off). Auto sets it for the problem so that the overlap changes the result by no more than 1 %: from the contrast of each analysis selected (particle against matrix), the particles' size in voxels and how close the loading is to random close packing - measured with this program, after Batchelor & O'Brien (1977) on conduction through contacts. Conductive fillers allow almost none, fillers close to the matrix more. A value is used as entered (0: no overlap); No limit as in 5.6.1.`
-          : "Off: a loading that cannot be packed without overlap is reached as far as it goes, and every particle is drawn smaller by the same factor (the RVE checks report the volume fraction short of the target)."}</div></div></div>
+        <label class="chk" style="margin-top:8px"><span class="switch"><input type="checkbox" data-k="options.overlap_steps.on"><span></span></span> Allow overlap when the loading does not pack</label>
+        ${(f.options.overlap_steps || {}).on !== false ? overlapShareHTML(f) : ""}
+        <div class="hint" style="margin-top:6px">${(f.options.overlap_steps || {}).on === false
+          ? "Off: a loading that cannot be packed without overlap is reached as far as it goes, and every particle is drawn smaller by the same factor (the RVE checks report the volume fraction short of the target)."
+          : ["value", "none"].includes((f.options.overlap_steps || {}).share)
+          ? `When the particles cannot be packed to the loading without overlapping, the packing is made again with an overlap of 1 voxel allowed, then 2, and so on up to the largest overlap; at each step it is tried the given number of times (the first from where the last one stopped, the others from new random positions) before the next voxel is allowed. The first packing that reaches the loading is kept; a voxel two particles share belongs to one of them, and the RVE checks report the overlap that was needed. A loading that packs without overlap is not affected. Share: at most this percentage of the particle voxels may lie in two particles - a structure above it is built again with one voxel less of overlap, down to none. No limit: as in 5.6.1. An overlap of whole voxels is deeper than real particles overlap (they touch, with roughness and a resin film between them): it is kept for comparison with earlier versions and for structures whose particles do merge (sintered, pressed). Auto (default) does not step by voxels.`
+          : `On, Auto (default since 5.12.0). The rules: (1) a loading that packs without overlap is drawn without any; (2) a packing that stops within 2 % of the particles' size of the loading (they fit at 98 % of their size or more) is finished by drawing every particle at its full size where it stands - touching neighbours then overlap by at most 2 % of their size, the depth of the roughness and of the resin squeezed out between real particles, and the tetrahedral FEM separates them again at a face with a resin film (Overlapping particles, Simulation → Solver settings); (3) a packing that stops further off is not forced: an overlap that deep joins particles by necks that particles in a resin do not have (merged overlaps raised the conductivity of 60 vol% spheres by 55 to 75 %, guide 5.5), so the loading is short and the run stops (A structure that misses its loading, Analyses), with the random close packing of the size distribution entered as the reference: a broader distribution packs denser; (4) a structure for flow or diffusion through its pores takes no overlap, which would close pores; (5) spheres asked above the random close packing of their size distribution (Farr-Groot; equal spheres 64.3 vol%) are not grown either - no arrangement of real particles holds that loading. The line under Overlap says how the rules apply to this structure.`}</div></div></div>
       <div class="sec"><div class="sh">${I("morphology")}Composition</div><div class="sb" id="compBody"></div></div>`;
   }
   /* R_c for every pair of fillers. The diagonal is each filler's own R_c
@@ -1922,16 +1930,22 @@
         <label class="f">Load directions</label><div class="row">${["z", "x", "y"].map((d) => `<label class="chk inline"><input type="checkbox" data-dir="${d}" ${dirs.includes(d) ? "checked" : ""}> ${d}${d === "z" ? " (through-thickness)" : ""}</label>`).join("")}</div>
         <div class="hint">z only by default: one solve per property. x and y add the in-plane values and the anisotropy; z is solved first, and its fields, arrows and field lines are the ones kept for the 3D and 2D views. EMI uses an in-plane direction (x when only z is set), the direction of the field in a shielding layer.</div>
         <label class="f">Solvers</label><select data-k="options.backend"><option value="puma">Built-in periodic FV and FANS, NASA PuMA for flow and diffusion (default)</option><option value="puma_fv">Conduction with NASA PuMA's FV (fixed end faces, comparison)</option><option value="builtin">Built-in solvers only (without NASA PuMA)</option></select>
-        ${o.backend === "puma" || !o.backend ? `<label class="f">Conduction (k, σ, Dk, μ<sub>r</sub>)</label><select data-k="options.cond_method"><option value="fv">Periodic finite volume on the voxels (default, fastest)</option><option value="tet">Finite elements on a tetrahedral mesh fitted to the particles (FEM)</option><option value="fe">PuMA periodic finite elements on the voxels</option></select>
-        ${o.cond_method === "tet" ? `<div class="hint"><b>Body-fitted tetrahedral FEM.</b> The lattice of the voxel corners is cut into tetrahedra and every tetrahedron is cut where it crosses a particle's exact surface, so that the interfaces are the particles' own (no voxel staircase); a film of matrix between two particles thinner than a voxel is carried as an interface element of its width. Linear elements, AMG-preconditioned conjugate gradients; on the same mesh FEniCSx gives the same values. It converges with the square of the voxel size where the finite volume converges with the voxel size - a sphere 5 voxels across is as accurate as one of 20 voxels on the finite volume - and takes about 15 times longer per solve (its multigrid runs on all cores since 5.10.0; 7 s against 0.5 s at 64³) and about 3 GB at 128³. Interface and contact resistances, anisotropic fillers, coated particles, networks, images and compressed structures stay with the finite volume (the run says so).</div>` : ""}
-        <label class="chk"><span class="switch"><input type="checkbox" data-k="options.crosscheck"><span></span></span> Also solve with the other method and compare</label>
-        <div class="hint">Each problem is solved once. On voxel grids the finite-volume result came 2–3× closer to converged reference values than the finite-element one, which conducts through voxels that touch only at an edge or corner (guide 7.2). The comparison doubles the conduction time and shows the discretisation error. Flow uses PuMA's finite elements.</div>` : ""}
+        <label class="f">Thermal conductivity (k)</label><select data-k="options.thermal_method"><option value="tet">Finite elements on a tetrahedral mesh fitted to the particles (FEM, default)</option><option value="fv">Periodic finite volume on the voxels</option>${o.backend === "puma" || !o.backend ? `<option value="fe">PuMA periodic finite elements on the voxels</option>` : ""}</select>
+        <div class="hint">${(o.thermal_method || "tet") === "tet"
+          ? `<b>Body-fitted tetrahedral FEM (default since 5.12.0, at every filler content).</b> The lattice of the voxel corners is cut into tetrahedra and every tetrahedron is cut where it crosses a particle's exact surface, so that the interfaces are the particles' own (no voxel staircase). The resin film between two particles that come closer than the mesh is carried as an interface element of its own width (Thinnest resin film, below), and the interface resistance R<sub>int</sub> and the contact resistance R<sub>c</sub> sit on the true surfaces: R<sub>int</sub> on a particle-matrix interface split in two, R<sub>c</sub> in series with the film between two particles. On voxels a contact is a voxel face whose area is set by the voxel size, so the conductivity of a dense, conductive packing depends on the grid (45 vol% alumina with 5 vol% BN in epoxy: 4.69 → 3.64 W/m·K from 32³ to 128³ on the finite volume, 1.66 → 1.55 on this FEM). Linear elements, AMG-preconditioned conjugate gradients on all cores; on the same mesh FEniCSx gives the same values, and spheres with an R<sub>int</sub> meet the Hasselman–Johnson model to 0.03 %. It takes about 15 times longer per solve than the finite volume (7 s against 0.5 s at 64³) and about 3 GB at 128³. Anisotropic fillers, coated particles, networks, images and compressed structures are solved on the voxels (the run says so).`
+          : `On the voxels a contact between two particles is a voxel face whose area is set by the voxel size: the conductivity of a dense packing of a conductive filler then depends on the grid (guide 7.2). The tetrahedral FEM (default) meshes the particles' own surfaces.`}</div>
+        ${o.backend === "puma" || !o.backend ? `<label class="f">Other conduction properties (σ, Dk, μ<sub>r</sub>)</label><select data-k="options.cond_method"><option value="fv">Periodic finite volume on the voxels (default, fastest)</option><option value="tet">Finite elements on a tetrahedral mesh fitted to the particles (FEM)</option><option value="fe">PuMA periodic finite elements on the voxels</option></select>
+        ${o.cond_method === "tet" ? `<div class="hint">The electrical conductivity, permittivity and permeability on the tetrahedral FEM of the thermal conductivity. <b>Electrically</b>, two particles conduct to each other only where their surfaces touch (a film at the thinnest width, with R<sub>c,e</sub> in series where it is set); a wider resin film insulates. A random packing below jamming leaves most neighbours a resin gap apart, so on the FEM it conducts far less than on the voxels, where particles in neighbouring voxels share a face (silver spheres 5 µm, 45 vol% in epoxy: 287 S/m on the FEM, 4.6·10<sup>5</sup> S/m on the voxels). The contacts of a cured paste come from shrinkage and pressure; the voxel faces stand for them. Anisotropic fillers, coated particles, networks, images and compressed structures stay with the finite volume (the run says so).</div>` : ""}` : ""}
+        ${o.backend === "puma" || !o.backend || (o.thermal_method || "tet") === "tet" ? `<label class="chk"><span class="switch"><input type="checkbox" data-k="options.crosscheck"><span></span></span> Also solve with the other method and compare</label>
+        <div class="hint">Each problem is solved once. Ticked, a property on the FEM is solved again on the voxels with the periodic finite volume (and one on the voxels with the other voxel method), and both values are shown: the difference is the discretisation error of the voxels. It adds the time of the second solve. Flow uses PuMA's finite elements.</div>` : ""}
         <label class="f">Elasticity and CTE</label><select data-k="options.elastic_method"><option value="fans">Voxel FE, FFT-preconditioned (FANS, default)</option><option value="tet">Finite elements on a tetrahedral mesh fitted to the particles (FEM)</option><option value="puma">NASA PuMA FE (MINRES)</option><option value="fft">FFT, Moulinec–Suquet</option></select>
-        ${o.elastic_method === "tet" ? `<div class="hint"><b>Body-fitted tetrahedral FEM for C, E, G, ν and α.</b> The mesh of the conduction FEM with linear displacement elements: the six unit strains and the thermal strain are solved together on all cores (multigrid-preconditioned conjugate gradients). A film of matrix between two particles thinner than the mesh is an interface element with the stiffness of a thin layer held between two stiff faces. On the same mesh FEniCSx gives the same stiffness and thermal stress to twelve digits. For 60 vol% silica the voxel elements gave 25.0 → 17.4 GPa from 32³ to 192³ and were still falling; the FEM 16.2 → 15.7 GPa from 32³ to 64³. It takes about 4 times longer than FANS (79 s against 19 s at 64³) and 4.9 GB there. Against a measurement (glass spheres in epoxy, Smith 1976, 23 to 50 vol%) it is within −7 to +5 % where the voxel elements of the same grid are 15 to 35 % high. It solves the particles as generated, touching at points; particles bonded over an area take a neck (Bonded contacts below; guide 12.2). Interfaces are bonded; films, coated particles, networks, images and compressed structures stay with FANS (the run says so), and so do the mechanical test, the state above T<sub>g</sub> and the coupled analyses. 'Also solve with the other method' adds the FANS values beside it.</div>` : ""}
+        ${o.elastic_method === "tet" ? `<div class="hint"><b>Body-fitted tetrahedral FEM for C, E, G, ν and α.</b> The mesh of the conduction FEM with linear displacement elements: the six unit strains and the thermal strain are solved together on all cores (multigrid-preconditioned conjugate gradients). A film of matrix between two particles thinner than the mesh is an interface element with the stiffness of a thin layer held between two stiff faces. On the same mesh FEniCSx gives the same stiffness and thermal stress to twelve digits. For 60 vol% silica the voxel elements gave 24.8 → 16.2 GPa from 32³ to 192³ and were still falling; the FEM 15.4 → 14.8 GPa from 32³ to 64³, and both extrapolate to 14.1-14.2 GPa on an infinitely fine grid. It takes about 4 times longer than FANS (79 s against 19 s at 64³) and 4.9 GB there. Against a measurement (glass spheres in epoxy, Smith 1976, 23 to 50 vol%) it is within −7 to +5 % where the voxel elements of the same grid are 15 to 35 % high. It solves the particles as generated, touching at points; particles bonded over an area take a neck (Bonded contacts below; guide 12.2). Interfaces are bonded; films, coated particles, networks, images and compressed structures stay with FANS (the run says so), and so do the mechanical test, the state above T<sub>g</sub> and the coupled analyses. 'Also solve with the other method' adds the FANS values beside it.</div>` : ""}
         <div class="hint">FANS solves the same voxel finite elements as PuMA (identical results) with conjugate gradients preconditioned by the exact inverse of a homogeneous reference medium. Its iteration count does not grow with the grid (about 60 for 10<sup>-6</sup>), where PuMA's MINRES needs more iterations the larger the grid.</div>
-        ${o.elastic_method === "tet" || o.cond_method === "tet" ? `<label class="f">Tetrahedral mesh</label><select data-k="options.tet_mesh"><option value="lattice">On the lattice of the voxel corners (default)</option><option value="graded">Graded: cells sized by the particles (octree)</option></select>
+        ${o.elastic_method === "tet" || o.cond_method === "tet" || (o.thermal_method || "tet") === "tet" ? `<label class="f">Tetrahedral mesh</label><select data-k="options.tet_mesh"><option value="lattice">On the lattice of the voxel corners (default)</option><option value="graded">Graded: cells sized by the particles (octree)</option></select>
+        <div class="g2"><div><label class="f">Overlapping particles</label><select data-k="options.tet_overlap"><option value="separate">Separated by a face, as two touching particles (default)</option><option value="merged">Merged into one solid where they overlap</option></select></div><div><label class="f">Thinnest resin film <span class="u">nm · auto</span></label><input type="text" data-k="options.tet_film_nm" placeholder="auto"></div></div>
+        <div class="hint"><b>Overlapping particles.</b> Particles that overlap in the structure (a loading finished by growing in place, or an overlap share entered on the Structure tab) are separated by default: the mesh cuts the two apart at the plane between them and keeps the depth of their overlap as a resin film of that width, so that they meet as two touching particles do and not as one particle joined by a neck. Measured on 60 vol% spheres with a 150:1 conductivity contrast (four structures each), separated overlaps of up to 2 % of the size gave −8 to 0 % on average against packings made without any overlap (single structures −11 to +5 %, as their arrangement varies), where merged ones gave +55 to +75 % (guide 7.2). Merged makes each overlap one solid: a neck the size of the overlap, as in a sintered or reacted contact (whose neck Bonded contacts sets directly). Particles of a phase whose overlap is permitted overlap on purpose and stay merged either way. <b>Thinnest resin film.</b> Two particle surfaces closer than this are held this far apart by the resin between them. Auto: the larger of the closest approach of two surfaces (1 nm), twice a resin layer bound to the surfaces (0 nm) and the surface roughness (5 nm), the roughness taken at most 1 % of the smallest dimension of the finest particles - the surface values of the particle-dynamics viscosity, so that one set describes both the flow and the contacts. A value entered is used as it is; the mesh raises a film thinner than 0.2 % of its spacing to that.</div>
         <div class="g2">${num("options.tet_neck", "Bonded contacts: neck radius / particle radius", "", "0.05")}<div></div></div>
-        <div class="hint"><b>Bonded contacts.</b> At 0 (default) two particles meet at a point with matrix around it - a filler wetted by its resin. Glass spheres in epoxy measured by Smith (1976) are reproduced this way: 5.13 / 6.32 / 8.22 / 11.22 GPa against the measured 5.08 / 6.01 / 7.94 / 12.09 at 23 / 30 / 40 / 50 vol%, where the voxel elements of the same grid give 5.82 / 7.62 / 10.68 / 16.16. Above 0 two particles are joined where their surfaces come close: a neck of this radius (times the smaller particle's radius) where they touch, smaller where a gap is left - the contact of sintered, pressed or reacted particles, which conducts and carries load as the particle does. It is a property of the material's processing, not of the mesh: 0.1 to 0.3 for sintered contacts; for AlSiC with 63 vol% SiC (measured 8.21 ppm/K) the expansion is 9.23 at 0, 8.86 at 0.45 and 8.20 at 0.6. Fit it to one measurement and predict the others (guide 12.2).</div>
+        <div class="hint"><b>Bonded contacts.</b> At 0 (default) two particles meet at a point with matrix around it - a filler wetted by its resin. Glass spheres in epoxy measured by Smith (1976) are reproduced this way: 5.12 / 6.32 / 8.15 / 11.22 GPa against the measured 5.08 / 6.01 / 7.94 / 12.09 at 23 / 30 / 40 / 50 vol%, where the voxel elements of the same grid give 5.82 / 7.62 / 10.68 / 16.16. Above 0 two particles are joined where their surfaces come close: a neck of this radius (times the smaller particle's radius) where they touch, smaller where a gap is left - the contact of sintered, pressed or reacted particles, which conducts and carries load as the particle does. It is a property of the material's processing, not of the mesh: 0.1 to 0.3 for sintered contacts; for AlSiC with 63 vol% SiC (measured 8.21 ppm/K) the expansion is 9.23 at 0, 8.86 at 0.45 and 8.20 at 0.6. Fit it to one measurement and predict the others (guide 12.2).</div>
         ${o.tet_mesh === "graded" ? `<div class="g3">${num("options.tet_res", "Cells across a particle's smallest dimension", "", "1")}<div><label class="f">Finest cell</label><select data-k="options.tet_refine"><option value="auto">Auto: as fine as the finest particle needs</option><option value="0">The voxel</option><option value="1">Voxel / 2</option><option value="2">Voxel / 4</option><option value="3">Voxel / 8</option><option value="4">Voxel / 16</option></select></div>${num("options.tet_contact", "Further levels where two particles meet", "", "1")}</div>
         <div class="hint"><b>Graded mesh.</b> The lattice mesh carries the resolution of the finest particle through the whole RVE. The graded mesh is an octree: a cell is halved while a particle's surface runs through it and the cell is larger than that particle's smallest dimension over the number entered, neighbours differ by one level at most, and the cells are cut at the particles' exact surfaces as the lattice is. The finest cell may be smaller than the voxel, so a fibre or a fine filler that the voxel grid does not resolve is still meshed. It pays where the fine particles are few among coarse ones (grains with 0.6 vol% fibres 20 times thinner: 3.6 times fewer tetrahedra at the same finest cell, 14 times fewer one level finer); in a dense blend whose fines fill the gaps everywhere the surfaces are everywhere too, and it saves little (guide 7.2).</div>` : ""}` : ""}
         <label class="chk"><span class="switch"><input type="checkbox" data-k="options.resolution_check"><span></span></span> Resolution check: solve again on a 1.5× finer grid</label>
@@ -2106,8 +2120,25 @@
       renderLeft();
       return;
     }
+    if (f === "values") {
+      // a list of levels: "22.51, 30.25, 39.6" (the study takes them as they are)
+      p.values = t.value.split(/[,;\s]+/).filter(Boolean).map(Number).filter((v) => isFinite(v));
+      const el = $(".note", $("#lbody")); if (el) el.textContent = `${doeCaseCount()} cases will be queued.`;
+      return;
+    }
     p[f] = f === "scale" ? t.value : Number(t.value);
     if (f === "steps") renderLeft();
+  }
+  function doeHasValues(p) { return Array.isArray(p.values) && p.values.length > 0; }
+  function doeRangeLevels(p) {
+    // the levels a range gives, as the study spaces them (doe.levels)
+    const n = Math.max(1, Math.min(+p.steps || 1, 24)), lo = +p.min, hi = +p.max;
+    if (n === 1) return [lo];
+    const log = p.scale === "log" && lo > 0 && hi > 0;
+    return Array.from({ length: n }, (_, k) => {
+      const s = k / (n - 1);
+      return +(log ? Math.exp(Math.log(lo) + s * (Math.log(hi) - Math.log(lo))) : lo + s * (hi - lo)).toPrecision(6);
+    });
   }
   function onLibField(e) {
     const el = e.target, key = el.dataset.lk, id = state.libSel;
@@ -2913,11 +2944,12 @@
   function overlapShareHTML(f) {
     const o = f.options.overlap_steps || {};
     const mode = ["value", "none"].includes(o.share) ? o.share : "auto";
-    return `<div class="g2"><div><label class="f">Largest share in two particles</label><select data-k="options.overlap_steps.share"><option value="auto"${mode === "auto" ? " selected" : ""}>Auto</option><option value="value"${mode === "value" ? " selected" : ""}>Set a value</option><option value="none"${mode === "none" ? " selected" : ""}>No limit</option></select></div>`
-      + (mode === "value" ? `<div><label class="f">Share <span class="u">% of particle voxels, 0 = no overlap</span></label><input type="number" min="0" max="100" step="0.01" data-k="options.overlap_steps.max_pct" data-num></div>`
-        : `<div></div>`)
+    return `<div class="${mode === "value" ? "g2" : ""}"><div><label class="f">Overlap</label><select data-k="options.overlap_steps.share"><option value="auto"${mode === "auto" ? " selected" : ""}>Auto: grown in place up to 2 % of the size</option><option value="value"${mode === "value" ? " selected" : ""}>Voxel steps, with a largest share</option><option value="none"${mode === "none" ? " selected" : ""}>Voxel steps, no share limit</option></select></div>`
+      + (mode === "value" ? `<div><label class="f">Largest share in two particles <span class="u">% of particle voxels, 0 = no overlap</span></label><input type="number" min="0" max="100" step="0.01" data-k="options.overlap_steps.max_pct" data-num></div>`
+        : "")
       + `</div>`
-      + (mode === "auto" ? `<div class="hint" style="margin-top:4px">Auto: <span data-live="ovshare">${ovShareAutoHtml()}</span></div>` : "");
+      + (mode === "auto" ? `<div class="hint" style="margin-top:4px">Auto: <span data-live="ovshare">${ovShareAutoHtml()}</span></div>`
+        : `<div class="g2"><div><label class="f">Packings per step</label><input type="number" min="1" max="50" step="1" data-k="options.overlap_steps.tries" data-num></div><div><label class="f">Largest overlap <span class="u">voxels</span></label><input type="number" min="1" max="20" step="1" data-k="options.overlap_steps.max_vox" data-num></div></div>`);
   }
   function overlapLine(r) {
     const ocs = (r.realisations || []).map((x) => x.overlap_check).filter((o) => o && o.particles && !o.error);
@@ -3844,6 +3876,14 @@
     const m = /^phases\.(\d+)\.r_int$/.exec(u.path || "");
     if (!m || !calTouching()) return "";
     const c = CAL(), rc = `phases.${m[1]}.r_contact`, ln = (u.links || []).find((l) => l.path === rc);
+    // the tetrahedral FEM (the default for k since 5.12.0) meets touching particles across resin films; the voxel
+    // solvers across shared voxel faces with no resin, which is why the contacts weigh so differently there
+    if ((state.form.options.thermal_method || "tet") === "tet") {
+      if (ln) return `<div class="hint">The particles touch (gap 0): on the FEM they meet across resin films (at least the thinnest film, Solver settings), and the films take R<sub>c</sub> = ${esc(ln.expr)} in series - with 2·x, the two filler–resin interfaces of each film, which R<sub>int</sub> alone does not cover. One unknown, so one measurement gives a value, but the factor is an assumption. <button class="btn xs" data-curcsep="${i}">Calibrate R<sub>c</sub> separately</button></div>`;
+      if (c.unknowns.some((x) => x.path === rc)) return `<div class="hint">The particles touch (gap 0): R<sub>c</sub>, in series with the resin films between them, is calibrated alongside. On the FEM R<sub>int</sub> acts on every particle–resin surface and R<sub>c</sub> only on the films, so one measurement fixes a combination of the two and leaves each open; a sample in which the contacts weigh differently — a lower content or another particle size — separates them. <button class="btn xs" data-curclink="${i}">Link R<sub>c</sub> = 2·R<sub>int</sub> instead</button></div>`;
+      if (!calContactFree(u.path, u)) return "";
+      return `<div class="hint">The particles touch (gap 0): on the FEM they meet across resin films, which conduct as resin of their width; R<sub>int</sub> acts on the particle–resin surfaces but not across these films. <button class="btn xs" data-curcadd="${i}">${I("plus")}R<sub>c</sub> as an unknown</button> <button class="btn xs" data-curclink="${i}">${I("plus")}Link R<sub>c</sub> = 2·R<sub>int</sub></button></div>`;
+    }
     if (ln) return `<div class="hint">The particles touch (gap 0): their contact faces take R<sub>c</sub> = ${esc(ln.expr)} — with 2·x, the two filler–resin interfaces of the resin film between two particles, thinner than a voxel. One unknown, so one measurement gives a value, but the factor is an assumption. <button class="btn xs" data-curcsep="${i}">Calibrate R<sub>c</sub> separately</button></div>`;
     if (c.unknowns.some((x) => x.path === rc)) return `<div class="hint">The particles touch (gap 0): R<sub>c</sub> on their contact faces is calibrated alongside. In a dense filling the contacts carry most of the heat, so one measurement fixes R<sub>c</sub> (or a combination of the two) and leaves R<sub>int</sub> open; a sample with fewer contacts — a lower content or another particle size — separates them. <button class="btn xs" data-curclink="${i}">Link R<sub>c</sub> = 2·R<sub>int</sub> instead</button></div>`;
     if (!calContactFree(u.path, u)) return "";
@@ -4382,7 +4422,7 @@
     const ps = state.doe.parameters.filter((p) => p.path);
     if (!ps.length) return 0;
     if (state.doe.design === "lhs") return Math.max(2, +state.doe.samples || 2);
-    const lv = ps.map((p) => Math.max(1, Math.min(+p.steps || 1, 24)));
+    const lv = ps.map((p) => doeHasValues(p) ? Math.min(p.values.length, 24) : Math.max(1, Math.min(+p.steps || 1, 24)));
     if (state.doe.design === "oat") return 1 + lv.reduce((s, n) => s + Math.max(n - 1, 0), 0);
     return lv.reduce((s, n) => s * n, 1);
   }
@@ -4394,12 +4434,14 @@
       items.map((c) => `<option value="${esc(c.path)}" ${c.path === sel ? "selected" : ""}>${esc(c.label)}${c.unit ? ` [${esc(c.unit)}]` : ""}</option>`).join("") + "</optgroup>").join("");
     const params = d.parameters.map((p, i) => `<div class="param">
         <div class="prow1"><span class="sym" title="The symbol of this parameter in link expressions">x${i + 1}</span><select data-pi="${i}" data-pf="path">${opts(p.path)}</select><button class="btn sm danger" data-pdel="${i}" title="Remove this parameter">${I("delete")}</button></div>
-        <div class="prow2">
-          <div><label>Minimum</label><input type="number" step="any" data-pi="${i}" data-pf="min" value="${p.min}"></div>
-          <div><label>Maximum</label><input type="number" step="any" data-pi="${i}" data-pf="max" value="${p.max}"></div>
-          <div><label>Levels</label><input type="number" min="1" max="24" data-pi="${i}" data-pf="steps" value="${p.steps}"></div>
+        ${doeHasValues(p) ? `<div class="prow2"><div style="grid-column:1/-1"><label>Values <span class="u">comma-separated, each a case</span></label><input type="text" data-pi="${i}" data-pf="values" value="${esc(p.values.join(", "))}"></div></div>`
+          : `<div class="prow2">
+          <div><label>Minimum</label><input type="number" step="any" data-pi="${i}" data-pf="min" value="${p.min ?? ""}"></div>
+          <div><label>Maximum</label><input type="number" step="any" data-pi="${i}" data-pf="max" value="${p.max ?? ""}"></div>
+          <div><label>Levels</label><input type="number" min="1" max="24" data-pi="${i}" data-pf="steps" value="${p.steps ?? ""}"></div>
           <div><label>Spacing</label><select data-pi="${i}" data-pf="scale"><option value="lin" ${p.scale !== "log" ? "selected" : ""}>Linear</option><option value="log" ${p.scale === "log" ? "selected" : ""}>Logarithmic</option></select></div>
-        </div>${linksHTML("doe", i, p)}</div>`).join("");
+        </div>`}
+        <div class="row" style="margin-top:2px"><button class="btn xs" data-pmode="${i}" title="${doeHasValues(p) ? "Spread the levels evenly between a minimum and a maximum" : "Give the levels one by one (uneven levels, as measured samples)"}">${doeHasValues(p) ? "Use a range" : "List the values"}</button></div>${linksHTML("doe", i, p)}</div>`).join("");
     const n = doeCaseCount();
     const an = Object.keys(state.form.analyses || {}).filter((k) => state.form.analyses[k] && AN[k]);
     const studies = state.doeList.map((s) => {
@@ -4442,8 +4484,11 @@
     if (!d.parameters.length) { toast("At least one parameter is required."); return; }
     const body = {
       name: d.name || (state.form.name + " · DOE"), design: d.design, samples: +d.samples || 12, seed: +d.seed || 1,
-      parameters: d.parameters.map((p) => ({ path: p.path, label: p.label, unit: p.unit, min: +p.min, max: +p.max, steps: +p.steps, scale: p.scale,
-        links: (p.links || []).filter((l) => l.path).map((l) => ({ path: l.path, expr: (l.expr || "x").trim() || "x" })) })),
+      // a parameter given as a list of values keeps it (Smith's four loadings): the study takes them as they are
+      parameters: d.parameters.map((p) => Object.assign({ path: p.path, label: p.label, unit: p.unit, scale: p.scale,
+        links: (p.links || []).filter((l) => l.path).map((l) => ({ path: l.path, expr: (l.expr || "x").trim() || "x" })) },
+        doeHasValues(p) ? { values: p.values.map(Number), min: Math.min(...p.values.map(Number)), max: Math.max(...p.values.map(Number)), steps: p.values.length }
+          : { min: +p.min, max: +p.max, steps: +p.steps })),
       form: clone(state.form),
     };
     body.grid = { edge: ["adaptive", "own"].includes(d.edge) ? d.edge : "fixed" };
@@ -5141,7 +5186,8 @@
     const o = state.opt, d = state.doeData;
     sel.innerHTML = state.doeList.map((s) => `<option value="${s.id}" ${s.id === state.doeId ? "selected" : ""}>${esc(s.name)} (${s.n_cases})</option>`).join("") || '<option value="">No study</option>';
     const metrics = (d && d.metrics) || [];
-    if (metrics.length && !metrics.some((m) => m.key === o.response)) o.response = metrics[0].key;
+    // a property the study computed, not a realised input (the default of the Sensitivity tab too)
+    if (metrics.length && !metrics.some((m) => m.key === o.response)) o.response = saDefaultResponse(metrics);
     resp.innerHTML = metrics.map((m) => `<option value="${esc(m.key)}" ${m.key === o.response ? "selected" : ""}>${esc(m.label)}${m.unit && m.unit !== "-" ? ` [${esc(m.unit)}]` : ""}</option>`).join("") || '<option value="">No finished run yet</option>';
     if (goalSel) goalSel.value = o.goal;
     const tgt = $("#optTarget");
@@ -5882,7 +5928,7 @@
       else if (t.dataset.cm !== undefined || t.dataset.cu !== undefined || t.dataset.cal || t.dataset.calopt) onCalField(e);
     });
     lb.addEventListener("click", (e) => {
-      const t = e.target.closest("[data-src],[data-imgauto],[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-arr],[data-disp],[data-anall],[data-annone],[data-pdel],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory],[data-curclink],[data-curcsep],[data-curcadd],[data-lnadd],[data-lndel]");
+      const t = e.target.closest("[data-src],[data-imgauto],[data-libsel],[data-editmat],[data-uselib],[data-preset],[data-go],[data-sel],[data-shape],[data-add],[data-act],[data-q],[data-film],[data-arr],[data-disp],[data-anall],[data-annone],[data-pdel],[data-pmode],[data-doeopen],[data-wfmake],[data-wsmake],[data-casemake],[data-cmdel],[data-cudel],[data-csadd],[data-csdel],[data-cutheory],[data-curclink],[data-curcsep],[data-curcadd],[data-lnadd],[data-lndel]");
       if (!t) return;
       if (onLinkClick(t)) return;
       if (onCalClick(t)) return;
@@ -5958,6 +6004,16 @@
         return;
       }
       if (t.dataset.pdel !== undefined) { state.doe.parameters.splice(+t.dataset.pdel, 1); renderLeft(); return; }
+      if (t.dataset.pmode !== undefined) {
+        // a list of values <-> an even range between a minimum and a maximum
+        const p = state.doe.parameters[+t.dataset.pmode];
+        if (p && doeHasValues(p)) {
+          const v = p.values.map(Number);
+          Object.assign(p, { min: Math.min(...v), max: Math.max(...v), steps: v.length, scale: p.scale || "lin" });
+          delete p.values;
+        } else if (p) p.values = doeRangeLevels(p);
+        renderLeft(); return;
+      }
       if (t.dataset.doeopen) { openDoe(t.dataset.doeopen); setCenter("doe"); return; }
       if (t.dataset.preset) {
         const p = state.presets.find((x) => x.id === t.dataset.preset);
@@ -5969,7 +6025,7 @@
           state.doe = Object.assign({ name: "", design: "full", samples: 12, seed: 1, parameters: [], edge: "fixed" }, clone(p.doe));
           renderAll(); schedulePlan(0); saveForm();
           setTab("doe");
-          toast(`Preset loaded with its DOE study: ${p.name}. Check the settings and press "Create study and queue runs".`, 7000);
+          toast(`Preset loaded with its DOE study: ${p.name}. Check the settings and press "${anyLive() ? "Add the study to the queue" : "Create study and queue runs"}".`, 7000);
         } else if (p.cal) {
           // a calibration preset: the measurements and unknowns too, ready in
           // the Calibration tab

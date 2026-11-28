@@ -486,9 +486,10 @@ def _cross(ea, eb, points, per, L, owner, codes, centers, R, P, planes, nfaces, 
             t1 = TF._exit(oa - 1, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
             t2 = 1.0 - TF._exit(ob - 1, bx, by, bz, ax, ay, az, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
             t = 0.5 * (t1 + t2)
+            # signed: negative where the two overlap (read by the separated treatment of overlaps)
+            gedge[e] = (t2 - t1) * math.sqrt(dx * dx + dy * dy + dz * dz)
             if t2 > t1:
                 film[e] = 1
-                gedge[e] = (t2 - t1) * math.sqrt(dx * dx + dy * dy + dz * dz)
         if t < delta:
             t = delta
         elif t > 1.0 - delta:
@@ -500,7 +501,7 @@ def _cross(ea, eb, points, per, L, owner, codes, centers, R, P, planes, nfaces, 
 
 
 @njit(cache=True)
-def _decompose(bt, te, points, per, L, owner, lab, nn, tcut, gedge, film, gmin, fill, tets, mat, cell, wside, wn):
+def _decompose(bt, te, points, per, L, owner, lab, nn, tcut, gedge, film, gmin, fill, tets, mat, cell, wside, wn, aside):
     """The cut of the background tetrahedra bt (corners in rising order; te: their six cut edges or -1, in the
     order (0,1) (0,2) (0,3) (1,2) (1,3) (2,3)). Returns (tetrahedra, tetrahedra holding two or more particles)."""
     nt, nfilm = 0, 0
@@ -541,7 +542,7 @@ def _decompose(bt, te, points, per, L, owner, lab, nn, tcut, gedge, film, gmin, 
                 ed[m2, m] = te[t, q]
                 q += 1
         nt, ng = TF._cut_tet(fill, tets, mat, cell, nt, t, v, X, o, lb, ed, nn, tcut, gedge, film, gmin, wside, wn,
-                             sid, mid, rk, cx, dr, pr, rr, xs, ys, pid, prk, pln)
+                             sid, mid, rk, cx, dr, pr, rr, xs, ys, pid, prk, pln, aside)
         if ng >= 2:
             nfilm += 1
     return nt, nfilm
@@ -572,7 +573,8 @@ def plan(N, h, ginfo, nz=None, res=4.0, refine=None, max_refine=3, coarsest=None
 
 
 def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, delta=TF.DELTA, log=None, res=4.0,
-               refine=None, contact=1, coarsest=None, neck=0.0, neck_law=None):
+               refine=None, contact=1, coarsest=None, neck=0.0, neck_law=None, overlap="merged", split_phases=None,
+               t0_um=None):
     """The graded body-fitted mesh of a generated structure. Arguments as tetfem.build_mesh, and: res, cells
     across the smallest dimension of a particle at its surface; refine, the halvings of the voxel for the finest
     cell (default: as many as the finest particle needs, three at most); contact, the further levels where two
@@ -642,15 +644,33 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
     if ne:
         _cross(ea, eb, points0, per, Lg, owner, codes, centers, R, P, planes, nfaces, Lg, gper, float(delta), cpt, tcut,
                gedge, film_e, nk)
-    gmin = float(TF.GAP_MIN * s0)
+    # the owners at the ends of every cut edge and its direction (for the separated overlaps and the interfaces)
+    oa_e, ob_e = owner[ea], owner[eb]
+    de_e = points0[eb] - points0[ea]
+    for a in range(3):
+        if per[a]:
+            de_e[:, a] -= Lg[a] * np.floor(de_e[:, a] / Lg[a] + 0.5)
+    lut = np.zeros(len(parts["phase"]) + 1, np.int64)
+    lut[1:] = np.asarray(mat_of_phase, np.int64)[parts["phase"].astype(np.int64)]
+    n_sep = n_if = 0
+    if overlap == "separate" and ne:
+        intended = np.array([bool(gen_phases[int(p)].get("overlap")) for p in parts["phase"]], bool)
+        n_sep = TF._separate_overlaps(oa_e, ob_e, de_e, gedge, film_e, centers, Lg, gper,
+                                      shapes=(codes, R, P, planes, nfaces), xa=np.ascontiguousarray(points0[ea], float),
+                                      ev=np.ascontiguousarray(de_e, float), intended=intended, bonded=nk)
+    if split_phases and ne:
+        split = np.isin(np.asarray(parts["phase"], np.int64), np.asarray(sorted(split_phases), np.int64))
+        n_if = TF._split_interfaces(oa_e, ob_e, film_e, split)
+    gmin = float(max(t0_um, TF.GAP_FLOOR * s0)) if t0_um is not None else float(TF.GAP_MIN * s0)
     wside = np.zeros((max(ne, 1), 2))
     wn = np.zeros((max(ne, 2), 2, 3))
+    aside = np.zeros((max(ne, 1), 2))
     ntc, nfilm = _decompose(ct, te, points0, per, Lg, owner, lab, nn, tcut, gedge, film_e, gmin, False,
-                            np.zeros((1, 4), np.int64), np.zeros(1, np.uint8), np.zeros(1, np.int32), wside, wn)
+                            np.zeros((1, 4), np.int64), np.zeros(1, np.uint8), np.zeros(1, np.int32), wside, wn, aside)
     tets_c = np.empty((ntc, 4), np.int64)
     mat_c = np.empty(ntc, np.uint8)
     _decompose(ct, te, points0, per, Lg, owner, lab, nn, tcut, gedge, film_e, gmin, True, tets_c, mat_c,
-               np.empty(ntc, np.int32), wside, wn)
+               np.empty(ntc, np.int32), wside, wn, aside)
     plain = bt[~cutm]
     tets = np.concatenate([plain, tets_c])
     mat = np.concatenate([lab[plain[:, 0]].astype(np.uint8), mat_c])
@@ -662,22 +682,8 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
     tets = new[tets]
     cut_ids = np.flatnonzero(used[nn:])
     points = np.concatenate([points0, cpt[cut_ids // 3]])
-    fe = np.flatnonzero(film_e[:ne] == 1)
-    if len(fe):
-        fe = fe[used[nn + 3 * fe] & used[nn + 3 * fe + 2]]
-    springs = np.zeros((2 * len(fe), 2), np.int64)
-    sw = np.zeros(2 * len(fe))
-    sn = np.zeros((2 * len(fe), 3))
-    if len(fe):
-        lone = ~used[nn + 3 * fe + 1]
-        extra = np.arange(int(lone.sum())) + len(points)
-        midv = np.where(lone, 0, new[nn + 3 * fe + 1])
-        midv[lone] = extra
-        points = np.concatenate([points, cpt[fe[lone]]])
-        springs[0::2, 0], springs[0::2, 1] = new[nn + 3 * fe], midv
-        springs[1::2, 0], springs[1::2, 1] = new[nn + 3 * fe + 2], midv
-        sw[0::2], sw[1::2] = wside[fe, 0], wside[fe, 1]
-        sn[0::2], sn[1::2] = wn[fe, 0], wn[fe, 1]
+    points, fe, springs, sw, sa, sn, slab, iface, ia, ilab = TF._springs(nn, ne, used, new, film_e, wside, wn, aside,
+                                                                        cpt, points, lut, oa_e, ob_e)
     # the voxel each tetrahedron's centre lies in
     cells = np.array([N, N, nzv], np.int64)
     p0 = points[tets[:, 0]]
@@ -698,6 +704,8 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
             "cells": cells, "per": per, "L": Lg, "h": float(h), "n_nodes": nn, "n_cut": ne,
             "n_film_edges": int(len(fe)), "n_film_tets": int(nfilm), "springs": springs, "spring_w": sw,
             "spring_n": sn, "n_clamped": clamped, "seconds": time.time() - t0, "graded": True, "finest_um": float(s0),
+            "spring_a": sa, "spring_lab": slab, "iface": iface, "iface_a": ia, "iface_lab": ilab, "t0_um": gmin,
+            "overlap": overlap, "n_separated": int(n_sep), "n_iface_edges": int(n_if),
             "neck": float(neck), "n_bonded": int(len(nk[1]) // 2) if grow > 0.0 else 0,
             "coarsest_um": float(S), "levels": levels.tolist(), "refine": int(refine), "n_leaves": int(len(leaves)),
             "film_gap_um": (float(np.median(gedge[fe])) if len(fe) else 0.0)}
@@ -706,5 +714,8 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
             f"{s0:.3g} µm (at the finest particles) to {S:.3g} µm, {len(leaves):,} of them "
             f"(a uniform mesh of the finest cell: {int(nf.prod()):,}); {len(fe):,} film edges"
             + (f", bonded contacts (neck {neck:g}) between {mesh['n_bonded']:,} pairs" if neck > 0 else "")
+            + (f"; {n_sep:,} overlapping pairs met as touching ones" if n_sep else "")
+            + (f"; {len(iface):,} interface elements carry the particle-matrix resistance" if len(iface) else "")
+            + (f"; thinnest film {1000 * gmin:.3g} nm" if t0_um is not None else "")
             + f" ({mesh['seconds']:.1f} s)")
     return mesh

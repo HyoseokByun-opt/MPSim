@@ -1750,6 +1750,26 @@ CREEP = {"g_min": 0.97, "gain": 0.003, "min_steps": 2000, "frac": 0.25, "stall":
 # one voxel of overlap (1.7 % of a 3 µm grain at 0.05 µm) closes in seconds. Spheres keep CREEP (with this one a
 # 5:1 blend grown at once conducted 4 % less than with a full creep)
 CREEP_CLUMP = {"g_min": 0.97, "gain": 0.008, "min_steps": 1000, "frac": 0.15, "stall": 0.001}
+CREEP_MARGIN = 0.003
+
+
+def creep_for(base, steps):
+    """The creep stop of a packing under the overlap setting `steps`: none with overlap off (it creeps on to full
+    size or until it jams); `base` with voxel steps (they close the rest); with the overlap Auto (grow_pct, no voxel
+    steps) a creep is stopped only once growing in place can finish it (size >= 1 / (1 + GROW_PCT)) - below, the
+    packing creeps on until it jams. Equal spheres at 63-64 vol% had stopped at 0.970-0.979 of their size with the
+    voxel-step creep stop (g_min 0.97), just short of the 0.980 the growth reaches, and missed their loading."""
+    if not steps:
+        return None
+    if int(steps.get("max_vox", 3) or 0) > 0:
+        return base
+    if not float(steps.get("grow_pct") or 0.0):
+        return None                     # nothing finishes a creep: it creeps on, as with overlap off
+    # CREEP_MARGIN above the limit: the size a relaxation reports carries its tolerance of overlap, and the
+    # overlap-free size the compression finds can lie that much lower (equal spheres at 64 vol%: stopped at 0.9819,
+    # overlap-free 0.98009 against the limit 0.98039)
+    return dict(base, g_min=max(float(base["g_min"]),
+                                1.0 / (1.0 + float(steps["grow_pct"]) / 100.0) + CREEP_MARGIN))
 # spheres of very different sizes are packed largest first (pack_by_size): a new class of sizes starts below
 # the largest of the class before it by this factor (None: every sphere grown at once, as up to 5.6.4)
 STAGED_RATIO = 2.5
@@ -2139,6 +2159,40 @@ def _sparse(nom, poly_meta=None):
     except Exception:                                                # noqa: BLE001
         return False
     return v > 0 and 4.0 / 3.0 * math.pi * r ** 3 >= SPARSE_SHAPE * v
+
+
+# The overlap Auto (5.12.0): a packing that stops short of its loading at a size scale s with 1/s - 1 <= GROW_PCT %
+# is finished by drawing every particle at its full size where it is - touching neighbours then overlap by up to
+# that share of their size, which the tetrahedral FEM meets as contacts (tet_overlap "separate"). Measured on 60 vol%
+# of spheres grown in place from 57 and 58.5 % (1.7 and 0.85 %), 4 seeds each, alpha 150: the means -7.9 and -0.1 %
+# against packings made without overlap (single structures -11..+5 %), where merged overlaps gave +55 and +75 % (the
+# overlap review, 2026-11-26; separated with the exact pair depth and film widths). Beyond it the loading does not pack with these
+# particles and is not forced: the content is reduced as without overlap, and a size distribution is advised.
+GROW_PCT = 2.0
+
+
+def grow_allowed(scale, steps):
+    """Whether a packing stopped at size scale `scale` may be finished by growing in place (steps: overlap_steps)."""
+    gp = float((steps or {}).get("grow_pct") or 0.0)
+    return gp > 0.0 and 0.0 < scale < 1.0 and (1.0 / scale - 1.0) <= gp / 100.0 + 1e-12
+
+
+def grow_in_place(scale, steps, log=None):
+    """(new scale, record or None): the overlap Auto's finish of a packing that stopped at `scale` (see GROW_PCT)."""
+    log = log or (lambda *a: None)
+    gp = float((steps or {}).get("grow_pct") or 0.0)
+    if gp <= 0.0 or scale >= 1.0 or scale <= 0.0:
+        return scale, None
+    depth = 1.0 / scale - 1.0
+    if not grow_allowed(scale, steps):
+        log(f"  the packing stopped at size scale {scale:.4f}: drawn at their full size the particles would overlap "
+            f"by up to {100 * depth:.2f} % of their size, more than the {gp:g} % the overlap Auto allows - the loading "
+            f"does not pack with these particles (a broader size distribution packs denser)")
+        return scale, None
+    log(f"  the packing stopped at size scale {scale:.4f}: every particle drawn at its full size where it is (grown in "
+        f"place by {100 * depth:.2f} %; touching neighbours overlap by up to {100 * depth:.2f} % of their size, met as "
+        f"contacts by the tetrahedral FEM)")
+    return 1.0, {"scale": float(scale), "depth_pct": 100.0 * depth, "allowed_pct": gp}
 
 
 def escalate_overlap(pack, scale, steps, log=None, should_stop=None):
@@ -3851,7 +3905,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             if STAGED_RATIO:
                 staged = pack_by_size(float(L), C0, d_excl, ph_arr, overlap_of.astype(np.int64), T if film else None,
                                       Lz_pack, Wt, rng, log=log, should_stop=should_stop,
-                                      creep=CREEP if overlap_steps else None)
+                                      creep=creep_for(CREEP, overlap_steps))
             if staged is not None and staged[1] >= 1.0:
                 pos, scale = staged
             else:
@@ -3860,7 +3914,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                            np.zeros(n), ph_arr, overlap_of.astype(np.int64), np.full(n, -1, np.int64),
                                            np.full(n, 0.5), log=log, should_stop=should_stop, tol=1e-3, Lz=Lz_pack, Wt=Wt,
                                            g0=0.55 if staged is None else 0.999 * staged[1],
-                                           creep=CREEP if overlap_steps else None)
+                                           creep=creep_for(CREEP, overlap_steps))
         pos = np.ascontiguousarray(pos)
         if scale < 1.0 and contacts == "apart" and np.any(d_excl > d_base):
             # The separation gap does not fit at this loading. Keep the gap the
@@ -3881,16 +3935,25 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                            log=log, should_stop=should_stop, tol=1e-3,
                                            Lz=Lz_pack, Wt=Wt, g0=0.999 * float(np.min(d_prev / d_excl)))
                 pos = np.ascontiguousarray(pos)
-        if scale < 1.0 and rho is None and not (overlap_steps and scale >= CREEP["g_min"]):
+        vox_steps = bool(overlap_steps) and int(overlap_steps.get("max_vox", 3) or 0) > 0
+        if scale < 1.0 and rho is None and not (vox_steps and scale >= CREEP["g_min"]):
             s0 = scale
             # the relaxation leaves a tolerance's worth of overlap; start the
             # compression from a strictly overlap-free size (with progressive
-            # overlap a packing this close is finished by it instead)
+            # overlap a packing this close is finished by it instead). The
+            # overlap Auto compresses first too - equal spheres at 62 vol% that
+            # crept to 0.984 reach full size without overlap - and grows in
+            # place only what the compression leaves within GROW_PCT
             scale *= 0.999
             pos, scale = mc_compress(pos, d_excl, L, scale, rng, log=log, should_stop=should_stop,
                                      Lz=Lz_pack, Wt=Wt, rho=rho)
             log(f"  growth stopped at size scale {s0:.4f}; Monte-Carlo compression reached {scale:.4f}")
-        if scale < 1.0 and overlap_steps:
+        grown_ip = None
+        if scale < 1.0 and overlap_steps and overlap_steps.get("grow_pct"):
+            scale, grown_ip = grow_in_place(scale, overlap_steps, log)
+            if grown_ip is not None:
+                info["grown_in_place"] = grown_ip
+        if scale < 1.0 and vox_steps:
             # progressive overlap: the exclusion diameters k voxels smaller,
             # so that two spheres may overlap by up to k voxels
             d_ex0, pos0_, sc0 = d_excl.copy(), pos.copy(), scale
@@ -3932,23 +3995,31 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             log(f"  !! the target packing fraction was not reached; packing stopped at a size scale of {scale:.3f}")
             diam *= scale
             d_excl *= scale
-        pos, left, worst = separate_spheres(pos, 0.5 * d_excl, float(L), float(Lz_pack), float(Wt))
-        if worst > 1e-3:
-            log(f"  !! {left} sphere pairs still overlap after the separation (up to {100 * worst:.2f} % of the "
-                f"contact distance); the spheres are drawn smaller by that much so that none overlaps")
-        sweeps = int(min(MC_SWEEPS_MAX, max(200, MC_SWEEP_MOVES * (STAGED_SWEEPS if staged is not None else 1.0) / n)))
-        if rho is not None:
-            # an uneven dispersion settles into its profile by the biased moves
-            # (with jumps across the box): more sweeps where they are cheap
-            sweeps = int(min(20000, max(sweeps, 1.0e7 / n)))
-        if rho is not None:
-            phi_x = float(np.sum(math.pi / 6.0 * d_excl ** 3)) / V
-            rho_arr, rho_max = _rho_args(density_weight(rho, phi_x, 0.5 * float(np.mean(d_excl)), box, film))
-        rate = _mc_sweeps(pos, 0.5 * d_excl, float(L), sweeps, 0.05 * float(d_excl.min()),
-                          int(rng.integers(1 << 30)), float(Lz_pack), float(Wt), rho_arr, rho_max,
-                          0.1 if rho is not None else 0.0)
-        log(f"  Monte-Carlo equilibration: {sweeps} sweeps (acceptance {100*rate:.0f} %)")
-        if shear is not None and not film:
+        if grown_ip is None:
+            pos, left, worst = separate_spheres(pos, 0.5 * d_excl, float(L), float(Lz_pack), float(Wt))
+            if worst > 1e-3:
+                log(f"  !! {left} sphere pairs still overlap after the separation (up to {100 * worst:.2f} % of the "
+                    f"contact distance); the spheres are drawn smaller by that much so that none overlaps")
+            sweeps = int(min(MC_SWEEPS_MAX, max(200, MC_SWEEP_MOVES * (STAGED_SWEEPS if staged is not None else 1.0) / n)))
+            if rho is not None:
+                # an uneven dispersion settles into its profile by the biased moves
+                # (with jumps across the box): more sweeps where they are cheap
+                sweeps = int(min(20000, max(sweeps, 1.0e7 / n)))
+            if rho is not None:
+                phi_x = float(np.sum(math.pi / 6.0 * d_excl ** 3)) / V
+                rho_arr, rho_max = _rho_args(density_weight(rho, phi_x, 0.5 * float(np.mean(d_excl)), box, film))
+            rate = _mc_sweeps(pos, 0.5 * d_excl, float(L), sweeps, 0.05 * float(d_excl.min()),
+                              int(rng.integers(1 << 30)), float(Lz_pack), float(Wt), rho_arr, rho_max,
+                              0.1 if rho is not None else 0.0)
+            log(f"  Monte-Carlo equilibration: {sweeps} sweeps (acceptance {100*rate:.0f} %)")
+        else:
+            # grown in place: the packing the relaxation left (random, as packed); an equilibration or a separation
+            # would push the grown particles apart again
+            log("  (grown in place: no separation and no Monte-Carlo equilibration at the full size)")
+        if shear is not None and not film and grown_ip is not None:
+            log("  (grown in place: the arrangement after shear flow is not applied - it would push the grown "
+                "particles apart again)")
+        if shear is not None and not film and grown_ip is None:
             # the arrangement the flow leaves: the packing sheared in the resin
             # as it was packed - each sphere with half the packing's gap around
             # it, so that the flow arranges the spheres as they are drawn and
@@ -3990,8 +4061,10 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
         # the radius correction below may grow the spheres only until two of
         # them would touch: never into each other
         f = None
+        # grown in place: the radii may reach the full size through the overlap the growth left
+        slack_g = (grown_ip["depth_pct"] / 100.0 * float(diam.max())) if grown_ip is not None else 0.0
         while True:
-            f_cap = contact_ratio(pos, 0.5 * diam, float(L), float(Lz_pack), slack=ov_k * h) * (1.0 - 1e-9)
+            f_cap = contact_ratio(pos, 0.5 * diam, float(L), float(Lz_pack), slack=ov_k * h + slack_g) * (1.0 - 1e-9)
             f = min(1.0, f_cap) if f is None else min(max(f, min(1.0, f_cap)), f_cap)
             # A sphere a few voxels across rasterises to less than its analytic
             # volume; scale the radius until the voxel fraction (what the solvers
@@ -4210,7 +4283,8 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 remaining.clear()
                 break
         short = [i for i in part_idx if not phases[i].get("overlap") and count[i] < 0.995 * target[i]]
-        if short and overlap_steps and all(count[i] >= (1.0 - RSA_OVERLAP_SHORT) * target[i] for i in short):
+        if short and overlap_steps and int(overlap_steps.get("max_vox", 3) or 0) > 0 \
+                and all(count[i] >= (1.0 - RSA_OVERLAP_SHORT) * target[i] for i in short):
             # progressive overlap in the random placement: the placement fell
             # only a little short, so the particles placed stay and the rest
             # are placed with an overlap of 1 voxel allowed, then 2, ... -
@@ -4391,7 +4465,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 staged = pack_clumps_by_size(float(L), C, Rs, s, tpl, templates, gap, ph_arr,
                                              overlap_of.astype(np.int64), rotm, circ, T if film else None, Lz_pack,
                                              Wt, rng, log=log, should_stop=should_stop,
-                                             creep=CREEP_CLUMP if overlap_steps else None)
+                                             creep=creep_for(CREEP_CLUMP, overlap_steps))
             if staged is not None and staged[2] >= 1.0:
                 C, Rs, scale = staged
             else:
@@ -4399,7 +4473,7 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                           Rs if staged is None else staged[1], s, tpl, templates, gap, ph_arr,
                                           overlap_of.astype(np.int64), rotm, circ, log=log, should_stop=should_stop,
                                           Lz=Lz_pack, Wt=Wt, g0=0.55 if staged is None else 0.999 * staged[2],
-                                          recover=True, creep=CREEP_CLUMP if overlap_steps else None)
+                                          recover=True, creep=creep_for(CREEP_CLUMP, overlap_steps))
             if staged is not None and CLUMP_STAGED_MC:
                 # packed by size: the smaller particles brought to the larger ones by Monte-Carlo moves, as the
                 # spheres' equilibration does (left where they were drawn, they kept a layer of matrix around
@@ -4419,8 +4493,14 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                                           overlap_of.astype(np.int64), rotm, circ, log=log,
                                           should_stop=should_stop, Lz=Lz_pack, Wt=Wt, recover=True,
                                           g0=0.999 * scale, thin_start=False,
-                                          creep=CREEP_CLUMP if overlap_steps else None)
-            if scale < 1.0 and overlap_steps:
+                                          creep=creep_for(CREEP_CLUMP, overlap_steps))
+            grown_ip = None
+            if scale < 1.0 and overlap_steps and overlap_steps.get("grow_pct"):
+                # the overlap Auto: a packing within GROW_PCT of its size finished at the full size where it is
+                scale, grown_ip = grow_in_place(scale, overlap_steps, log)
+                if grown_ip is not None:
+                    info["grown_in_place"] = grown_ip
+            if scale < 1.0 and overlap_steps and int(overlap_steps.get("max_vox", 3) or 0) > 0:
                 # progressive overlap: the clump spheres' gap k voxels below
                 # the gap asked for (never below half the smallest sphere of
                 # a clump), so that two particles may overlap by up to k voxels
@@ -4486,7 +4566,9 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
                 grown[:len(phase_of)] = phase_of
                 phase_of = grown
             if ov_k:
-                # overlap allowed: drawn where the packing put them, no repair
+                # overlap allowed: drawn where the packing put them, no repair (a structure grown in place is repaired:
+                # the clump spheres cover 35-82 % of a shape, so its corners can reach far deeper into a neighbour
+                # than the 2 % of the size the growth allows - those are pushed and turned apart as without overlap)
                 _, conflicts = raster_all(owner, phase_of, overlap_of, net_of, float(h), codes, C, Rs, Ps, planes,
                                           nfaces, np.zeros(len(codes)), ph_arr, pid, buf, film)
                 shr = {"n": 0, "min": 1.0, "mean": 1.0, "below_90": 0}
@@ -4494,13 +4576,15 @@ def generate(N, h, phases, seed=0, log=print, should_stop=None, contacts="apart"
             else:
                 names_ = [ph.get("name") or f"phase {i}" for i, ph in enumerate(phases)]
                 C_pre, Rs_pre, Ps_pre = C.copy(), Rs.copy(), Ps.copy()
+                # voxel steps of overlap only with a share or a value given (the overlap Auto grows in place instead)
+                vox_ok = bool(overlap_steps) and int(overlap_steps.get("max_vox", 3) or 0) > 0
                 owner, conflicts, rounds, touch, shr = repair_overlaps(
                     owner, phase_of, overlap_of, float(h), codes, C, Rs, Ps, planes, nfaces, ph_arr, pid, log=log,
                     net_of=net_of, apart=contacts == "apart", zwall=film, rotmode=rotm,
-                    names=names_, shrink=not overlap_steps, gain_stop=0.10 if overlap_steps else 0.01)
+                    names=names_, shrink=not vox_ok, gain_stop=0.10 if vox_ok else 0.01)
                 log(f"  exact-shape overlap repair (push and turn): {rounds} round(s), {conflicts:,} shared voxels "
                     f"left" + (f", {touch:,} touching voxel pairs" if touch >= 0 else ""))
-                if overlap_steps and conflicts:
+                if vox_ok and conflicts:
                     # progressive overlap: pushing and turning could not clear
                     # every shared voxel, which would otherwise shrink the
                     # particles involved - repaired again from the packing with

@@ -15,6 +15,7 @@ PARTS = [
     ("skimage", "image analysis"),
     ("pumapy", "NASA PuMA - elasticity, flow, finite elements"),
     ("porespy", "porosimetry and pore network"),
+    ("pyamg", "multigrid of the tetrahedral FEM (the thermal conductivity by default)"),
     ("sklearn", "surrogate model on the Optimization tab"),
     ("skrf", "EMI shielding"),
     ("tifffile", "structure export"),

@@ -64,6 +64,7 @@ import numpy as np
 from . import analytical as AN
 from . import doe as DOE
 from . import generate as GEN
+from . import geometry as GEO
 from . import links as LK
 from . import materials as M
 from . import parallel as PAR
@@ -237,20 +238,186 @@ def dem_conductivity(km, fillers):
     return math.exp(lk)
 
 
-def _theory_k(spec):
-    """Thermal conductivity of a normalised spec by the DEM model, or None
-    when it does not apply (pores, networks)."""
-    km = float(spec["matrix"]["props"]["k"])
-    fillers = []
-    for ph in spec["phases"]:
-        if ph["void"] or ph["shape"] in ("network", "image"):
-            return None
-        d = float(ph["size_um"].get("d") or 1.0) * 1e-6
-        k = float(ph["props"]["k"])
-        if ph.get("shell"):
-            d += 2.0 * ph["shell"]["thickness_um"] * 1e-6
-        fillers.append((float(ph["vf"]), k, float(ph.get("r_int") or 0.0), d))
-    return dem_conductivity(km, fillers)
+def _theory_k(spec, direction="z"):
+    """Thermal conductivity of a normalised spec along `direction` by the DEM
+    model with each filler an ellipsoid of its shape and orientation
+    (_dem_shapes), or None when it does not apply (pores, networks)."""
+    if any(ph["void"] or ph["shape"] in ("network", "image") for ph in spec["phases"]):
+        return None
+    km = np.array([float(spec["matrix"]["props"]["k"])])
+    fillers = [(float(ph["vf"]), np.array([float(ph["props"]["k"])]), np.array([float(ph.get("r_int") or 0.0)]),
+                *_phase_geometry(ph)) for ph in spec["phases"]]
+    return float(_dem_shapes(km, fillers, direction)[0])
+
+
+# ---- particle shape and orientation in the effective-medium model ---------
+# A filler enters as an ellipsoid of its semi-axes (a cylinder, a box or a
+# superellipsoid as the ellipsoid of the same half extents; cubes and
+# polyhedra as spheres) in the orientation its phase is drawn with. Along each
+# of its own axes i it polarises as (ks_i - k) / (k + L_i (ks_i - k)) with L_i
+# the depolarisation factor, and its interfacial resistance R makes it a
+# particle of ks_i = k_p / (1 + R k_p h_i): h_i = gamma' L_i, gamma' = (1 + 2p)
+# / a3 for an oblate (p = a3 / a <= 1) and (2 + 1/p) / a for a prolate
+# spheroid (Nan, Birringer, Clarke & Gleiter, J. Appl. Phys. 81, 6692 (1997),
+# doi:10.1063/1.365209). A sphere gives L = 1/3, h = 2/d: Hasselman-Johnson.
+# The composite along a direction takes each axis with the mean squared
+# cosine between them over the phase's orientations. Particles aligned along
+# one axis (orientation x, y or z) make the host uniaxial as they are added:
+# in the coordinates that make it isotropic again (x_i scaled by
+# 1/sqrt(k_i)) a particle of aspect p is one of p sqrt(k_t / k_n), and its
+# depolarisation follows - platelets lying in the plane, 30 vol% BN in
+# silicone, along the plane: 2.47 W/m.K with the host taken isotropic, 1.46
+# so, 1.22 on the RVE (FEM). Random orientations keep the composite isotropic.
+# Axes random within the xy plane are taken in an isotropic host, which
+# overstates the in-plane value of long fibres (30 vol%, aspect 20, contrast
+# 2000: 60 in the plane against 31 along fully aligned fibres); the first
+# calibration round on the RVE corrects the model by what the RVE gave.
+def _semi_axes3(ph):
+    """The particle's semi-axes (x, y, z of its own frame; z its symmetry or thickness axis) in metres."""
+    sz = ph.get("size_um") or {}
+    d = float(sz.get("d") or 1.0)
+    a, shape = 0.5 * d, ph.get("shape")
+    if shape == "spheroid":
+        ax = (a, a * float(sz.get("aspect_y") or 1.0), a * float(sz.get("aspect") or 1.0))
+    elif shape in ("cylinder", "spherocylinder"):
+        ax = (a, a, 0.5 * float(sz.get("length") or d))
+    elif shape in ("cuboid", "superellipsoid"):
+        ax = (a, 0.5 * float(sz.get("ly") or d), 0.5 * float(sz.get("lz") or d))
+    else:
+        ax = (a, a, a)
+    if ph.get("shell"):
+        t = float(ph["shell"]["thickness_um"])
+        ax = tuple(x + t for x in ax)
+    return tuple(1e-6 * x for x in ax)
+
+
+_GEOM_CACHE = {}
+
+
+def _depolarisation(ax):
+    """Depolarisation factors (L_x, L_y, L_z) of an ellipsoid of semi-axes ax (they sum to 1)."""
+    key = tuple(round(x / max(ax), 6) for x in ax)
+    if key not in _GEOM_CACHE:
+        from scipy.integrate import quad
+        a1, a2, a3 = key
+        f = lambda s, ai: 1.0 / ((s + ai * ai) * math.sqrt((s + a1 * a1) * (s + a2 * a2) * (s + a3 * a3)))  # noqa: E731
+        L = np.array([0.5 * a1 * a2 * a3 * quad(f, 0.0, np.inf, args=(ai,), limit=200)[0] for ai in key])
+        _GEOM_CACHE[key] = L / L.sum()
+    return _GEOM_CACHE[key]
+
+
+def _spheroid_L(p):
+    """(L_a, L_c) of spheroids of aspect p = c/a (arrays): along an equatorial axis and along the symmetry axis."""
+    p = np.atleast_1d(np.asarray(p, float))
+    L3 = 1.0 / 3.0 - 4.0 / 15.0 * (p - 1.0)                       # nearly spherical
+    o, r = p < 1.0 - 1e-3, p > 1.0 + 1e-3
+    q = p[o]
+    L3[o] = 1.0 - 2.0 * (q * q / (2.0 * (q * q - 1.0)) + q / (2.0 * (1.0 - q * q) ** 1.5) * np.arccos(q))
+    q = p[r]
+    L3[r] = 1.0 - 2.0 * (q * q / (2.0 * (q * q - 1.0)) - q / (2.0 * (q * q - 1.0) ** 1.5) * np.arccosh(q))
+    return 0.5 * (1.0 - L3), L3
+
+
+def _orientation_weights(ori):
+    """(3 global directions x 3 own axes): the mean squared cosine between them over the phase's orientations."""
+    mode, spread = (ori or {}).get("mode", "iso"), float((ori or {}).get("spread_deg") or 0.0)
+    key = ("W", mode, round(spread, 3))
+    if key not in _GEOM_CACHE:
+        exact = {"iso": (1 / 3, 1 / 3, 1 / 3), "x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1), "xy": (0.5, 0.5, 0)}
+        if mode == "iso" or (spread <= 0 and mode in exact):
+            cz = np.array(exact[mode], float)
+        else:
+            z = GEO.sample_axes(200000, mode, spread, np.random.default_rng(0))
+            cz = np.mean(z * z, axis=0)                  # <cos^2> between the own z axis and x, y, z
+        W = np.column_stack([0.5 * (1.0 - cz), 0.5 * (1.0 - cz), cz])   # the spin about own z is uniform
+        _GEOM_CACHE[key] = W / W.sum(axis=1, keepdims=True)
+    return _GEOM_CACHE[key]
+
+
+def _phase_geometry(ph):
+    """(L (3,), h (3,) in 1/m, W (3, 3), p, axis) of one phase: depolarisation and Kapitza factors of its own axes,
+    per global direction the weights of the own axes, the aspect ratio c/a, and how its particles lie: "s" a
+    sphere, x / y / z aligned with that axis, None any other orientation."""
+    ax = _semi_axes3(ph)
+    L = _depolarisation(ax)
+    a = math.sqrt(ax[0] * ax[1])
+    p = ax[2] / a
+    gamma = (1.0 + 2.0 * p) / ax[2] if p <= 1.0 else (2.0 + 1.0 / p) / a
+    if ph.get("shape") == "sphere":
+        return L, gamma * L, np.full((3, 3), 1.0 / 3.0), 1.0, "s"
+    mode = (ph.get("orientation") or {}).get("mode", "iso")
+    return L, gamma * L, _orientation_weights(ph.get("orientation")), p, (mode if mode in ("x", "y", "z") else None)
+
+
+def _rk4(y, rate, phi_t, n):
+    dt, t = phi_t / n, 0.0
+    for _ in range(n):
+        a = rate(t, y)
+        b = rate(t + 0.5 * dt, y + 0.5 * dt * a)
+        c = rate(t + 0.5 * dt, y + 0.5 * dt * b)
+        d = rate(t + dt, y + dt * c)
+        y = y + dt * (a + 2 * b + 2 * c + d) / 6.0
+        t += dt
+    return y
+
+
+def _dem_shapes(km, fillers, direction="z", n=400):
+    """Differential effective medium along `direction` (x, y, z; anything else: the mean of the three) for arrays
+    of parameter sets: km (P,), fillers [(phi, k (P,), R (P,), L, h, W, p, axis)] (_phase_geometry). For spheres it
+    is the model of Every et al. 1992 (dem_conductivity)."""
+    km = np.atleast_1d(np.asarray(km, float))
+    phi_t = sum(f[0] for f in fillers)
+    if phi_t <= 0:
+        return km
+    present = [f for f in fillers if f[0] > 0]
+    aligned = {f[7] for f in present} - {None, "s"}
+    if len(aligned) == 1 and not any(f[7] is None for f in present):
+        # one alignment axis q: the host is uniaxial about it (k_n along q, k_t across) - both integrated together
+        q = "xyz".index(next(iter(aligned)))
+        tt = (q + 1) % 3
+        P = len(km)
+        terms = []
+        for phi, k, rr, L, h, W, p, axis in present:
+            k, rr = np.asarray(k, float), np.asarray(rr, float)
+            if axis == "s":                               # a sphere: its own z may be taken along q
+                W = np.zeros((3, 3))
+                W[:, 0] = 1.0
+                W[q] = (0.0, 0.0, 1.0)
+            terms.append((phi / phi_t, [k / (1.0 + rr * k * h[i]) for i in range(3)], p, W))
+
+        def rate(t_, y):
+            kt, kn = np.exp(y[:P]), np.exp(y[P:])
+            rt, rn = np.zeros(P), np.zeros(P)
+            for w, ks, p, W in terms:
+                La, Lc = _spheroid_L(p * np.sqrt(kt / kn))
+                Lo = (La, La, Lc)
+                for i in range(3):
+                    if W[q, i] > 1e-12:
+                        rn = rn + w * W[q, i] * (ks[i] - kn) / (kn + Lo[i] * (ks[i] - kn))
+                    if W[tt, i] > 1e-12:
+                        rt = rt + w * W[tt, i] * (ks[i] - kt) / (kt + Lo[i] * (ks[i] - kt))
+            return np.concatenate([rt, rn]) / (1.0 - t_)
+        y = np.exp(_rk4(np.concatenate([np.log(km), np.log(km)]), rate, phi_t, n))
+        kt, kn = y[:P], y[P:]
+        d = str(direction)
+        if d in ("x", "y", "z"):
+            return kn if "xyz".index(d) == q else kt
+        return (2.0 * kt + kn) / 3.0
+    js = {"x": [0], "y": [1], "z": [2]}.get(str(direction), [0, 1, 2])
+    out = []
+    for j in js:
+        terms = []
+        for phi, k, rr, L, h, W, _p, _axis in present:
+            k, rr = np.asarray(k, float), np.asarray(rr, float)
+            for i in range(3):
+                if W[j, i] > 1e-12:
+                    terms.append((phi / phi_t * W[j, i], k / (1.0 + rr * k * h[i]), L[i]))
+
+        def rate(t_, lk_):
+            kk = np.exp(lk_)
+            return sum(w * (ks - kk) / (kk + Li * (ks - kk)) for w, ks, Li in terms) / (1.0 - t_)
+        out.append(np.exp(_rk4(np.log(km), rate, phi_t, n)))
+    return sum(out) / len(out)
 
 
 # =========================================================================
@@ -419,7 +586,7 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
         need = {PROPERTIES[m["property"]].get("key") or "cte"}
         if PROPERTIES[m["property"]]["solver"] == "elastic":
             need = {"cte"}
-        plan = R.plan(PL._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), need,
+        plan = R.plan(PL._plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"], thermal_method=spec["options"].get("thermal_method", "tet"), cond_method=spec["options"].get("cond_method", "fv")), need,
                       limits or {})
         film = bool(plan.get("film"))
         plan["skin"] = PL.film_skin(spec, plan) if film else None
@@ -451,12 +618,62 @@ def _prepare(job, base, unknowns, out_dir, limits, log, should_stop):
         labels, area_ratio, _ = PL.build_labels(spec, gen_labels, ginfo, plan["h_um"])
         cmask = ginfo.pop("contact_mask", None)
         vf = np.bincount(labels.ravel(), minlength=len(spec["labels"])) / labels.size
+        # a thermal conductivity is solved as the run solves it: the body-fitted tetrahedral FEM by default (5.12.0)
+        tet = None
+        if m["property"] == "k" and PL.thermal_backend(spec, "puma").partition("+")[0] == "tet":
+            from .solvers import tetfem as TF
+            why = TF.supported(spec, ginfo, spec["labels"])
+            if why is None and any(M.k_axes(t["props"]) for t in spec["labels"]):
+                why = "anisotropic materials"
+            if why is None:
+                # the particle-matrix interfaces split for every phase whose R_int is fitted or set
+                split = set(PL.thermal_resistances(spec)[2])
+                for u in unknowns:
+                    for p in [u.path] + [ln["path"] for ln in u.links]:
+                        mm = re.match(r"phases\.(\d+)\.r_int$", p)
+                        if mm:
+                            split.add(int(mm.group(1)))
+                tet = {"geo": {"ginfo": ginfo, "gen_phases": gen_phases, "N": plan["N"],
+                               "nz": int(plan["Nz"]) if film else None, "table": spec["labels"]}, "split": split}
+            else:
+                log(f"   sample {i+1}: the thermal conductivity on the voxels ({why})")
         log(f"   sample {i+1} ({m.get('label') or 'measurement ' + str(i + 1)}): grid {plan['N']}³, voxel "
-            f"{plan['h_um']:.4g} µm, " + ", ".join(f"{t['name']} {100 * v:.1f}%" for t, v in zip(spec["labels"], vf)))
+            f"{plan['h_um']:.4g} µm, " + ", ".join(f"{t['name']} {100 * v:.1f}%" for t, v in zip(spec["labels"], vf))
+            + (" · thermal conductivity by the body-fitted tetrahedral FEM" if tet else ""))
         samples.append({"i": i, "m": m, "form": form, "spec": spec, "plan": plan, "labels": labels,
                         "lab_path": None, "cmask": cmask, "cm_path": None, "area_ratio": area_ratio,
-                        "vf": vf.tolist(), "film": film, "theory_ok": _theory_k(spec) is not None})
+                        "vf": vf.tolist(), "film": film, "theory_ok": _theory_k(spec) is not None, "tet": tet})
     return samples
+
+
+def _tet_value(sample, theta_form, tol, should_stop, log):
+    """The thermal conductivity of one sample at one parameter set on its tetrahedral mesh (made once, kept in the
+    sample): the mean over its directions."""
+    from .solvers import tetfem as TF
+    m = sample["m"]
+    spec = S.normalize(theta_form)
+    tt = sample["tet"]
+    if tt.get("mesh") is None:
+        tt["mesh"] = PL._tet_build(tt["geo"], spec, sample["plan"]["h_um"], log, split=tt["split"])
+    vals = PL.thermal_values(spec)
+    r_int, r_c, _ = PL.thermal_resistances(spec)
+    if tt["split"]:
+        # a split interface always carries a resistance (one fitted down to nothing: a near-perfect contact)
+        r_int = np.maximum(np.zeros(len(spec["labels"])) if r_int is None else r_int, 1e-15)
+    out = []
+    cache = {}
+    system, sys_key = None, None
+    for d in _dirs(m):
+        di = "xyz".index(d)
+        v_used, _ = CD.contrast_policy(sample["labels"], vals, di, spec["options"]["contrast_cap"], cache,
+                                       film=bool(sample["film"]))
+        key = tuple(np.asarray(v_used, float).tolist())
+        if system is None or key != sys_key:
+            # the contrast policy may cap a value in one direction and not in another
+            system, sys_key = TF.assemble(tt["mesh"], v_used, r_int=r_int, r_c=r_c), key
+        out.append(float(TF.conductivity(tt["mesh"], v_used, di, tol=tol, should_stop=should_stop,
+                                         system=system)["k_eff"]))
+    return float(np.mean(out))
 
 
 def _dem_sample(i, m, form, spec, log):
@@ -600,7 +817,10 @@ def _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event,
         for s in samples:
             f = _set_theta(form_of(s), unknowns, theta)
             solver = PROPERTIES[s["m"]["property"]]["solver"]
-            if solver == "cond":
+            if solver == "cond" and s.get("tet"):
+                # the tetrahedral FEM in this process (its multigrid uses the cores)
+                Y[a, s["i"]] = _tet_value(s, f, tol, should_stop, log)
+            elif solver == "cond":
                 for t in _cond_tasks(s, f, tol, pool, f"{tag} {a + 1}"):
                     jobs.append(t)
                     where.append((a, s["i"], t[1]["d"]))
@@ -906,9 +1126,9 @@ def _suggest(samples, unknowns, theta, sig_model, F0):
                 for fac in (1.02, 1 / 1.02):
                     th = list(theta)
                     th[j] = th[j] * fac
-                    g.append(_theory_k(S.normalize(_set_theta(f, unknowns, th))))
+                    g.append(_theory_k(S.normalize(_set_theta(f, unknowns, th)), s["m"].get("direction") or "z"))
                 row.append((math.log(g[0]) - math.log(g[1])) / (2 * math.log(1.02)))
-            k0 = _theory_k(S.normalize(_set_theta(f, unknowns, theta)))
+            k0 = _theory_k(S.normalize(_set_theta(f, unknowns, theta)), s["m"].get("direction") or "z")
         except Exception:                                                # noqa: BLE001
             continue
         jrow = np.array(row) / sig_model
@@ -966,19 +1186,51 @@ def _bracket_notes(samples, U, Y, unknowns, bypass):
         idx = np.flatnonzero(ok)
         j = idx[np.argmin(np.abs(np.log(y[ok]) - math.log(meas)))]
         at = ", ".join(f"{u.label} = {float(u.value(U[j, k])):.3g}" for k, u in enumerate(unknowns))
-        ends = [f"{u.label} beyond its {'lower' if U[j, k] < 0.5 else 'upper'} end"
-                for k, u in enumerate(unknowns) if U[j, k] <= 1e-6 or U[j, k] >= 1.0 - 1e-6]
+        # an unknown at the end of its range: widen it - unless the result has stopped responding there (an
+        # interface resistance far below what matters), when a wider range would not reach the measurement either
+        ends, flat = [], []
+        for k, u in enumerate(unknowns):
+            if not (U[j, k] <= 1e-6 or U[j, k] >= 1.0 - 1e-6):
+                continue
+            d = np.abs(U[idx, k] - U[j, k])
+            rest = np.delete(U[idx], k, axis=1)
+            others = (np.max(np.abs(rest - np.delete(U[j], k)), axis=1) if rest.shape[1] else np.zeros(len(idx)))
+            near = idx[(d >= 0.02) & (others <= 0.05)]
+            if len(near):
+                i2 = near[np.argmin(np.abs(U[near, k] - U[j, k]))]
+                slope = abs(math.log(y[i2]) - math.log(y[j])) / abs(U[i2, k] - U[j, k])
+                need = abs(math.log(meas) - math.log(float(y[j])))
+                # levelling off: the slope next to the end at most half the one further in (an interface resistance
+                # far below what matters). A slope that still grows toward the end (a filler's expansion, whose
+                # effect is linear in the value, not in its logarithm) is widened, however small it is yet.
+                far = near[np.abs(U[near, k] - U[j, k]) >= abs(U[i2, k] - U[j, k]) + 0.02]
+                levels = True
+                if len(far):
+                    i3 = far[np.argmin(np.abs(U[far, k] - U[j, k]))]
+                    inner = abs(math.log(y[i3]) - math.log(y[i2])) / abs(U[i3, k] - U[i2, k])
+                    levels = slope <= max(0.5 * inner, 0.02 * need)
+                # one more range width at the slope next to the end (generous: a response that levels off gives less)
+                if levels and slope < need:
+                    flat.append(f"{u.label} ({float(u.value(U[j, k])):.3g} and {float(u.value(U[i2, k])):.3g} give "
+                                f"{float(y[j]):.4g} and {float(y[i2]):.4g})")
+                    continue
+            ends.append(f"{u.label} beyond its {'lower' if U[j, k] < 0.5 else 'upper'} end")
         unit = PROPERTIES[s["m"]["property"]]["unit"]
         txt = (f"{s['m'].get('label') or 'Measurement ' + str(s['i'] + 1)}: measured {meas:.4g} {unit} lies {side} "
                f"every value computed over the ranges ({lo:.4g} … {hi:.4g} {unit}, {int(ok.sum())} parameter sets); "
                f"the closest, {float(y[j]):.4g}, came at {at}.")
         if side == "below" and s["m"]["property"] == "k" and bypass:
-            txt += (f" The particles of {', '.join(bypass)} touch and their contact faces carry no resistance, so "
+            txt += (f" The particles of {', '.join(bypass)} touch and their contacts carry no resistance, so "
                     f"R_int alone cannot lower k past what the contacts conduct: link the contact resistance to it "
-                    f"(R_c = 2·R_int, two filler-resin interfaces across a resin film thinner than a voxel) or "
+                    f"(R_c = 2·R_int, the two filler-resin interfaces of the resin film between two particles) or "
                     f"calibrate R_c as well.")
         elif ends:
             txt += " Widen the range of " + " and ".join(ends) + "."
+        elif flat:
+            txt += (" At the end of its range " + " and ".join(flat) + (" has" if len(flat) == 1 else " have")
+                    + " no effect left, so a wider range would not reach it either: the measurement lies beyond what this "
+                    "structure gives for any value of the unknowns. Check the measurement and its basis (vol or wt %, "
+                    "the material grade, the direction), or a mechanism the model lacks.")
         else:
             txt += " No value in the ranges reaches it: a mechanism is missing from the model."
         notes.append(txt)
@@ -1015,10 +1267,12 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
         threads = int(numba.get_num_threads())
     except Exception:                                                    # noqa: BLE001
         threads = os.cpu_count() or 4
-    n_dir = sum(len(_dirs(m)) for m in job["measurements"] if PROPERTIES[m["property"]]["solver"] == "cond")
     event("stage", name="Calibration · samples", detail="structures of the measured samples", progress=0.02)
     samples = _prepare(job, base, unknowns, out_dir, limits, log, should_stop)
-    # the solves of a round are independent: one per worker, side by side
+    # the voxel solves of a round are independent: one per worker, side by side (the tetrahedral FEM samples run
+    # in this process)
+    n_dir = sum(len(_dirs(s["m"])) for s in samples
+                if PROPERTIES[s["m"]["property"]]["solver"] == "cond" and not s.get("tet"))
     pool = None
     if n_dir:
         n_vox = max(s["labels"].size for s in samples if s["labels"] is not None)
@@ -1044,15 +1298,17 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
         theory_rows = []
         for s in samples:
             if s["m"]["property"] == "k" and s["theory_ok"]:
-                theory_rows.append({"sample": s["i"], "k_mid": _theory_k(s["spec"])})
+                theory_rows.append({"sample": s["i"], "k_mid": _theory_k(s["spec"], s["m"].get("direction") or "z")})
 
         # ---- design, fit, refine -------------------------------------------
         U = _design(p, N_INIT[p])
         event("stage", name="Calibration · design", detail=f"{len(U)} parameter sets × {len(samples)} samples",
               progress=0.05)
         n_dem = sum(1 for s in samples if s.get("dem"))
+        n_tet = sum(len(_dirs(s["m"])) for s in samples if s.get("tet"))
         log(f"   initial design: {len(U)} parameter sets × "
-            + " + ".join(([f"{n_dir} solves"] if n_dir else []) + ([f"{n_dem} particle-dynamics run(s)"] if n_dem else [])))
+            + " + ".join(([f"{n_dir} solves"] if n_dir else []) + ([f"{n_tet} tetrahedral FEM solves"] if n_tet else [])
+                         + ([f"{n_dem} particle-dynamics run(s)"] if n_dem else [])))
         Rel = np.full((len(U), len(samples)), np.nan)
         Y = _evaluate(samples, form_of, U, unknowns, tol, pool, should_stop, log, event, "design", (0.05, 0.45),
                       rel=Rel)
@@ -1136,7 +1392,8 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
                                      + run_unc ** 2),
                          "grid": s["plan"]["N"] if s["plan"] else None,
                          "voxel_um": s["plan"]["h_um"] if s["plan"] else None, "vf": s["vf"],
-                         "theory_k": _theory_k(S.normalize(_set_theta(s["form"], unknowns, theta_map)))
+                         "theory_k": _theory_k(S.normalize(_set_theta(s["form"], unknowns, theta_map)),
+                                               m.get("direction") or "z")
                          if (m["property"] == "k" and s["theory_ok"]) else None})
         # ---- identifiability and what to measure next ----------------------
         J = _sensitivity(gps, u_map.copy(), unknowns)
@@ -1253,34 +1510,8 @@ def run(job, out_dir, log=print, event=None, should_stop=None, limits=None):
 THEORY_UNC = 0.10          # relative error assumed for the effective-medium model
 
 
-def _dem_vec(km, fillers, n=200):
-    """dem_conductivity for arrays of parameter sets: km (P,), fillers
-    [(phi, k (P,), R (P,), d_m)]."""
-    km = np.asarray(km, float)
-    phi_t = sum(f[0] for f in fillers)
-    if phi_t <= 0:
-        return km
-    kst = [(f[0] / phi_t, np.asarray(f[1], float) / (1.0 + 2.0 * np.asarray(f[2], float) * np.asarray(f[1], float)
-                                                    / max(f[3], 1e-30))) for f in fillers]
-    lk = np.log(km)
-    dt = phi_t / n
-    t = 0.0
-
-    def rate(t_, lk_):
-        k = np.exp(lk_)
-        return sum(w * 3.0 * (ks - k) / (ks + 2.0 * k) for w, ks in kst) / (1.0 - t_)
-    for _ in range(n):
-        a = rate(t, lk)
-        b = rate(t + 0.5 * dt, lk + 0.5 * dt * a)
-        c = rate(t + 0.5 * dt, lk + 0.5 * dt * b)
-        d = rate(t + dt, lk + dt * c)
-        lk = lk + dt * (a + 2 * b + 2 * c + d) / 6.0
-        t += dt
-    return np.exp(lk)
-
-
-def _theory_model(spec, unknowns, thetas):
-    """k of one sample for parameter sets thetas (P, p) on the DEM model."""
+def _theory_model(spec, unknowns, thetas, direction="z"):
+    """k of one sample along `direction` for parameter sets thetas (P, p) on the DEM model (_dem_shapes)."""
     P = len(thetas)
     thetas = np.asarray(thetas, float)
     cols = theta_values(unknowns, [thetas[:, j] for j in range(thetas.shape[1])])
@@ -1291,23 +1522,21 @@ def _theory_model(spec, unknowns, thetas):
     km = col("matrix.props.k", spec["matrix"]["props"]["k"])
     fillers = []
     for i, ph in enumerate(spec["phases"]):
-        d = float(ph["size_um"].get("d") or 1.0) * 1e-6
-        if ph.get("shell"):
-            d += 2.0 * ph["shell"]["thickness_um"] * 1e-6
         k = col(f"phases.{i}.props.k", ph["props"]["k"])
         r = col(f"phases.{i}.r_int", ph.get("r_int") or 0.0)
-        fillers.append((float(ph["vf"]), k, r, d))
-    return _dem_vec(km, fillers)
+        fillers.append((float(ph["vf"]), k, r, *_phase_geometry(ph)))
+    return _dem_shapes(km, fillers, direction, n=200)
 
 
 def preview(job):
     """Calibration on the effective-medium model (differential Bruggeman with
-    Hasselman-Johnson particles, Every et al. 1992), on the whole parameter
-    grid in well under a second: the estimate theory alone gives, and above
-    all whether the measurements can determine the unknowns at all, before
-    any RVE is solved. Thermal conductivity with the matrix and filler
-    conductivities and R_int as unknowns; spheres (other shapes are treated
-    as spheres of their diameter)."""
+    Hasselman-Johnson particles, Every et al. 1992; other shapes as ellipsoids
+    in their orientation with the interfacial resistance of Nan et al. 1997),
+    on the whole parameter grid in well under a second: the estimate theory
+    alone gives, and above all whether the measurements can determine the
+    unknowns at all, before any RVE is solved. Thermal conductivity with the
+    matrix and filler conductivities and R_int as unknowns, along each
+    measurement's direction."""
     _validate(job)
     base = fill_props(job["base"])
     unknowns = [_Unknown(u) for u in job["unknowns"]]
@@ -1348,12 +1577,13 @@ def preview(job):
         sp = S.normalize(_set_theta(f, unknowns, mid))
         if any(ph["void"] or ph["shape"] in ("network", "image") for ph in sp["phases"]):
             return {"available": False, "reason": "The effective-medium preview does not cover pores or networks"}
-        if any(ph["shape"] != "sphere" for ph in sp["phases"]):
-            notes.append("Non-spherical fillers are treated as spheres of their diameter in this preview")
+        if any(ph["shape"] != "sphere" for ph in sp["phases"]) and not any("ellipsoids" in x for x in notes):
+            notes.append("Non-spherical fillers enter this preview as ellipsoids of their half extents in their "
+                         "orientation (Nan et al. 1997); the RVE has their true shape and contacts")
         specs.append(sp)
         sm = math.log(1.0 + float(m.get("rel_unc") or 0.05))
         var = sm * sm + THEORY_UNC ** 2
-        k = _theory_model(sp, unknowns, thetas)
+        k = _theory_model(sp, unknowns, thetas, m.get("direction") or "z")
         r = math.log(float(m["value"])) - np.log(k)
         lp += -0.5 * r * r / var
     post = np.exp(lp - lp.max())
@@ -1364,19 +1594,20 @@ def preview(job):
         up, dn = th0.copy(), th0.copy()
         up[j] *= 1.01
         dn[j] /= 1.01
-        for mi, sp in enumerate(specs):
-            ku, kd = _theory_model(sp, unknowns, np.array([up, dn]))
+        for mi, (sp, m) in enumerate(zip(specs, meas)):
+            ku, kd = _theory_model(sp, unknowns, np.array([up, dn]), m.get("direction") or "z")
             J[mi, j] = (math.log(ku) - math.log(kd)) / (2.0 * math.log(1.01))
     sig = np.array([math.sqrt(math.log(1.0 + float(m.get("rel_unc") or 0.05)) ** 2 + THEORY_UNC ** 2) for m in meas])
     ident = identifiability(J, sig, unknowns)
     ident["J"] = J.tolist()
-    fit = [float(_theory_model(sp, unknowns, th0[None, :])[0]) for sp in specs]
+    fit = [float(_theory_model(sp, unknowns, th0[None, :], m.get("direction") or "z")[0]) for sp, m in zip(specs, meas)]
     joint = None
     if p == 2:
         joint = {"x": [float(v) for v in unknowns[0].value(ax)], "y": [float(v) for v in unknowns[1].value(ax)],
                  "p": (post / post.max()).reshape(n, n).T.tolist()}
     notes += _notes(summ, ident)
     return PL._clean({"available": True, "model": "differential effective medium with Hasselman-Johnson particles "
-                                                  "(Every et al. 1992)", "model_unc": THEORY_UNC,
+                                                  "(Every et al. 1992; ellipsoids after Nan et al. 1997)",
+                      "model_unc": THEORY_UNC,
                       "unknowns": summ, "correlation": corr.tolist(), "identifiability": ident, "joint": joint,
                       "fit": fit, "notes": notes})

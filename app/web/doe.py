@@ -135,6 +135,9 @@ class DOEStore:
         return os.path.join(self.dir, f"{sid}.json")
 
     def save(self, study):
+        # the folder again if it is gone (removed by hand, a workspace moved or tidied while the server ran): the
+        # first study of such a workspace failed with a server error
+        os.makedirs(self.dir, exist_ok=True)
         with open(self._path(study["id"]), "w", encoding="utf-8") as fh:
             json.dump(study, fh, ensure_ascii=False, indent=1)
         # the copy beside the runs: a folder copied or opened elsewhere carries its study
@@ -155,7 +158,11 @@ class DOEStore:
 
     def all(self, owner=None):
         out = []
-        for name in sorted(os.listdir(self.dir), reverse=True):
+        try:
+            names = os.listdir(self.dir)
+        except OSError:                        # the folder gone: no study (save makes it again)
+            names = []
+        for name in sorted(names, reverse=True):
             if not name.endswith(".json"):
                 continue
             s = self.get(name[:-5])
@@ -223,6 +230,9 @@ class DOEStore:
         if errs:
             raise ValueError("\n".join(errs))
         design = payload.get("design") if payload.get("design") in ("full", "oat", "lhs") else "full"
+        bad = DOE.check_ranges(parameters)
+        if bad:
+            raise ValueError("\n".join(bad))
         cases = DOE.expand(parameters, design, int(payload.get("samples", 12)), int(payload.get("seed", 1)))
         if not cases:
             raise ValueError("No parameter with a range was given")

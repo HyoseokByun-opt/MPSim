@@ -937,6 +937,12 @@ def normalize(form):
         # elements, guide 7.2), "fe" with PuMA's periodic finite elements
         # "tet" (5.9.0): linear finite elements on a tetrahedral mesh that follows the particles' exact surfaces
         "cond_method": opts.get("cond_method") if opts.get("cond_method") in ("fe", "tet") else "fv",
+        # the thermal conductivity (5.12.0): "tet" the body-fitted tetrahedral FEM at every content (default) - the
+        # particles' true surfaces, the resin films between touching particles, the interface and contact
+        # resistances on the true surfaces; "fv" / "fe" the voxel solvers (cond_method sets the other conduction
+        # properties only). What the mesh cannot carry (an image, a network, coated particles, anisotropic
+        # particles) is solved on the voxels, and the log says why.
+        "thermal_method": opts.get("thermal_method") if opts.get("thermal_method") in ("tet", "fv", "fe") else "tet",
         # elasticity and thermal expansion: "fans" voxel finite elements with an
         # FFT-preconditioned CG (default: PuMA's elements, iterations independent
         # of the grid), "puma" PuMA's own solve (MINRES; its isotropic material
@@ -962,6 +968,16 @@ def normalize(form):
         # particle, neck x (r / r_ref)^-tet_neck_exp elsewhere (2/3 grain-boundary, 4/7 surface diffusion); 0 = off
         "tet_neck_ref_um": float(_num(opts.get("tet_neck_ref_um", 0), "radius at which the neck is tet_neck (um)", 0, 1e4)),
         "tet_neck_exp": float(_num(opts.get("tet_neck_exp", 2.0 / 3.0), "exponent of the neck's size law", 0, 2)),
+        # overlapping particles on the tetrahedral mesh: "separate" (default, 5.12.0) met as touching particles -
+        # their films widened by the overlap depth, so an overlap is geometry only and the contact conducts and holds
+        # as a contact (tetfem._separate_overlaps); "merged" one solid where they overlap (a neck of the overlap's
+        # size: a sintered contact, whose neck is better given by tet_neck)
+        "tet_overlap": "merged" if opts.get("tet_overlap") == "merged" else "separate",
+        # the thinnest resin film between two particles on the tetrahedral mesh, nm: "auto" from the surfaces
+        # (pipeline.film_t0: the roughness, a bound layer, the closest approach - the particle-dynamics surface
+        # values - and the size of the finest particles), or a value
+        "tet_film_nm": ("auto" if str(opts.get("tet_film_nm", "auto")).strip().lower() in ("", "auto", "none")
+                        else _num(opts.get("tet_film_nm"), "thinnest resin film between particles (nm)", 0.01, 1e4)),
         # elasticity and CTE also with the regions that have a glass transition
         # in their rubbery state (E above Tg, alpha2): the alpha2 of an EMC
         "above_tg": bool(opts.get("above_tg", False)),

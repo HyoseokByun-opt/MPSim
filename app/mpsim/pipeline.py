@@ -257,10 +257,17 @@ STRUCTURE_VERSION = 6
 
 
 def overlap_steps(opts):
-    """The generator's progressive overlap setting, None when it is off."""
+    """The generator's progressive overlap setting, None when it is off.
+
+    Auto (5.12.0): no voxel steps of overlap; a packing that stops within GROW_PCT (2 %) of its size is drawn at
+    the full size where it is, and one that stops further off is not forced (generate.grow_in_place). A share or
+    a value entered keeps the voxel steps of earlier versions."""
     o = opts.get("overlap_steps") or {}
     if not o.get("on", True):
         return None
+    if o.get("share", "auto") == "auto":
+        return {"grow_pct": float(o.get("grow_pct", GEN.GROW_PCT)), "max_vox": 0, "tries": int(o.get("tries", 2)),
+                "auto": "Auto: grown in place up to {:g} % of the size".format(float(o.get("grow_pct", GEN.GROW_PCT)))}
     r = {"tries": int(o.get("tries", 2)), "max_vox": int(o.get("max_vox", 3))}
     if o.get("share", "auto") != "none" and o.get("max_pct") is not None:
         r["max_pct"] = float(o["max_pct"])      # the largest share in two particles, %
@@ -270,18 +277,18 @@ def overlap_steps(opts):
 
 
 def resolve_overlap_share(spec, plan, log=None):
-    """Auto for the largest share of the particle voxels in two particles
-    (overlap_share.auto_share), from the analyses, the materials, the
-    particles' size in voxels and the loading - set into the options once the
-    grid is planned."""
+    """The overlap Auto as it applies to this run (5.12.0, overlap_share.auto_rule): no voxel steps of overlap; a
+    packing within GROW_PCT of its size grown in place - written into the options for the log and the plan."""
     o = spec["options"].get("overlap_steps") or {}
     if not o.get("on", True) or o.get("share", "auto") != "auto":
         return None
     from . import overlap_share as OS
-    a = OS.auto_share(spec, plan)
-    o["max_pct"], o["auto_text"] = float(a["pct"]), a["text"]
+    a = OS.auto_rule(spec, plan)
+    o.pop("max_pct", None)
+    o["auto_text"] = a["text"]
+    o["grow_pct"] = a["grow_pct"]
     if log is not None:
-        log(f"   progressive overlap, largest share in two particles (Auto): {a['text']}")
+        log(f"   overlap (Auto): {a['text']}")
     return a
 
 
@@ -324,6 +331,9 @@ def contacts_key(opts):
     o = overlap_steps(opts)
     if o is None:
         c += "|ov:off"
+    elif o.get("grow_pct"):
+        # the overlap Auto of 5.12.0: grown in place (structures of the earlier Auto are not reused)
+        c += f"|ov:grow{float(o['grow_pct']):g}"
     elif (o["tries"], o["max_vox"]) != (2, 3):
         c += f"|ov:{o['tries']}x{o['max_vox']}"
     return c
@@ -814,6 +824,26 @@ def electrical_contacts(spec, h_um):
             for a in regions[i]:
                 for b in regions[j]:
                     rc[a, b] = v / h_m
+    return rc
+
+
+def electrical_contacts_tet(spec):
+    """The electrical contacts on the tetrahedral FEM: per pair of material labels the contact resistance per area
+    (ohm m², rc_elec, the mean of the two phases'; 0 = a perfect contact), -1 where one side is not a particle (no
+    contact). Two particles that touch meet in a metallic contact, not through a resin film (tetfem.assemble)."""
+    table = spec["labels"]
+    nlab = len(table)
+    rc = -np.ones((nlab, nlab))
+    regions = {}
+    for li, t in enumerate(table):
+        if t["kind"] in ("core", "shell") and t["phase"] is not None:
+            regions.setdefault(t["phase"], []).append(li)
+    for i in regions:
+        for j in regions:
+            v = 0.5 * (float(spec["phases"][i].get("rc_elec") or 0.0) + float(spec["phases"][j].get("rc_elec") or 0.0))
+            for a in regions[i]:
+                for b in regions[j]:
+                    rc[a, b] = v
     return rc
 
 
@@ -2729,25 +2759,111 @@ def _cond_backend(spec, backend):
     return prim
 
 
-def _tet_build(geo, spec, h_um, log):
+def thermal_backend(spec, backend):
+    """How the thermal conductivity is solved (options.thermal_method): the body-fitted tetrahedral FEM by default
+    (5.12.0), else as the other conduction-type properties with that method."""
+    tm = spec["options"].get("thermal_method", "tet")
+    if tm == "tet":
+        return "tet" + ("+fv" if spec["options"].get("crosscheck") else "")
+    sub = dict(spec, options=dict(spec["options"], cond_method=tm))
+    return cond_backend(sub, backend)
+
+
+def cond_backend_of(spec, backend, key):
+    """The solver of one conduction-type property: the thermal conductivity its own, the others cond_method's."""
+    return thermal_backend(spec, backend) if key == "thermal" else cond_backend(spec, backend)
+
+
+def uses_tet(spec):
+    """Whether any solve of this run may use the body-fitted tetrahedral mesh."""
+    o = spec["options"]
+    return "tet" in (o.get("cond_method"), o.get("elastic_method"), o.get("thermal_method"))
+
+
+def thermal_resistances(spec):
+    """The thermal resistances for the tetrahedral FEM, on the true surfaces (no voxel staircase, no 1/h):
+    (R_int per material label or None, R_c per pair of material labels or None, the phases whose particle-matrix
+    interface the mesh splits), all in m²K/W. R_c acts in series with the resin films between two particles."""
+    table = spec["labels"]
+    nlab = len(table)
+    r_int = np.zeros(nlab)
+    r_c = np.zeros((nlab, nlab))
+    core = {t["phase"]: li for li, t in enumerate(table) if t["kind"] == "core" and t["phase"] is not None}
+    split = set()
+    for i, ph in enumerate(spec["phases"]):
+        if i in core and float(ph.get("r_int") or 0.0) > 0 and not ph.get("void"):
+            r_int[core[i]] = float(ph["r_int"])
+            split.add(i)
+    if wants_thermal_contacts(spec):
+        for i in core:
+            for j in core:
+                r_c[core[i], core[j]] = contact_resistance(spec, i, j)
+    return (r_int if split else None), (r_c if np.any(r_c > 0) else None), split
+
+
+# the thinnest resin film between two particles when none is given: never below the closest approach of two
+# surfaces, twice a bound resin layer, or the roughness - which on sub-micron particles is taken at most a hundredth
+# of their smallest dimension (a 250 nm alumina is smoother than 5 nm)
+FILM_ROUGH_FRACTION = 0.01
+
+
+def film_t0(spec, ginfo=None):
+    """(t0 in µm, the reason) - the thinnest resin film between two particles on the tetrahedral mesh.
+    options.tet_film_nm a value: that. Auto: max(closest approach, 2 x bound layer, min(roughness, 1 % of the
+    finest particle's smallest dimension)), with the particle-dynamics surface values (options.viscosity.dem:
+    roughness 5 nm, closest approach 1 nm, bound layer 0 by default) so that one set of surface values describes
+    both the flow and the contacts. The mesh raises it to GAP_FLOOR of its spacing if it is thinner (tetfem)."""
+    o = spec["options"]
+    v = o.get("tet_film_nm", "auto")
+    if v != "auto":
+        return float(v) * 1e-3, f"{float(v):g} nm (set)"
+    dem = ((o.get("viscosity") or {}).get("dem") or {})
+    rough = float(dem.get("roughness_nm", 5.0))
+    hmin = float(dem.get("hmin_nm", 1.0))
+    bound = float(dem.get("bound_nm", 0.0))
+    dmin_nm = None
+    parts = (ginfo or {}).get("particles") or {}
+    if len(parts.get("codes", [])):
+        from . import shapes as SH
+        meta = (ginfo or {}).get("poly_meta")
+        try:
+            dmin_nm = 1000.0 * float(min(SH.min_dim(int(c), P, meta) for c, P in zip(parts["codes"], parts["P"])))
+        except Exception:                                            # noqa: BLE001
+            dmin_nm = None
+    r_eff = rough if dmin_nm is None else min(rough, FILM_ROUGH_FRACTION * dmin_nm)
+    t0 = max(hmin, 2.0 * bound, r_eff)
+    why = (f"Auto: {t0:.3g} nm = max(closest approach {hmin:g}, 2 x bound layer {bound:g}, roughness {rough:g}"
+           + (f" capped at 1 % of the finest particle {dmin_nm:.4g} nm" if dmin_nm is not None and r_eff < rough else "")
+           + ")")
+    return t0 * 1e-3, why
+
+
+def _tet_build(geo, spec, h_um, log, split=None):
     """The body-fitted mesh of the run, made once and kept in geo (options.tet_mesh: on the lattice of the voxel
-    corners, or graded by the particles' sizes)."""
-    if geo.get("mesh") is None:
+    corners, or graded by the particles' sizes). split: the phases whose particle-matrix interfaces carry a thermal
+    resistance - a mesh of their own, kept beside the plain one (the elasticity and the other properties do not
+    split them)."""
+    key = "mesh" if not split else "mesh_split:" + ",".join(str(i) for i in sorted(split))
+    if geo.get(key) is None:
         o = spec["options"]
         mat_of = {t["phase"]: li for li, t in enumerate(geo["table"]) if t["kind"] == "core"}
         mats = [mat_of.get(i, 0) for i in range(len(geo["gen_phases"]))]
         # a neck that depends on the pair's size (sintering): neck x (r_small / r_ref)^-p
         law = (float(o["tet_neck_ref_um"]), float(o.get("tet_neck_exp", 2.0 / 3.0))) if o.get("tet_neck_ref_um") else None
+        t0_um, why = film_t0(spec, geo["ginfo"])
+        if "t0_note" not in geo:
+            geo["t0_note"] = why
+            log(f"    thinnest resin film between particles: {why}")
+        kw = dict(nz=geo.get("nz"), log=log, neck=float(o.get("tet_neck", 0.0)), neck_law=law,
+                  overlap=o.get("tet_overlap", "separate"), split_phases=set(split or ()), t0_um=t0_um)
         if o.get("tet_mesh") == "graded":
             ref = o.get("tet_refine", "auto")
-            geo["mesh"] = TM.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats, nz=geo.get("nz"), log=log,
-                                        res=float(o.get("tet_res", 4)), refine=None if ref in (None, "auto") else int(ref),
-                                        contact=int(o.get("tet_contact", 0)), neck=float(o.get("tet_neck", 0.0)),
-                                        neck_law=law)
+            geo[key] = TM.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats,
+                                     res=float(o.get("tet_res", 4)), refine=None if ref in (None, "auto") else int(ref),
+                                     contact=int(o.get("tet_contact", 0)), **kw)
         else:
-            geo["mesh"] = TF.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats, nz=geo.get("nz"), log=log,
-                                        neck=float(o.get("tet_neck", 0.0)), neck_law=law)
-    return geo["mesh"]
+            geo[key] = TF.build_mesh(geo["N"], h_um, geo["ginfo"], geo["gen_phases"], mats, **kw)
+    return geo[key]
 
 
 def _tet_info(m):
@@ -2758,6 +2874,10 @@ def _tet_info(m):
     out["n_vertices"] = int(len(m["points"]))
     out["neck"] = float(m.get("neck", 0.0))
     out["n_bonded"] = int(m.get("n_bonded", 0))
+    out["overlap"] = m.get("overlap", "merged")
+    out["n_separated"] = int(m.get("n_separated", 0))
+    out["n_iface"] = int(len(m.get("iface") if m.get("iface") is not None else []))
+    out["t0_nm"] = float(1000.0 * m["t0_um"]) if m.get("t0_um") is not None else None
     if m.get("graded"):
         out.update(graded=True, finest_um=float(m["finest_um"]), coarsest_um=float(m["coarsest_um"]),
                    n_cells=int(m["n_leaves"]), levels=[int(v) for v in m["levels"]])
@@ -2770,26 +2890,40 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
     (options.cond_method = "tet"); its "mesh" is built once and kept there for the other properties."""
     info = COND[key]
     iface = rpair is not None or rcpair is not None
-    backend = cond_backend(spec, backend)
+    backend = cond_backend_of(spec, backend, key)
+    tet_first = backend.partition("+")[0] == "tet"
     if aniso is not None and not iface:
         log(f"    {info['title']}: anisotropic materials -> built-in periodic finite volume with their tensors")
         backend = "fv"
-    if iface:
+    elif aniso is not None and tet_first:
+        log(f"    {info['title']}: anisotropic materials -> built-in periodic finite volume with their tensors and "
+            f"face resistances (the tetrahedral elements carry isotropic materials)")
+        backend = "fv"
+    if iface and not (tet_first and key in ("thermal", "electrical")):
         # An interface resistance lives on voxel faces. The finite-volume
         # operator has faces; PuMA's finite elements share nodes across them
         # and cannot carry it, so these solves use the built-in periodic FV.
+        # (The tetrahedral elements carry the thermal ones on the true surfaces, and the electrical contact
+        # resistance on the contacts of touching particles.)
         log(f"    {info['title']}: interface resistances set -> built-in periodic finite volume with "
             f"face resistances")
         backend = "fv"
     primary, _, check = backend.partition("+")
     tet_sys = {}
+    tet_mesh = None
+    r_int_l = r_c_l = None
     if primary == "tet":
         why = "the structure's particles are not at hand" if geo is None else TF.supported(spec, geo["ginfo"], geo["table"])
         if why:
             log(f"    {info['title']}: the tetrahedral mesh cannot be made ({why}) -> built-in periodic finite volume")
             primary, check = "fv", ""
         else:
-            _tet_build(geo, spec, h_um, log)
+            split = set()
+            if key == "thermal" and iface:
+                # the interface and contact resistances on the true surfaces: the particle-matrix interfaces of
+                # the phases with an R_int get their own vertices, the films between particles R_c in series
+                r_int_l, r_c_l, split = thermal_resistances(spec)
+            tet_mesh = _tet_build(geo, spec, h_um, log, split=split)
     dirs = spec["options"]["directions"]
     cap = spec["options"]["contrast_cap"]
     tol = spec["options"]["tol"]
@@ -2843,16 +2977,27 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
                                                      di, bool(spec["rve"].get("film")), LV.LABEL.get(key, "Potential"))
                 if primary == "tet":
                     # the same mesh for every property and direction; the matrix once per set of values
-                    kv = tuple(np.asarray(v_used, float).tolist())
+                    kv = (key,) + tuple(np.asarray(v_used, float).tolist())
                     if kv not in tet_sys:
                         tet_sys.clear()
-                        tet_sys[kv] = TF.assemble(geo["mesh"], v_used)
-                    r = TF.conductivity(geo["mesh"], v_used, di, tol=tol, callback=cb_d, should_stop=should_stop,
+                        # electrons cross where two particles touch, not through the resin films between them
+                        contact = ({"rc": electrical_contacts_tet(spec), "touch_um": 1.5 * float(tet_mesh["t0_um"])}
+                                   if key == "electrical" else None)
+                        tet_sys[kv] = TF.assemble(tet_mesh, v_used, r_int=r_int_l, r_c=r_c_l, contact=contact)
+                        if contact is not None:
+                            log(f"    {info['title']}: {tet_mesh.get('n_contact_springs', 0):,} interface elements of "
+                                f"touching particles (films at the thinnest width) conduct as metallic contacts"
+                                + (" with the contact resistance R_c,e" if np.any(contact["rc"] > 0) else "")
+                                + "; wider resin films as the resin")
+                    r = TF.conductivity(tet_mesh, v_used, di, tol=tol, callback=cb_d, should_stop=should_stop,
                                         fields=bool(first), system=tet_sys[kv], flux_h=h_um * 1e-6)
+                    r["method"] = "tet-fe" + ("-interface" if (r_int_l is not None or r_c_l is not None) else
+                                              "-contact" if key == "electrical" else "")
                     xq = None
                     if check == "fv":
                         try:
                             xc = CD.solve_direction(labels, v_used, di, tol=tol, should_stop=should_stop,
+                                                    rpair=rpair, cmask=cmask, rcpair=rcpair,
                                                     film=bool(spec["rve"].get("film")),
                                                     flux_h=(h_um * 1e-6) if first and d == dirs[0] else None)
                             r["crosscheck"], r["crosscheck_method"] = xc["k_eff"], "fv"
@@ -2884,11 +3029,11 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
             qt = r.pop("q_tets", None) if primary == "tet" else None
             ut = r.pop("u_tets", None) if primary == "tet" else None
             if qt is not None and first and viewer is not None and d == dirs[0]:
-                _tet_figure(key, viewer, geo["mesh"], qt, xq if check == "fv" else None, v_used, d, h_um, labels,
+                _tet_figure(key, viewer, tet_mesh, qt, xq if check == "fv" else None, v_used, d, h_um, labels,
                             r["column"][di], r.get("crosscheck"))
             if qt is not None and first and viewer is not None:
                 try:
-                    _fem_fields(key, viewer, geo["mesh"], qt, ut, v_used, d, labels.shape, h_um, log)
+                    _fem_fields(key, viewer, tet_mesh, qt, ut, v_used, d, labels.shape, h_um, log)
                 except Exception as e:                               # noqa: BLE001
                     log(f"    (the finite-element view of {COND[key]['title']} {d} failed: {e})")
             del qt, ut
@@ -2922,7 +3067,7 @@ def _cond_solve(key, labels, vals, spec, h_um, backend, prog, log, event, should
     out = {"tensor": T, "energy": energy, "stats": stats, "policies": policies,
            "percolation": cache.get("wraps"), "field_stats": field_stats}
     if primary == "tet":
-        out["tet_mesh"] = _tet_info(geo["mesh"])
+        out["tet_mesh"] = _tet_info(tet_mesh)
     return out
 
 
@@ -2984,6 +3129,28 @@ def _resolution_check(spec, ginfo, gen_phases, N, h, need, gas_factor, area_rati
         if key not in need or key not in results:
             continue
         rpair = rcpair = None
+        tet_k = key == "thermal" and thermal_backend(spec, backend).partition("+")[0] == "tet" and \
+            TF.supported(spec, ginfo, spec["labels"]) is None and not any(M.k_axes(t["props"]) for t in spec["labels"])
+        if tet_k:
+            # the tetrahedral FEM again on the mesh of the finer grid (the same particles, their true surfaces)
+            vals = thermal_values(spec, gas_factor)
+            r_int_l, r_c_l, split = thermal_resistances(spec)
+            t0 = time.time()
+            geo_f = {"ginfo": ginfo, "gen_phases": gen_phases, "N": Nf, "nz": nzf, "table": spec["labels"]}
+            mesh_f = _tet_build(geo_f, spec, hf, lambda *a: None, split=split)
+            kf = float(TF.conductivity(mesh_f, vals, di, tol=spec["options"]["tol"], should_stop=should_stop,
+                                       system=TF.assemble(mesh_f, vals, r_int=r_int_l, r_c=r_c_l))["k_eff"])
+            del mesh_f, geo_f
+            kb = float(results[key]["tensor"][di, di])
+            change = kf / kb - 1.0 if kb else 0.0
+            # the FEM converges at second order on smooth surfaces and slower at the contacts: no extrapolation
+            out[key] = {"direction": d, "N": N, "N_fine": Nf, "grid": _grid(N, nz), "grid_fine": _grid(Nf, nzf),
+                        "base": kb, "fine": kf, "change": change, "extrapolated": None, "method": "tet-fe",
+                        "extrapolation_note": "the tetrahedral FEM: the finer mesh's value stands as it is",
+                        "seconds": time.time() - t0}
+            log(f"    resolution check {COND[key]['title']} {d} (tetrahedral FEM): mesh of {_grid(N, nz)} {kb:.6g} → "
+                f"{_grid(Nf, nzf)} {kf:.6g} ({100 * change:+.2f} %)")
+            continue
         if key == "thermal":
             vals = thermal_values(spec, gas_factor)
             rpair, rcpair = thermal_interfaces(spec, hf, area_ratio)
@@ -3243,9 +3410,12 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
             if key == "electrical":
                 rcpair = electrical_contacts(spec, h)
         an = aniso if key == "thermal" else None
-        be = "fv" if (rpair is not None or rcpair is not None or an is not None) else cond_backend(spec, backend)
-        if be.partition("+")[0] == "tet":
+        be = cond_backend_of(spec, backend, key)
+        if be.partition("+")[0] == "tet" and an is None and (key in ("thermal", "electrical")
+                                                              or (rpair is None and rcpair is None)):
             continue          # the tetrahedral mesh is built once in the run's own process (AMG uses its cores)
+        if rpair is not None or rcpair is not None or an is not None:
+            be = "fv"
         film_run = bool(spec["rve"].get("film"))
         cache = {}
         for d in dirs:
@@ -3341,6 +3511,8 @@ def _prefetch(box, need, labels, table, spec, h, backend, gas_factor, area_ratio
                 continue
             rpair = rcpair = None
             if key == "thermal":
+                if thermal_backend(spec, backend).partition("+")[0] == "tet":
+                    continue      # the finer tetrahedral mesh is solved in the run's own process (resolution_check)
                 vals = thermal_values(spec, gas_factor)
                 rpair, rcpair = thermal_interfaces(spec, fine["h"], area_ratio)
                 if rcpair is not None or any(M.k_axes(t["props"]) for t in spec["labels"]):
@@ -4081,8 +4253,16 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 prev = json.load(fh)
         except (OSError, ValueError):
             prev = None
-        if prev is not None and (prev.get("preview") or prev.get("error")
-                                 or run_signature(prev.get("spec") or {}) != run_signature(spec)):
+        # the inputs as that run normalised them before it began (spec.normalized.json, what the server compares
+        # too): the spec kept in result.json carries what the run resolved on its way (the overlap Auto's share, a
+        # film's thickness), so comparing it never matched - and the run overwrote the folder's earlier results
+        old_sig = None
+        try:
+            with open(os.path.join(out_dir, "spec.normalized.json"), encoding="utf-8") as fh:
+                old_sig = run_signature(json.load(fh))
+        except (OSError, ValueError):
+            old_sig = run_signature((prev or {}).get("spec") or {})
+        if prev is not None and (prev.get("preview") or prev.get("error") or old_sig != run_signature(spec)):
             prev = None
     _dump(os.path.join(out_dir, "spec.normalized.json"), spec)
     wanted = set(spec["analyses"])
@@ -4106,7 +4286,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
         log("!! NASA PuMA could not be imported; the built-in verification solvers are used instead: "
             + str(PB.unavailable_reason()))
         backend = "builtin"
-    plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"]), need, limits)
+    plan = R.plan(_plan_phases(spec), dict(spec["rve"], contacts=spec["options"]["contacts"], particle_gap_vox=spec["options"].get("particle_gap_vox"), elastic_method=spec["options"]["elastic_method"], thermal_method=spec["options"].get("thermal_method", "tet"), cond_method=spec["options"].get("cond_method", "fv")), need, limits)
     log(f"== {spec['name']}")
     resolve_overlap_share(spec, plan, log)
     if prev is not None:
@@ -4403,6 +4583,26 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 checks.append({"id": "cte_conv", "group": "Thermo-mechanics", "label": "Linear solver convergence (7 load cases)",
                                "value": sum(conv), "target": len(conv), "unit": "load cases",
                                "status": "pass" if all(conv) else "fail", "note": ""})
+            # touching particles much stiffer than the matrix, on voxel elements: each contact is a whole voxel face
+            # bonded on both sides, so the particles carry load through it as a solid would - AlN spheres 8 um,
+            # 45 vol%, 60^3: in epoxy E 13.6 GPa against 10.0 on the FEM; in silicone (3 MPa) 0.18 GPa against
+            # 0.021, alpha 113 against 161 ppm/K
+            faces_ = int((realisations[0] if realisations else {}).get("contact_faces", 0) or 0)
+            stiff_f = [float(E_l[i]) for i, t in enumerate(table) if t["kind"] in ("core", "shell") and float(E_l[i]) > 0]
+            stiff_m = [float(E_l[i]) for i, t in enumerate(table) if t["kind"] == "matrix" and float(E_l[i]) > 0]
+            ratio_ = (max(stiff_f) / min(stiff_m)) if (stiff_f and stiff_m) else 0.0
+            if faces_ > 0 and ratio_ >= 20.0 and not str(el.get("method") or "").startswith("tet"):
+                checks.append({"id": "cte_contacts", "group": "Thermo-mechanics",
+                               "label": "Touching particles much stiffer than the matrix",
+                               "value": faces_, "target": 0, "unit": "", "status": "warn",
+                               "note": f"{faces_:,} voxel faces of contact between particles up to {ratio_:.0f}x as stiff "
+                                       "as the matrix: on voxel elements each contact is a whole voxel face bonded on "
+                                       "both sides, so the particles carry load through it as one solid and the "
+                                       "stiffness comes out high, the expansion low - the more so the softer the "
+                                       "matrix (AlN spheres, 45 vol%: in epoxy E 13.6 GPa against 10.0 on the "
+                                       "tetrahedral FEM; in silicone 0.18 GPa against 0.021, CTE 113 against 161 "
+                                       "ppm/K). The FEM (Simulation - Solver settings - Elasticity and CTE) carries "
+                                       "the resin films between particles; it needs more memory and time."})
             props["cte"] = entry
 
         if "mechtest" in need and "mechtest" in results_first:
@@ -4836,6 +5036,8 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                  "pack_scale": ginfo.get("pack_scale"),
                  "overlap_topup": ginfo.get("overlap_topup"),
                  "overlap_over_share": ginfo.get("overlap_over_share"),
+                 "grown_in_place": ginfo.get("grown_in_place"),
+                 "left_out": ginfo.get("left_out"),
                  "sheared": ginfo.get("sheared"),
                  "pressed": ({k: v for k, v in ginfo["pressed"].items() if k not in ("frames", "von_mises", "pressure")}
                              if ginfo.get("pressed") else None),
@@ -4911,8 +5113,17 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
             # the run went on (irregular grains asked at 61.38 vol% were solved at the 40.6 % the random
             # placement had reached, with a failed check in the list)
             short_ = [c for c in checks if str(c.get("id", "")).startswith("vf_") and c.get("status") == "fail"]
+            # a content the packing left out on purpose (the loading does not pack without overlap and the overlap
+            # Auto does not force it) stops the run once it is beyond the level's tolerance, whatever the voxel
+            # check reads: at Fast (3 %, failing at 9 %) equal spheres asked at 66 vol% were solved at 60.5 vol%
+            tol_ = R.QUALITY.get(spec["rve"].get("quality"), R.QUALITY["standard"])["vf_tol"]
+            short_ += [c for c in checks if c.get("id") == "left_out" and float(c.get("value") or 1.0) < 1.0 - tol_
+                       and not short_]
             if short_:
-                why = "; ".join(f"{c['label'].split(':')[0]}: {c.get('note', '')}" for c in short_)
+                why = "; ".join((f"{c['label'].split(':')[0]}: {c.get('note', '')}" if c.get("id") != "left_out" else
+                                 f"{100 * float(c['value']):.1f} % of the target content packs with the sizes entered "
+                                 f"(the overlap Auto does not force a loading further than 2 % of the size beyond what "
+                                 f"the particles pack)") for c in short_)
                 # the run ends here: its helper processes (figures, solves) with it
                 try:
                     if live_box["fw"]:
@@ -4984,7 +5195,7 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
 
         # ---- conduction-type properties ----------------------------------
         tet_geo = ({"ginfo": ginfo, "gen_phases": gen_phases, "N": N, "nz": Nz, "table": table}
-                   if "tet" in (spec["options"].get("cond_method"), spec["options"].get("elastic_method")) else None)
+                   if uses_tet(spec) else None)
         for key in COND:
             if key not in need:
                 continue
@@ -5014,7 +5225,9 @@ def run(form, out_dir, log=print, event=None, should_stop=None, limits=None):
                 fill_v = [float(v) for v, t in zip(vals, table) if t["kind"] in ("core", "shell") and float(v) > 0]
                 mat_v = [float(v) for v, t in zip(vals, table) if t["kind"] == "matrix" and float(v) > 0]
                 contrast = (max(fill_v) / min(mat_v)) if (fill_v and mat_v) else 0.0
-                if faces_ > 0 and contrast >= 20.0 and opts.get("resolution_check", "off") != "on":
+                # (on the tetrahedral FEM contacts are films or true contacts, not voxel faces: no such dependence)
+                on_tet = any(str(s_.get("method") or "").startswith("tet") for s_ in (out.get("stats") or []))
+                if faces_ > 0 and contrast >= 20.0 and opts.get("resolution_check", "off") != "on" and not on_tet:
                     checks.append({"id": f"{key}_contacts", "group": COND[key]["title"],
                                    "label": "Touching particles much more conductive than the matrix",
                                    "value": faces_, "target": 0, "unit": "", "status": "warn",

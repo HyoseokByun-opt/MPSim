@@ -139,9 +139,11 @@ def _crossings(idx, n, per, h, owner, codes, centers, R, P, planes, nfaces, Lg, 
             t1 = _exit(oa - 1, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
             t2 = 1.0 - _exit(ob - 1, bx, by, bz, ax, ay, az, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
             t = 0.5 * (t1 + t2)
+            # the film's width along the edge; negative where the two overlap (the overlap's length along it, read
+            # by the separated treatment of overlaps, build_mesh)
+            gedge[e] = (t2 - t1) * h * math.sqrt(float(_EOFF[et, 0] + _EOFF[et, 1] + _EOFF[et, 2]))
             if t2 > t1:
                 film[e] = 1
-                gedge[e] = (t2 - t1) * h * math.sqrt(float(_EOFF[et, 0] + _EOFF[et, 1] + _EOFF[et, 2]))
         if t < delta:
             t = delta
         elif t > 1.0 - delta:
@@ -183,10 +185,12 @@ def _prism(fill, tets, mat, cell, nt, v, r, m, ci):
 
 
 @njit(cache=True)
-def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin, wside, wn):
+def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin, wside, wn, aside):
     """A triangle of a particle's cut surface: to each of its vertices that lie on a film, a third of its area
     over half the film's width normal to it (e: the cut edge, s: the side of the edge the particle is on, d:
-    the edge's direction)."""
+    the edge's direction); aside the same areas without the width (an added contact resistance acts in series).
+    A vertex on a particle-matrix interface that carries a resistance (film 2) gets the third of the area in
+    aside[e, 0]: the resistance divides it when the system is assembled."""
     ux, uy, uz = xb[0] - xa[0], xb[1] - xa[1], xb[2] - xa[2]
     vx, vy, vz = xc[0] - xa[0], xc[1] - xa[1], xc[2] - xa[2]
     nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
@@ -198,6 +202,9 @@ def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin,
         e = ea if q == 0 else (eb if q == 1 else ec)
         if e < 0 or film[e] == 0:
             continue
+        if film[e] == 2:
+            aside[e, 0] += area / 3.0
+            continue
         sd = sa if q == 0 else (sb if q == 1 else sc)
         d = da if q == 0 else (db if q == 1 else dc)
         dl = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
@@ -206,6 +213,7 @@ def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin,
         if g < gmin:
             g = gmin
         wside[e, sd] += 2.0 * (area / 3.0) / g
+        aside[e, sd] += 2.0 * (area / 3.0)
         if wn.shape[0] > 1:
             sg = 1.0 if nx * d[0] + ny * d[1] + nz * d[2] >= 0.0 else -1.0
             wgt = sg * 2.0 * (area / 3.0) / g / nrm
@@ -216,10 +224,11 @@ def _tri_film(xa, xb, xc, ea, eb, ec, sa, sb, sc, da, db, dc, gedge, film, gmin,
 
 @njit(cache=True)
 def _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, film, gmin, wside, wn, sid, mid, rk, cx,
-             dr, pr, rr, xs, ys, pid, prk, pln):
+             dr, pr, rr, xs, ys, pid, prk, pln, aside):
     """One background tetrahedron whose corners (v, at X, unwrapped) lie in different particles o (0: the matrix),
     divided by particle. ed[m, q] (m < q): the cut edge between corners m and q, measured from m, or -1. Returns
-    (tetrahedra so far, particles in it)."""
+    (tetrahedra so far, particles in it). A particle-matrix edge with an interface resistance (film 2) has two
+    vertices at its cut: the particle's (3e) and the matrix's (3e + 1), joined when the system is assembled."""
     npoly = 0
     ngroup = 0
     nmat = 0
@@ -232,6 +241,15 @@ def _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, fi
                     sid[m, q] = nn + 3 * e
                     mid[m, q] = nn + 3 * e + 1
                     sid[q, m] = nn + 3 * e + 2
+                elif film[e] == 2:
+                    # the particle's side keeps 3e, the matrix (which builds on mid) 3e + 1
+                    mid[m, q] = nn + 3 * e + 1
+                    if o[m] != 0:
+                        sid[m, q] = nn + 3 * e
+                        sid[q, m] = nn + 3 * e + 1
+                    else:
+                        sid[q, m] = nn + 3 * e
+                        sid[m, q] = nn + 3 * e + 1
                 else:
                     sid[m, q] = nn + 3 * e
                     mid[m, q] = nn + 3 * e
@@ -281,7 +299,7 @@ def _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, fi
             if fill:
                 _tri_film(cx[x, y0], cx[x, y1], cx[x, y2], ed[x, y0], ed[x, y1], ed[x, y2],
                           0 if x < y0 else 1, 0 if x < y1 else 1, 0 if x < y2 else 1,
-                          dr[x, y0], dr[x, y1], dr[x, y2], gedge, film, gmin, wside, wn)
+                          dr[x, y0], dr[x, y1], dr[x, y2], gedge, film, gmin, wside, wn, aside)
         elif kx == 2:
             x1, x2, y1, y2 = xs[0], xs[1], ys[0], ys[1]
             pr[0], pr[1], pr[2] = v[x1], sid[x1, y1], sid[x1, y2]
@@ -303,17 +321,17 @@ def _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, fi
                 if min(rk[x1, y1], rk[x2, y2]) < min(rk[x1, y2], rk[x2, y1]):
                     _tri_film(cx[x1, y1], cx[x1, y2], cx[x2, y2], ed[x1, y1], ed[x1, y2], ed[x2, y2],
                               s11, s12, s22, dr[x1, y1], dr[x1, y2], dr[x2, y2], gedge, film, gmin,
-                              wside, wn)
+                              wside, wn, aside)
                     _tri_film(cx[x1, y1], cx[x2, y2], cx[x2, y1], ed[x1, y1], ed[x2, y2], ed[x2, y1],
                               s11, s22, s21, dr[x1, y1], dr[x2, y2], dr[x2, y1], gedge, film, gmin,
-                              wside, wn)
+                              wside, wn, aside)
                 else:
                     _tri_film(cx[x1, y2], cx[x2, y2], cx[x2, y1], ed[x1, y2], ed[x2, y2], ed[x2, y1],
                               s12, s22, s21, dr[x1, y2], dr[x2, y2], dr[x2, y1], gedge, film, gmin,
-                              wside, wn)
+                              wside, wn, aside)
                     _tri_film(cx[x1, y2], cx[x2, y1], cx[x1, y1], ed[x1, y2], ed[x2, y1], ed[x1, y1],
                               s12, s21, s11, dr[x1, y2], dr[x2, y1], dr[x1, y1], gedge, film, gmin,
-                              wside, wn)
+                              wside, wn, aside)
         else:
             x1, x2, x3, y = xs[0], xs[1], xs[2], ys[0]
             pr[0], pr[1], pr[2] = sid[x1, y], sid[x2, y], sid[x3, y]
@@ -328,7 +346,7 @@ def _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, fi
             if fill:
                 _tri_film(cx[x1, y], cx[x2, y], cx[x3, y], ed[x1, y], ed[x2, y], ed[x3, y],
                           0 if x1 < y else 1, 0 if x2 < y else 1, 0 if x3 < y else 1,
-                          dr[x1, y], dr[x2, y], dr[x3, y], gedge, film, gmin, wside, wn)
+                          dr[x1, y], dr[x2, y], dr[x3, y], gedge, film, gmin, wside, wn, aside)
         npoly += 1
     if nmat == 0 and ngroup < 3:
         return nt, ngroup
@@ -409,7 +427,7 @@ def _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, fi
 
 
 @njit(cache=True)
-def _decompose(n, per, lab, owner, ecut, nn, h, tcut, gedge, film, gmin, fill, tets, mat, cell, wside, wn):
+def _decompose(n, per, lab, owner, ecut, nn, h, tcut, gedge, film, gmin, fill, tets, mat, cell, wside, wn, aside):
     """The tetrahedra of the cut lattice (fill False: only counted). Returns (tetrahedra, lattice tetrahedra
     that hold two or more particles)."""
     n0, n1, n2 = n[0], n[1], n[2]
@@ -471,7 +489,7 @@ def _decompose(n, per, lab, owner, ecut, nn, h, tcut, gedge, film, gmin, fill, t
                                 ed[m, q] = -1
                             ed[q, m] = ed[m, q]
                     nt, ng = _cut_tet(fill, tets, mat, cell, nt, ci, v, X, o, lb, ed, nn, tcut, gedge, film, gmin, wside,
-                                      wn, sid, mid, rk, cx, dr, pr, rr, xs, ys, pid, prk, pln)
+                                      wn, sid, mid, rk, cx, dr, pr, rr, xs, ys, pid, prk, pln, aside)
                     if ng >= 2:
                         nfilm += 1
     return nt, nfilm
@@ -587,8 +605,246 @@ def _neck_owners(owner, h, per, codes, centers, R, P, planes, nfaces, Lg, gper, 
     return changed
 
 
+def _lattice_ends(idx, n, per, own):
+    """The owners at both ends of the lattice's cut edges, and the edges' directions."""
+    base = idx // 7
+    et = idx % 7
+    n0, n1, n2 = int(n[0]), int(n[1]), int(n[2])
+    k = base % n2
+    j = (base // n2) % n1
+    i = base // (n1 * n2)
+    off = _EOFF[et]
+    ii, jj, kk = i + off[:, 0], j + off[:, 1], k + off[:, 2]
+    if per[0]:
+        ii = np.where(ii >= n0, ii - n0, ii)
+    if per[1]:
+        jj = np.where(jj >= n1, jj - n1, jj)
+    if per[2]:
+        kk = np.where(kk >= n2, kk - n2, kk)
+    return own[base], own[(ii * n1 + jj) * n2 + kk], off.astype(float)
+
+
+@njit(cache=True)
+def _line_depths(pa, pb, dvec, codes, centers, R, P, planes, nfaces, Lg, gper, nk):
+    """The overlap of every pair (pa[q], pb[q]) along the line of their centres (dvec: b's centre from a's, the
+    nearest image): where the line leaves a less where it enters b, by bisection on the exact shapes (the same point
+    test as the mesh). 0 where the line does not pass through the overlap."""
+    out = np.zeros(len(pa))
+    for q in range(len(pa)):
+        a, b = pa[q], pb[q]
+        ax, ay, az = centers[a, 0], centers[a, 1], centers[a, 2]
+        bx, by, bz = ax + dvec[q, 0], ay + dvec[q, 1], az + dvec[q, 2]
+        D = math.sqrt(dvec[q, 0] ** 2 + dvec[q, 1] ** 2 + dvec[q, 2] ** 2)
+        if D <= 0.0:
+            continue
+        t1 = _exit(a, ax, ay, az, bx, by, bz, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
+        t2 = 1.0 - _exit(b, bx, by, bz, ax, ay, az, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
+        # above the bisection's resolution (2^-18 of the line, twice): touching shapes are not an overlap
+        if t1 - t2 > 1e-5:
+            out[q] = (t1 - t2) * D
+    return out
+
+
+@njit(cache=True)
+def _sep_gaps(pa, pb, xa, ev, shift, codes, centers, R, P, planes, nfaces, Lg, gper, nk, reach):
+    """The film width along every edge between two separated particles, exactly: edge q runs from xa[q] (in
+    particle pa[q]) along ev[q] towards particle pb[q], which is moved away by shift[q] (the pair's depth along the
+    line of the centres). The width is where the edge enters the moved particle less where it leaves the first; an
+    edge that does not reach the moved particle within `reach` edge lengths gets that far."""
+    out = np.zeros(len(pa))
+    nst = 48
+    for q in range(len(pa)):
+        a, b = pa[q], pb[q]
+        ax, ay, az = xa[q, 0], xa[q, 1], xa[q, 2]
+        dx, dy, dz = ev[q, 0], ev[q, 1], ev[q, 2]
+        ln = math.sqrt(dx * dx + dy * dy + dz * dz)
+        t1 = _exit(a, ax, ay, az, ax + dx, ay + dy, az + dz, codes, centers, R, P, planes, nfaces, Lg, gper, nk)
+        sx, sy, sz = shift[q, 0], shift[q, 1], shift[q, 2]
+        t2 = reach
+        prev = t1
+        if _inside_by(b, ax + t1 * dx - sx, ay + t1 * dy - sy, az + t1 * dz - sz, codes, centers, R, P, planes,
+                      nfaces, Lg, gper, 0.0):
+            t2 = t1
+        else:
+            for s in range(1, nst + 1):
+                t = t1 + (reach - t1) * s / nst
+                if _inside_by(b, ax + t * dx - sx, ay + t * dy - sy, az + t * dz - sz, codes, centers, R, P, planes,
+                              nfaces, Lg, gper, 0.0):
+                    lo, hi = prev, t
+                    for _ in range(20):
+                        tm = 0.5 * (lo + hi)
+                        if _inside_by(b, ax + tm * dx - sx, ay + tm * dy - sy, az + tm * dz - sz, codes, centers, R, P,
+                                      planes, nfaces, Lg, gper, 0.0):
+                            hi = tm
+                        else:
+                            lo = tm
+                    t2 = 0.5 * (lo + hi)
+                    break
+                prev = t
+        out[q] = max(t2 - t1, 0.0) * ln
+    return out
+
+
+def _bonded_keys(nk, n_p):
+    """The pair keys (lo * (n_p + 1) + hi) of the bonded contacts of neck_pairs - joined on purpose, never separated."""
+    nptr, nidx, _ = nk
+    if nptr is None or len(nptr) < 2 or int(nptr[-1]) == 0:
+        return np.zeros(0, np.int64)
+    a = np.repeat(np.arange(len(nptr) - 1, dtype=np.int64), np.diff(np.asarray(nptr, np.int64)))
+    b = np.asarray(nidx, np.int64)[:len(a)]
+    return np.unique(np.minimum(a, b) * (n_p + 1) + np.maximum(a, b))
+
+
+def _separate_overlaps(oa, ob, de, gedge, film, centers, Lg, gper, cos_min=0.2, shapes=None, xa=None, ev=None,
+                       intended=None, bonded=None):
+    """Overlapping particles as touching ones (overlap="separate"): a pair whose shapes overlap by delta (the
+    deepest overlap along the line of their centres) is met as if moved apart by delta - every edge between the two
+    carries a film whose width is the geometric one plus delta along the edge's share of that line, so the overlap
+    face and the films around it conduct as the films of the two particles just touching (and, in elasticity, as
+    a thin layer held between them). The overlap stays in the geometry (the loading, the arrangement); its contact
+    conducts as a contact, not as a neck of solid. oa, ob: the owners at the ends of every cut edge (0 the
+    matrix), de its direction. shapes (codes, R, P, planes, nfaces): delta is then measured on the exact shapes along
+    the line of the centres, so that it does not depend on where the lattice falls (the edges that cross an overlap
+    see part of it); the deepest overlap the edges see stays the floor, for an overlap off that line (two platelets
+    crossing at their rims). xa, ev (every cut edge's start point and vector, in µm): the width of every film of a
+    separated pair is then measured exactly, along the edge to the partner moved back by delta in the direction of
+    the two centres as they stand at the edge (_sep_gaps; in a small periodic box two particles touch on both sides)
+    - the edge's own share of the overlap is cut off where a lattice node lies in both particles, which made the
+    films too wide at deep overlaps (5 % of d: 9 % below touching; now +1 %). Simple cubic spheres, contrast 150, 20
+    cells across: separated overlaps of 0.5 / 1 / 2 / 5 % of d read +2 / +5 / +10 / +1 % over touching ones (their
+    cell is that much smaller), merged 2.0 / 2.5 / 3.3 / 5.0 times. intended (per particle): particles of a phase
+    whose overlap is permitted (agglomerates, sintered contacts) keep their overlaps as merged contacts. bonded:
+    neck_pairs' structure - the bonded contacts (tet_neck) are joined on purpose and are not separated (they had
+    been: AlSiC with a neck of 0.6 came out 8.54 ppm/K instead of 8.20). Returns the number of separated pairs."""
+    pp = np.flatnonzero((oa > 0) & (ob > 0) & (oa != ob))
+    if intended is not None and len(pp):
+        intended = np.asarray(intended, bool)
+        pp = pp[~(intended[oa[pp] - 1] | intended[ob[pp] - 1])]
+    if bonded is not None and len(pp):
+        bk = _bonded_keys(bonded, int(centers.shape[0]))
+        if len(bk):
+            a0, b0 = oa[pp].astype(np.int64) - 1, ob[pp].astype(np.int64) - 1
+            k0 = np.minimum(a0, b0) * (int(centers.shape[0]) + 1) + np.maximum(a0, b0)
+            pp = pp[~np.isin(k0, bk)]
+    if not len(pp):
+        return 0
+    a, b = oa[pp] - 1, ob[pp] - 1
+    dvec = centers[b] - centers[a]
+    for ax in range(3):
+        if gper[ax]:
+            dvec[:, ax] -= Lg[ax] * np.floor(dvec[:, ax] / Lg[ax] + 0.5)
+    nab = dvec / np.maximum(np.linalg.norm(dvec, axis=1, keepdims=True), 1e-30)
+    de = np.asarray(de, float)[pp]
+    de = de / np.maximum(np.linalg.norm(de, axis=1, keepdims=True), 1e-30)
+    cos = np.maximum(np.abs(np.sum(de * nab, axis=1)), cos_min)
+    # the pair's overlap depth: the deepest overlap of its edges, measured along the line of the centres
+    lo, hi = np.minimum(a, b), np.maximum(a, b)
+    key = lo.astype(np.int64) * (int(centers.shape[0]) + 1) + hi
+    depth = np.maximum(-gedge[pp], 0.0) * cos
+    uk, inv = np.unique(key, return_inverse=True)
+    dp = np.zeros(len(uk))
+    np.maximum.at(dp, inv, depth)
+    if shapes is not None and len(uk):
+        codes, R, P, planes, nfaces = shapes
+        first = np.zeros(len(uk), np.int64)
+        first[inv[::-1]] = np.arange(len(inv))[::-1]
+        n_p = int(centers.shape[0])
+        no_necks = (np.zeros(n_p + 1, np.int64), np.zeros(1, np.int64), np.zeros(1))
+        dl = _line_depths(a[first].astype(np.int64), b[first].astype(np.int64), np.ascontiguousarray(dvec[first]),
+                          np.asarray(codes, np.int64), np.ascontiguousarray(centers, float), np.ascontiguousarray(R, float),
+                          np.ascontiguousarray(P, float), planes, nfaces, np.asarray(Lg, float), np.asarray(gper),
+                          no_necks)
+        dp = np.maximum(dp, dl)
+    sel = dp[inv] > 0.0
+    e = pp[sel]
+    if shapes is not None and xa is not None and ev is not None and len(e):
+        # the partner moves away along the line of the two centres as they stand at this edge: the images nearest
+        # the edge (in a small periodic box two particles can touch on both sides, through the boundary too)
+        x0 = np.asarray(xa, float)[e]
+        ra = centers[a[sel]] - x0
+        rb = centers[b[sel]] - x0
+        for ax in range(3):
+            if gper[ax]:
+                ra[:, ax] -= Lg[ax] * np.floor(ra[:, ax] / Lg[ax] + 0.5)
+                rb[:, ax] -= Lg[ax] * np.floor(rb[:, ax] / Lg[ax] + 0.5)
+        nloc = rb - ra
+        nloc /= np.maximum(np.linalg.norm(nloc, axis=1, keepdims=True), 1e-30)
+        sh = nloc * dp[inv][sel][:, None]
+        gedge[e] = _sep_gaps(a[sel].astype(np.int64), b[sel].astype(np.int64), np.ascontiguousarray(xa[e], float),
+                             np.ascontiguousarray(ev[e], float), np.ascontiguousarray(sh), np.asarray(codes, np.int64),
+                             np.ascontiguousarray(centers, float), np.ascontiguousarray(R, float),
+                             np.ascontiguousarray(P, float), planes, nfaces, np.asarray(Lg, float), np.asarray(gper),
+                             no_necks, 3.0)
+    else:
+        gedge[e] = gedge[e] + dp[inv][sel] / cos[sel]
+    film[e] = 1
+    return int(np.count_nonzero(dp > 0.0))
+
+
+# The thinnest film the solve carries, in lattice spacings: a physical t0 below it is raised to it. Films down to a
+# few thousandths of the spacing solve in the same number of iterations (t0 = 2 nm at h = 0.5 um: 37-76 iterations,
+# as at 10 nm); below, the film springs grow stiff against the elements without changing the result.
+GAP_FLOOR = 2e-3
+
+
+def _split_interfaces(oa, ob, film, split):
+    """The particle-matrix edges of the particles whose interface carries a resistance (split[particle]) get two
+    vertices joined by an interface element (film 2). Returns their number."""
+    if split is None or not np.any(split):
+        return 0
+    pm = np.flatnonzero(((oa > 0) & (ob == 0)) | ((oa == 0) & (ob > 0)))
+    if not len(pm):
+        return 0
+    p = np.where(oa[pm] > 0, oa[pm], ob[pm]) - 1
+    sel = pm[split[p]]
+    film[sel] = 2
+    return int(len(sel))
+
+
+def _springs(nn, ne, used, new, film_e, wside, wn, aside, cpt, points, lut, oa, ob):
+    """The interface elements of a cut mesh: the films (two springs per film, each particle's vertex to the film's
+    vertex; their weights per unit matrix conductivity, their areas for a contact resistance in series, the
+    materials on both sides) and the particle-matrix interfaces with a resistance (one spring, the particle's vertex
+    to the matrix's; its area and the particle's material). Returns the points with the films' lone vertices added
+    and those arrays."""
+    fe = np.flatnonzero(film_e[:ne] == 1)
+    if len(fe):
+        fe = fe[used[nn + 3 * fe] & used[nn + 3 * fe + 2]]
+    springs = np.zeros((2 * len(fe), 2), np.int64)
+    sw = np.zeros(2 * len(fe))
+    sa = np.zeros(2 * len(fe))
+    sn = np.zeros((2 * len(fe), 3))
+    slab = np.zeros((2 * len(fe), 2), np.int64)
+    if len(fe):
+        # a film vertex no matrix element uses is still the node the two springs meet at
+        lone = ~used[nn + 3 * fe + 1]
+        extra = np.arange(int(lone.sum())) + len(points)
+        midv = np.where(lone, 0, new[nn + 3 * fe + 1])
+        midv[lone] = extra
+        points = np.concatenate([points, cpt[fe[lone]]])
+        springs[0::2, 0], springs[0::2, 1] = new[nn + 3 * fe], midv
+        springs[1::2, 0], springs[1::2, 1] = new[nn + 3 * fe + 2], midv
+        sw[0::2], sw[1::2] = wside[fe, 0], wside[fe, 1]
+        sa[0::2], sa[1::2] = aside[fe, 0], aside[fe, 1]
+        sn[0::2], sn[1::2] = wn[fe, 0], wn[fe, 1]
+        la, lb = lut[oa[fe]], lut[ob[fe]]
+        slab[0::2, 0], slab[0::2, 1] = la, lb
+        slab[1::2, 0], slab[1::2, 1] = la, lb
+    ie = np.flatnonzero(film_e[:ne] == 2)
+    if len(ie):
+        ie = ie[used[nn + 3 * ie] & used[nn + 3 * ie + 1]]
+    iface = np.zeros((len(ie), 2), np.int64)
+    ia = np.zeros(len(ie))
+    ilab = np.zeros(len(ie), np.int64)
+    if len(ie):
+        iface[:, 0], iface[:, 1] = new[nn + 3 * ie], new[nn + 3 * ie + 1]
+        ia = aside[ie, 0] + aside[ie, 1]
+        ilab = np.where(oa[ie] > 0, lut[oa[ie]], lut[ob[ie]])
+    return points, fe, springs, sw, sa, sn, slab, iface, ia, ilab
+
+
 def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, delta=DELTA, log=None, neck=0.0,
-               neck_law=None):
+               neck_law=None, overlap="merged", split_phases=None, t0_um=None):
     """The body-fitted mesh of a generated structure on the lattice of its voxel corners.
 
     N, h, nz: the voxel grid (nz: a film's voxels in z). mat_of_phase[i]: the material label of generator phase
@@ -653,15 +909,35 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
                    np.ascontiguousarray(parts["centers"], float), np.ascontiguousarray(parts["R"], float),
                    np.ascontiguousarray(parts["P"], float), planes, nfaces, Lg, gper, float(delta), cpt, tcut, gedge,
                    film_e, nk)
-    gmin = float(GAP_MIN * h)
+    n_sep = n_if = 0
+    if ne:
+        oa_e, ob_e, de_e = _lattice_ends(idx, n, per, own)
+    else:
+        oa_e = ob_e = np.zeros(0, np.int64)
+        de_e = np.zeros((0, 3))
+    if overlap == "separate" and ne:
+        # every cut edge's start (the lattice node of idx) and vector, for the exact film widths of separated pairs
+        bse = idx // 7
+        xa_e = np.column_stack([bse // (int(n[1]) * int(n[2])), (bse // int(n[2])) % int(n[1]), bse % int(n[2])]) * float(h)
+        intended = np.array([bool(gen_phases[int(p)].get("overlap")) for p in parts["phase"]], bool)
+        n_sep = _separate_overlaps(oa_e, ob_e, de_e, gedge, film_e, np.ascontiguousarray(parts["centers"], float), Lg,
+                                   gper, shapes=(parts["codes"], parts["R"], parts["P"], planes, nfaces),
+                                   xa=xa_e.astype(float), ev=de_e * float(h), intended=intended, bonded=nk)
+    if split_phases and ne:
+        split = np.isin(np.asarray(parts["phase"], np.int64), np.asarray(sorted(split_phases), np.int64))
+        n_if = _split_interfaces(oa_e, ob_e, film_e, split)
+    # the thinnest film: the physical t0 when given (not below GAP_FLOOR of the spacing), else GAP_MIN of it
+    gmin = float(max(t0_um, GAP_FLOOR * h)) if t0_um is not None else float(GAP_MIN * h)
     wside = np.zeros((max(ne, 1), 2))
     wn = np.zeros((max(ne, 2), 2, 3))
+    aside = np.zeros((max(ne, 1), 2))
     nt, nfilm = _decompose(n, per, lab, own, ecut, nn, float(h), tcut, gedge, film_e, gmin, False,
-                           np.zeros((1, 4), np.int64), np.zeros(1, np.uint8), np.zeros(1, np.int32), wside, wn)
+                           np.zeros((1, 4), np.int64), np.zeros(1, np.uint8), np.zeros(1, np.int32), wside, wn, aside)
     tets = np.empty((nt, 4), np.int64)
     mat = np.empty(nt, np.uint8)
     cell = np.empty(nt, np.int32)
-    _decompose(n, per, lab, own, ecut, nn, float(h), tcut, gedge, film_e, gmin, True, tets, mat, cell, wside, wn)
+    _decompose(n, per, lab, own, ecut, nn, float(h), tcut, gedge, film_e, gmin, True, tets, mat, cell, wside, wn,
+               aside)
     # the vertices in use, renumbered: the lattice nodes first, then up to three per cut edge
     used = np.zeros(nn + 3 * ne, np.bool_)
     used[:nn] = True
@@ -671,38 +947,29 @@ def build_mesh(N, h, ginfo, gen_phases, mat_of_phase, nz=None, periodic=None, de
     g = np.meshgrid(np.arange(n[0]) * h, np.arange(n[1]) * h, np.arange(n[2]) * h, indexing="ij")
     cut_ids = np.flatnonzero(used[nn:])
     points = np.concatenate([np.stack([a.ravel() for a in g], axis=1), cpt[cut_ids // 3]])
-    # the films: a spring between each particle's vertex and the film's vertex, per unit matrix conductivity
-    fe = np.flatnonzero(film_e[:ne] == 1)
-    if len(fe):
-        fe = fe[used[nn + 3 * fe] & used[nn + 3 * fe + 2]]
-    springs = np.zeros((2 * len(fe), 2), np.int64)
-    sw = np.zeros(2 * len(fe))
-    sn = np.zeros((2 * len(fe), 3))
-    if len(fe):
-        # a film vertex no matrix element uses is still the node the two springs meet at
-        lone = ~used[nn + 3 * fe + 1]
-        extra = np.arange(int(lone.sum())) + len(points)
-        midv = np.where(lone, 0, new[nn + 3 * fe + 1])
-        midv[lone] = extra
-        points = np.concatenate([points, cpt[fe[lone]]])
-        springs[0::2, 0], springs[0::2, 1] = new[nn + 3 * fe], midv
-        springs[1::2, 0], springs[1::2, 1] = new[nn + 3 * fe + 2], midv
-        sw[0::2], sw[1::2] = wside[fe, 0], wside[fe, 1]
-        sn[0::2], sn[1::2] = wn[fe, 0], wn[fe, 1]
+    # the films and the resisting interfaces as springs (per unit matrix conductivity; areas for the resistances)
+    points, fe, springs, sw, sa, sn, slab, iface, ia, ilab = _springs(nn, ne, used, new, film_e, wside, wn, aside, cpt,
+                                                                     points, lut, oa_e, ob_e)
     cells = np.array([n[a] if per[a] else n[a] - 1 for a in range(3)], np.int64)
     L = cells * float(h)
     clamped = int(np.count_nonzero((tcut[:ne] <= delta * (1 + 1e-9)) | (tcut[:ne] >= 1 - delta * (1 + 1e-9)))) if ne else 0
     mesh = {"points": points, "tets": tets, "mat": mat, "cell": cell, "n": n, "cells": cells, "per": per, "L": L,
             "h": float(h), "n_nodes": nn, "n_cut": ne, "n_film_edges": int(len(fe)), "n_film_tets": int(nfilm),
             "springs": springs, "spring_w": sw, "spring_n": sn, "n_clamped": clamped, "seconds": time.time() - t0,
+            "spring_a": sa, "spring_lab": slab, "iface": iface, "iface_a": ia, "iface_lab": ilab, "t0_um": gmin,
             "neck": float(neck), "n_bonded": int(len(nk[1]) // 2) if grow > 0.0 else 0, "n_neck_nodes": int(n_neck_nodes),
+            "overlap": overlap, "n_separated": int(n_sep), "n_iface_edges": int(n_if),
             "film_gap_um": (float(np.median(gedge[fe])) if len(fe) else 0.0)}
     if log:
         log(f"    tetrahedral mesh: {nt:,} tetrahedra on {len(points):,} vertices ({ne:,} edges cut at the particles' "
             f"surfaces; {len(fe):,} of them cross a film of matrix between two particles thinner than the lattice - "
             f"median {mesh['film_gap_um']:.3g} µm - carried as interface elements"
             + (f"; bonded contacts with a neck of {neck:g} x the particle radius: {mesh['n_bonded']:,} pairs of "
-               f"particles are close enough to be joined" if neck > 0 else "") + f") ({mesh['seconds']:.1f} s)")
+               f"particles are close enough to be joined" if neck > 0 else "")
+            + (f"; {n_sep:,} overlapping pairs met as touching ones (their films widened by the overlap)" if n_sep else "")
+            + (f"; {len(iface):,} interface elements carry the particle-matrix resistance" if len(iface) else "")
+            + (f"; thinnest film {1000 * gmin:.3g} nm" if t0_um is not None else "")
+            + f") ({mesh['seconds']:.1f} s)")
     return mesh
 
 
@@ -821,9 +1088,21 @@ def _tet_fields(tets, points, kt, u, per, L, G, val):
         val[t, 0], val[t, 1], val[t, 2], val[t, 3] = kt[t] * gx, kt[t] * gy, kt[t] * gz, um + xc
 
 
-def assemble(mesh, vals):
+def assemble(mesh, vals, r_int=None, r_c=None, contact=None):
     """The stiffness matrix (CSR), the load of a unit gradient along each axis, the mesh volume, and a dict the
-    solver keeps its multigrid in (one set-up for all directions)."""
+    solver keeps its multigrid in (one set-up for all directions).
+
+    r_int: per material label, the particle-matrix interface resistance (m²K/W) of the interfaces the mesh split
+    (build_mesh split_phases): an interface element of conductance area / R_int. r_c: per pair of material labels,
+    a contact resistance (m²K/W) in series with the films between two particles: the film of width g conducts
+    k_m / (g + k_m R_c) per area. Both act on the property solved with them (the thermal conductivity).
+
+    contact (the electrical conductivity): {"rc": per pair of material labels the contact resistance per area
+    (ohm m², 0 = none), "touch_um": the film width up to which two particles touch}. Electrons do not cross a resin
+    film the way phonons do: a film between two particles that touch (drawn touching or overlapping, its width the
+    thinnest film t0) is a metallic contact - it conducts as the less conductive of the two particles over its
+    width, in series with rc where set - while a wider film stays resin (insulating for a metal in epoxy). Only
+    pairs of particles whose rc entry is not negative are contacts (the matrix is never one)."""
     tets, points = mesh["tets"], mesh["points"]
     nv = len(points)
     kt = np.asarray(vals, float)[mesh["mat"]]
@@ -840,9 +1119,43 @@ def assemble(mesh, vals):
         del rows, cols, v
         K = Kc if K is None else K + Kc
     sp, sw = mesh.get("springs"), mesh.get("spring_w")
+    km = float(np.asarray(vals, float)[0])                     # the matrix is label 0
     if sp is not None and len(sp):
-        c = float(np.asarray(vals, float)[0]) * sw             # the matrix is label 0
+        w = np.asarray(sw, float)
+        if r_c is not None and mesh.get("spring_a") is not None and len(mesh["spring_a"]) == len(w):
+            lab = mesh["spring_lab"]
+            rc = np.asarray(r_c, float)[lab[:, 0], lab[:, 1]]
+            if np.any(rc > 0):
+                # each spring is half a film: weight a / (mean width), the contact resistance as a width k_m R_c
+                a_ = np.asarray(mesh["spring_a"], float)
+                gm = a_ / np.maximum(w, 1e-300)
+                w = np.where(rc > 0, a_ / np.maximum(gm + km * rc * 1e6, 1e-300), w)
+        c = km * w
+        if contact is not None and mesh.get("spring_a") is not None and len(mesh["spring_a"]) == len(w):
+            lab = mesh["spring_lab"]
+            kv = np.asarray(vals, float)
+            rcm = np.asarray(contact["rc"], float)[lab[:, 0], lab[:, 1]]
+            a_ = np.asarray(mesh["spring_a"], float)
+            gm = a_ / np.maximum(np.asarray(sw, float), 1e-300)             # the film's width, µm (as for R_c above)
+            touch = (rcm >= 0) & (lab[:, 0] > 0) & (lab[:, 1] > 0) & (gm <= float(contact["touch_um"]))
+            mesh["n_contact_springs"] = int(np.count_nonzero(touch))
+            if np.any(touch):
+                kp = np.minimum(kv[lab[:, 0]], kv[lab[:, 1]])
+                # the film conducts as the particle over its width, the contact resistance in series - the form of the
+                # thermal R_c above, which meets the exact series sum of slabs and films (-0.3 %)
+                cc = a_ / np.maximum(gm / np.maximum(kp, 1e-300) + np.maximum(rcm, 0.0) * 1e6, 1e-300)
+                c = np.where(touch, cc, c)
         a, b = sp[:, 0], sp[:, 1]
+        K = K + sparse.coo_matrix((np.concatenate([c, c, -c, -c]),
+                                   (np.concatenate([a, b, a, b]), np.concatenate([a, b, b, a]))), shape=(nv, nv)).tocsr()
+    ifc = mesh.get("iface")
+    if ifc is not None and len(ifc):
+        if r_int is None:
+            raise ValueError("this mesh splits the particle-matrix interfaces: their resistance (r_int) is needed")
+        ri = np.asarray(r_int, float)[mesh["iface_lab"]]
+        # conductance area / R_int, in the stiffness' units (W/m.K x um): area um² x 1e-6 / R_int
+        c = np.asarray(mesh["iface_a"], float) * 1e-6 / np.maximum(ri, 1e-30)
+        a, b = ifc[:, 0], ifc[:, 1]
         K = K + sparse.coo_matrix((np.concatenate([c, c, -c, -c]),
                                    (np.concatenate([a, b, a, b]), np.concatenate([a, b, b, a]))), shape=(nv, nv)).tocsr()
     return K, F, vol, {}

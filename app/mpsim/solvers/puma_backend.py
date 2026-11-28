@@ -1138,6 +1138,9 @@ def mean_intercept_length(labels, phase_ids, voxel_m):
     return [float(v) for v in mil]
 
 
+RADIATION_SEED = 20261128          # the ray sources of the extinction coefficient (radiation)
+
+
 def radiation(labels, void_ids, voxel_m, sources=200, rays=500, should_stop=None):
     """Extinction coefficient beta [1/m] of the pore space along x, y and z by
     PuMA's ray casting (opaque solid, rays emitted from random pore sources,
@@ -1147,8 +1150,17 @@ def radiation(labels, void_ids, voxel_m, sources=200, rays=500, should_stop=None
     binary = np.where(np.isin(lab, void_ids), 0, 1).astype(np.uint16)
     ws = _workspace(binary, voxel_m)
     t0 = time.time()
-    with _tapped(None, None, should_stop):
-        beta, beta_std, dist = pm.experimental.compute_radiation(ws, (0, 0), int(sources), int(rays))
+    # PuMA draws its sources with numpy's global generator, unseeded: one
+    # structure gave beta 1-4 % apart from run to run, per direction (fibre
+    # insulation 28,215 and 27,511 1/m at 200 x 500), far beyond the fit's beta_std of
+    # 0.15 %. A fixed seed repeats the result; the global state is restored.
+    state = np.random.get_state()
+    np.random.seed(RADIATION_SEED)
+    try:
+        with _tapped(None, None, should_stop):
+            beta, beta_std, dist = pm.experimental.compute_radiation(ws, (0, 0), int(sources), int(rays))
+    finally:
+        np.random.set_state(state)
     beta = np.atleast_1d(np.asarray(beta, float))
     std = np.atleast_1d(np.asarray(beta_std, float))
     out = {"beta_1pm": beta.tolist(), "beta_std_1pm": std.tolist(), "seconds": time.time() - t0,
