@@ -29,7 +29,7 @@
   "description": "Open-source simulator for the effective properties of semiconductor materials computed from their 3D microstructure on voxel representative volume elements (RVEs).",
   "applicationCategory": "ScientificApplication",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "5.11.0",
+  "softwareVersion": "5.12.0",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://hyoseokbyun-opt.github.io/MPSim/",
   "downloadUrl": "https://github.com/HyoseokByun-opt/MPSim/releases/latest",
@@ -182,7 +182,7 @@
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim/releases/latest/download/MPSim-User-Guide-EN.pdf">User guide (PDF)</a>
       <a class="btn" href="https://github.com/HyoseokByun-opt/MPSim">Source code</a>
     </div>
-    <div class="meta"><b>Version 5.11.0</b> · MIT License · Windows 10 / 11 ·
+    <div class="meta"><b>Version 5.12.0</b> · MIT License · Windows 10 / 11 ·
       <a href="https://doi.org/10.5281/zenodo.23120194">DOI 10.5281/zenodo.23120194</a></div>
     <figure class="banner">
       <img src="assets/banner.webp" width="1800" height="1051" fetchpriority="high"
@@ -302,7 +302,8 @@
 
       <div class="ex">
         <h3>Thermal conductivity</h3>
-        <p>Steady heat conduction is solved with periodic finite volumes along x, y and z. The conductivity through the gap,
+        <p>Steady heat conduction is solved with periodic finite volumes along x, y and z (as computed with 5.10.2; since 5.12.0
+          the thermal conductivity is solved on the tetrahedral FEM by default). The conductivity through the gap,
           0.596 W/m·K, is 3.0 times that of the resin, 9.5 % above the Maxwell–Garnett estimate (the lower Hashin–Shtrikman
           bound, 0.544) and well below the Bruggeman estimate (0.685): at a conductivity ratio of 7 the points where particles
           touch carry little of the heat. The shear brings particles into contact and raises the conductivity by 3.5 % through
@@ -385,8 +386,10 @@
         <ul>
           <li>The lattice of the voxel corners is cut into tetrahedra, and every tetrahedron is cut where it crosses a particle's exact
             surface; a film of resin between two particles thinner than a voxel is carried as an interface element of its width.</li>
-          <li>Alumina 45 vol% with BN platelets 5 vol% in epoxy: the finite-volume conductivity falls from 4.34 to 3.22 W/m·K over a four
-            times finer grid and is still falling; the FEM moves by 9 % (1.75 → 1.90).</li>
+          <li>Alumina 45 vol% with BN platelets 5 vol% in epoxy: the finite-volume conductivity falls from 4.69 to 3.64 W/m·K over a four
+            times finer grid and is still falling; the FEM moves from 1.66 to 1.55, from above as conforming elements do (5.12.0).</li>
+          <li>Since 5.12.0 the thermal conductivity is solved on this mesh by default, at every filler content: two touching particles
+            meet across a resin film, with the interface and contact resistances on their true surfaces.</li>
           <li>A filler five times finer than another needs no finer grid: with the small spheres 3 voxels across the FEM is within 9 % of
             its value on the finest grid.</li>
           <li>The same elements as FEniCS, on Windows: on the mesh MPSim writes, FEniCSx (DOLFINx 0.11) gives the same conductivity to
@@ -401,8 +404,9 @@
         <ul>
           <li>The same mesh with displacement elements: the six strains and the thermal load are solved together on all cores; a film
             of resin between two particles is an interface element with the stiffness of a thin layer held between two stiff faces.</li>
-          <li>Fused silica 60 vol% in epoxy: the voxel elements give 25.0 → 17.4 GPa from 32³ to 192³ and are still falling, the FEM
-            16.2 → 15.7 GPa from 32³ to 64³; the thermal expansion 10.1 → 14.6 ppm/K against 15.2 → 15.6.</li>
+          <li>Fused silica 60 vol% in epoxy: the voxel elements give 24.8 → 16.2 GPa from 32³ to 192³ and are still falling, the FEM
+            15.4 → 14.8 GPa from 32³ to 64³; the thermal expansion 10.3 → 15.6 ppm/K against 16.0 → 16.6. Extrapolated to an
+            infinitely fine grid both reach 14.1-14.2 GPa and about 17 ppm/K (5.12.0).</li>
           <li>On the same mesh FEniCSx gives the same stiffness and thermal stress to twelve digits.</li>
           <li>Against a measurement: glass spheres in epoxy (J. C. Smith, J. Res. Natl. Bur. Stand. A 80A (1976) 45,
             <a href="https://doi.org/10.6028/jres.080A.008">doi:10.6028/jres.080A.008</a>) at 23 / 30 / 40 / 50 vol%: measured 5.08 / 6.01 / 7.94 /
@@ -580,24 +584,24 @@
       <h4>Predictions against published measurements</h4>
       <table class="bench">
         <tr><th>Preset and quantity</th><th>Measured</th><th>MPSim</th></tr>
-        <tr><td>Benchmark · DOE · glass spheres in epoxy at Smith's four loadings; Measured benchmark · glass spheres 40 vol% in epoxy<span class="src">Young's modulus of epoxy with glass spheres, 22.5 / 30.3 / 39.6 / 49.6 vol% <a href=#bref1>[1]</a></span></td><td>5.08 / 6.01 / 7.94 / 12.09 GPa</td><td>FEM 5.14 / 6.32 / 8.22 / 11.22 (+1.1 %, +5.2 %, +3.5 %, -7.2 %); voxel elements 5.83 / 7.62 / 10.68 / 16.16 (+14.7 %, +26.7 %, +34.6 %, +33.7 %); 48³</td></tr>
+        <tr><td>Benchmark · DOE · glass spheres in epoxy at Smith's four loadings; Measured benchmark · glass spheres 40 vol% in epoxy<span class="src">Young's modulus of epoxy with glass spheres, 22.5 / 30.3 / 39.6 / 49.6 vol% <a href=#bref1>[1]</a></span></td><td>5.08 / 6.01 / 7.94 / 12.09 GPa</td><td>FEM 5.12 / 6.32 / 8.15 / 11.22 (+0.7 %, +5.1 %, +2.6 %, -7.2 %); voxel elements 5.83 / 7.62 / 10.68 / 16.16 (+14.7 %, +26.7 %, +34.6 %, +33.7 %); 48³</td></tr>
         <tr><td>Benchmark · particle dynamics against Boyer et al.'s measured law (friction 0.25, 50 vol%)<span class="src">Shear viscosity of non-Brownian spheres / the liquid's, 40 / 50 / 55 vol% <a href=#bref2>[2]</a></span></td><td>7.4 / 31.9 / 145.0</td><td>friction 0.25 (default): 6.1 / 22.9 / 104.2; friction 0.5: 6.4 / 30.3 / 408.9</td></tr>
-        <tr><td>Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC)<span class="src">Conductivity and expansion of SiC 63 vol% in Al-Si7Mg <a href=#bref3>[3]</a></span></td><td>178 W/m·K, 8.21 ppm/K</td><td>189 W/m·K, 8.85 ppm/K (+6 %, +8 %; voxel solvers, interface 1e-8 m²K/W); FEM 9.23 ppm/K (+12 %)</td></tr>
+        <tr><td>Power-module baseplate · Al-Si7Mg + SiC 63 vol% (AlSiC)<span class="src">Conductivity and expansion of SiC 63 vol% in Al-Si7Mg <a href=#bref3>[3]</a></span></td><td>178 W/m·K, 8.21 ppm/K</td><td>195 W/m·K (+10 %; the tetrahedral FEM, interface 1e-8 m²K/W; voxels 189), 8.85 ppm/K (+8 %, voxel elements); FEM 9.23 ppm/K (+12 %)</td></tr>
         <tr><td>mmWave substrate · PTFE + fused silica 60 wt%<span class="src">Permittivity of PTFE with 60 wt% silica <a href=#bref5>[5]</a></span></td><td>Dk 2.9</td><td>Dk 3.01 (+3.8 %)</td></tr>
-        <tr><td>Package-level power inductor · epoxy + carbonyl iron 54 vol%<span class="src">Permeability of a printed carbonyl-iron core <a href=#bref6>[6]</a></span></td><td>μr 7.5</td><td>μr 5.98 (−20 %; spheres, where the printed core's particles touch and align; see the preset)</td></tr>
+        <tr><td>Package-level power inductor · epoxy + carbonyl iron 54 vol%<span class="src">Permeability of a printed carbonyl-iron core <a href=#bref6>[6]</a></span></td><td>μr 7.5</td><td>μr 5.97 (−20 %; spheres, where the printed core's particles touch and align; see the preset)</td></tr>
       </table>
       <p class="note">Earlier versions gave the law of Boyer et al. as 5.7 / 20.7 / 103 and chose the default friction 0.25 with it - an evaluation that kept only μ<sub>1</sub> of the contact term of their eq. (8). Against the law as printed no single friction coefficient follows it over the three loadings; the default is still 0.25.</p>
       <h4>A parameter fitted to a published measurement</h4>
       <table class="bench">
         <tr><th>Preset and quantity</th><th>Measured</th><th>MPSim</th></tr>
-        <tr><td>Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement)<span class="src">Conductivity of Cu + diamond 50 vol% <a href=#bref4>[4]</a></span></td><td>640 W/m·K</td><td>the paper's interface conductance 36–56 MW/m²K gives 749–777 W/m·K (+17 to +21 %); 12.5 MW/m²K reproduces the measurement (646)</td></tr>
+        <tr><td>Heat spreader · Cu + diamond 50 vol% (400 µm, interface from a measurement)<span class="src">Conductivity of Cu + diamond 50 vol% <a href=#bref4>[4]</a></span></td><td>640 W/m·K</td><td>the paper's interface conductance 36–56 MW/m²K gives 767–794 W/m·K (+20 to +24 %); 10.6 MW/m²K reproduces the measurement (640)</td></tr>
         <tr><td>FEM · AlSiC, SiC 63 vol%: bonded contacts fitted to the measured expansion<span class="src">Expansion of AlSiC with bonded contacts between the SiC <a href=#bref3>[3]</a></span></td><td>8.21 ppm/K</td><td>9.23 / 9.15 / 8.86 / 8.20 ppm/K for a neck of 0 / 0.3 / 0.45 / 0.6: a neck of 0.6 reproduces the measurement</td></tr>
       </table>
       <h4>Published and exact solutions</h4>
       <table class="bench">
         <tr><th>Preset and quantity</th><th>Solution</th><th>MPSim</th></tr>
         <tr><td>Benchmark · Rayleigh's simple cubic array of spheres (conduction)<span class="src">Conductivity of a simple cubic array of spheres (15.5 vol%, 100 : 1) <a href=#bref7>[7]</a></span></td><td>1.5324 (Rayleigh's printed coefficient 1.65: 1.5337)</td><td>FEM 1.5347 (+0.15 %); FV 1.5394 (+0.46 %)</td></tr>
-        <tr><td>Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance (DOE)<span class="src">Conductivity of dilute spheres with an interfacial resistance (5 vol%, 20 : 1) <a href=#bref8>[8]</a></span></td><td>1.1355 / 1.0325 / 0.9976 (α 0 / 0.5 / 1)</td><td>1.1363 / 1.0311 / 0.9960 (max 0.16 %)</td></tr>
+        <tr><td>Benchmark · Hasselman–Johnson: dilute spheres with an interfacial resistance (DOE)<span class="src">Conductivity of dilute spheres with an interfacial resistance (5 vol%, 20 : 1) <a href=#bref8>[8]</a></span></td><td>1.1355 / 1.0325 / 0.9976 (α 0 / 0.5 / 1)</td><td>1.1357 / 1.0326 / 0.9977 (max 0.02 %)</td></tr>
         <tr><td>Benchmark · Maxwell Garnett: permittivity of dilute spheres<span class="src">Permittivity of dilute spheres (5 vol%, ε 100 in 3) <a href=#bref9>[9]</a></span></td><td>3.4320</td><td>3.4355 (+0.10 %)</td></tr>
         <tr><td>Benchmark · Einstein: viscosity of a dilute rigid sphere<span class="src">Viscosity of a dilute rigid sphere (1.9 vol%) <a href=#bref10>[10]</a></span></td><td>1.0485 ([η] 2.5)</td><td>1.0501 ([η] 2.59, +3.44 %)</td></tr>
         <tr><td>Benchmark · particle dynamics against Krieger–Dougherty (frictionless spheres, 50 vol%)<span class="src">Viscosity of frictionless spheres, 40 / 50 / 55 vol% <a href=#bref11>[11]</a></span></td><td>4.80 / 11.38 / 23.07 (φ<sub>m</sub> 0.64)</td><td>5.70 / 11.77 / 18.55</td></tr>
@@ -605,7 +609,7 @@
         <tr><td>Benchmark · two layers: series and parallel (exact)<span class="src">Two equal layers, across and along (k, ε_r) · exact solution</span></td><td>k 0.39735 / 15.1; ε 5.57956 / 6.85</td><td>k 0.39735 / 15.1; ε 5.57956 / 6.85 (exact)</td></tr>
         <tr><td>Benchmark · Poiseuille: a straight cylindrical pore (flow, tortuosity, acoustic lengths)<span class="src">Straight cylindrical pore, r 16 µm: permeability, tortuosity, Λ, Λ′ <a href=#bref13>[13]</a></span></td><td>K φr²/8 = 4.060e-12 m²; τ 1; Λ = Λ′ = 16 µm</td><td>K 3.914e-12 (-3.60 %); τ 1.0000; Λ 15.85, Λ′ 15.85 µm</td></tr>
         <tr><td>Benchmark · Maxwell: moisture diffusion around impermeable spheres<span class="src">Moisture diffusivity around impermeable spheres (5 vol%) <a href=#bref14>[14]</a></span></td><td>D*/D_m = 2/(2+φ) = 0.9756</td><td>0.9726 (-0.31 %)</td></tr>
-        <tr><td>PCB thermal vias · FR-4 with Cu-plated vias<span class="src">Conductivity through and along a laminate with straight Cu vias · exact solution</span></td><td>parallel paths 9.2851 W/m·K; in the plane 0.847 (Maxwell, parallel cylinders)</td><td>9.2851 (to the fourth decimal); 0.848</td></tr>
+        <tr><td>PCB thermal vias · FR-4 with Cu-plated vias<span class="src">Conductivity through and along a laminate with straight Cu vias · exact solution</span></td><td>parallel paths 8.9518 W/m·K; in the plane 0.8456 (Maxwell, parallel cylinders)</td><td>8.9517 (−0.001 %); 0.8452 (−0.05 %)</td></tr>
         <tr><td>Die-attach solder · SAC305 with 15 % voids<span class="src">Conductivity of solder with 15 % insulating voids <a href=#bref14>[14]</a></span></td><td>below 2(1 − φ)/(2 + φ) = 79.1 % of the dense value (Maxwell's bound for insulating spheres)</td><td>76.9 %</td></tr>
       </table>
       <ol class="refs">
